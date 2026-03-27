@@ -1,19 +1,152 @@
-main {
+.app-shell {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
   display: flex;
   flex-direction: column;
+  gap: 20px;
+}
+
+.hero h1 {
+  margin: 0;
+}
+
+.hero p {
+  margin: 6px 0 0;
+  color: #4b5563;
+}
+
+.error-banner {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #fecaca;
+  background: #fee2e2;
+  color: #991b1b;
+  font-weight: 600;
+}
+
+.panel {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px;
+  background: #ffffff;
+}
+
+.panel h2 {
+  margin: 0 0 12px;
+  font-size: 1.2rem;
+}
+
+.deal-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.deal-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.deal-form input,
+.deal-form select,
+.deal-form textarea,
+.deal-form button {
+  font: inherit;
+  padding: 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+}
+
+.deal-form textarea {
+  min-height: 64px;
+}
+
+.deal-form button {
+  background: #111827;
+  color: #fff;
+  border-color: #111827;
+  cursor: pointer;
+}
+
+.deal-form button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
-  place-content: center;
-  place-items: center;
-  min-height: 100vh;
-  box-sizing: border-box;
-  text-align: center;
-  padding: 24px;
 }
 
-h1 {
-  margin: 0;
+.dashboard-grid article {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px;
 }
 
-h2 {
+.dashboard-grid h3 {
   margin: 0;
+  font-size: 0.9rem;
+  color: #6b7280;
+}
+
+.dashboard-grid p {
+  margin: 8px 0 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.alerts h3 {
+  margin: 14px 0 8px;
+}
+
+.alerts ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.deals-table-wrap {
+  overflow-x: auto;
+}
+
+.deals-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.deals-table th,
+.deals-table td {
+  text-align: left;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 8px;
+  white-space: nowrap;
+}
+
+.deals-table button {
+  font: inherit;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #111827;
+  background: #111827;
+  color: #fff;
+  cursor: pointer;
+}
+
+.deals-table button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+  .dashboard-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .deal-form {
+    grid-template-columns: 1fr;
+  }
 }

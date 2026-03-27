@@ -1,0 +1,175 @@
+export const DEAL_STAGES = [
+  "sourced",
+  "acquired",
+  "prep",
+  "listed",
+  "sold",
+  "completed",
+] as const;
+
+export type DealStage = (typeof DEAL_STAGES)[number];
+export type DealStatus = DealStage;
+
+export type DealCategory =
+  | "vehicle_suv"
+  | "vehicle_police_fleet"
+  | "powersports"
+  | "electronics_bulk"
+  | "electronics_individual";
+
+export type SourcePlatform = "govdeals" | "publicsurplus" | "ebay" | "facebook" | "other";
+
+export type TransportType =
+  | "auto_transport"
+  | "freight"
+  | "parcel"
+  | "local_pickup"
+  | "none";
+
+export type ConditionGrade =
+  | "excellent"
+  | "used_good"
+  | "used"
+  | "used_cosmetic"
+  | "used_functional"
+  | "defective"
+  | "parts_only";
+
+export interface DealRecord {
+  id: string;
+  label: string;
+  category: DealCategory;
+  source_platform: SourcePlatform;
+  acquisition_state: string;
+  status: DealStatus;
+  stage_updated_at: string;
+  discovered_date: string | null;
+  purchase_date: string | null;
+  listing_date: string | null;
+  sale_date: string | null;
+  completion_date: string | null;
+}
+
+export interface FinancialRecord {
+  deal_id: string;
+  acquisition_cost: number;
+  buyer_premium_pct: number;
+  transport_cost_actual: number | null;
+  transport_cost_estimated: number | null;
+  repair_cost: number | null;
+  prep_cost: number | null;
+  estimated_market_value: number;
+  projected_profit: number;
+  realized_profit: number;
+}
+
+export interface MetadataRecord {
+  deal_id: string;
+  condition_grade: ConditionGrade;
+  condition_notes: string;
+  transport_type: TransportType;
+  presentation_quality: string;
+}
+
+export interface DealView {
+  deal: {
+    id: DealRecord["id"];
+    label: DealRecord["label"];
+    category: DealRecord["category"];
+    source_platform: DealRecord["source_platform"];
+    acquisition_state: DealRecord["acquisition_state"];
+    status: DealRecord["status"];
+    stage_updated_at: DealRecord["stage_updated_at"];
+    discovered_date: DealRecord["discovered_date"];
+    purchase_date: DealRecord["purchase_date"];
+    listing_date: DealRecord["listing_date"];
+    sale_date: DealRecord["sale_date"];
+    completion_date: DealRecord["completion_date"];
+  };
+  financials: FinancialRecord;
+  metadata: MetadataRecord;
+  calculations: {
+    total_cost_basis: number;
+    projected_profit: number;
+    realized_profit: number;
+    days_in_stage: number;
+  };
+}
+
+export interface CreateDealRequest {
+  label: string;
+  category: DealCategory;
+  source_platform: SourcePlatform;
+  acquisition_state: string;
+  status?: DealStatus;
+  stage_updated_at?: string;
+  discovered_date?: string | null;
+  purchase_date?: string | null;
+  listing_date?: string | null;
+  sale_date?: string | null;
+  completion_date?: string | null;
+  financials: {
+    acquisition_cost: number;
+    buyer_premium_pct?: number;
+    transport_cost_actual?: number | null;
+    transport_cost_estimated?: number | null;
+    repair_cost?: number | null;
+    prep_cost?: number | null;
+    estimated_market_value: number;
+  };
+  metadata: {
+    condition_grade: ConditionGrade;
+    condition_notes: string;
+    transport_type: TransportType;
+    presentation_quality: string;
+  };
+}
+
+export interface DashboardSummary {
+  active_deals: number;
+  completed_deals: number;
+  realized_profit_total: number;
+  projected_profit_total: number;
+  aging_alerts: Array<{
+    id: string;
+    label: string;
+    status: DealStatus;
+    days_in_stage: number;
+  }>;
+}
+
+export type DashboardResponse = DashboardSummary;
+
+export const CATEGORY_OPTIONS: DealCategory[] = [
+  "vehicle_suv",
+  "vehicle_police_fleet",
+  "powersports",
+  "electronics_bulk",
+  "electronics_individual",
+];
+
+export const SOURCE_PLATFORM_OPTIONS: SourcePlatform[] = [
+  "govdeals",
+  "publicsurplus",
+  "ebay",
+  "facebook",
+  "other",
+];
+
+export const CONDITION_GRADE_OPTIONS: ConditionGrade[] = [
+  "excellent",
+  "used_good",
+  "used",
+  "used_cosmetic",
+  "used_functional",
+  "defective",
+  "parts_only",
+];
+
+export const TRANSPORT_TYPE_OPTIONS: TransportType[] = [
+  "auto_transport",
+  "freight",
+  "parcel",
+  "local_pickup",
+  "none",
+];
