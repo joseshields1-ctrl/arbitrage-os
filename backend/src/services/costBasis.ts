@@ -16,6 +16,10 @@ export interface CostBasisResult {
 }
 
 const toAmount = (value: number | null | undefined): number => value ?? 0;
+const isCostTrackedTransportType = (transportType: Deal["transport_type"]): boolean =>
+  transportType === "auto_transport" ||
+  transportType === "freight" ||
+  transportType === "parcel";
 
 export const calculateTotalCostBasis = (deal: Deal): CostBasisResult => {
   const estimated_inputs: string[] = [];
@@ -26,10 +30,9 @@ export const calculateTotalCostBasis = (deal: Deal): CostBasisResult => {
   const tax = toAmount(deal.tax);
 
   let transport = 0;
-  const transportIncludedTypes = ["auto_transport", "freight", "parcel"] as const;
   if (
     deal.transport_paid_by === "buyer" &&
-    transportIncludedTypes.includes(deal.transport_type)
+    isCostTrackedTransportType(deal.transport_type)
   ) {
     if (deal.transport_cost_actual !== null) {
       transport = toAmount(deal.transport_cost_actual);
