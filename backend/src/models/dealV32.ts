@@ -22,6 +22,14 @@ export const DEAL_LIFECYCLE_STAGES = [
 export type DealStatus = (typeof DEAL_LIFECYCLE_STAGES)[number];
 export type DealStageInput = DealStatus;
 
+export interface UnitBreakdown {
+  units_total: number;
+  units_working: number;
+  units_minor_issue: number;
+  units_defective: number;
+  units_locked: number;
+}
+
 export interface DealRow {
   id: string;
   label: string;
@@ -35,11 +43,12 @@ export interface DealRow {
   listing_date: string | null;
   sale_date: string | null;
   completion_date: string | null;
+  unit_breakdown?: UnitBreakdown | null;
 }
 
 export interface FinancialInput {
   acquisition_cost: number;
-  // Whole percent format: 10 means 10%, 12.5 means 12.5%.
+  // Decimal format: 0.10 means 10%, 0.125 means 12.5%.
   buyer_premium_pct?: number;
   transport_cost_actual?: number | null;
   transport_cost_estimated?: number | null;
@@ -88,5 +97,6 @@ export interface DealView {
   financials: FinancialRow;
   metadata: MetadataRow;
   calculations: DealComputedMetrics;
+  warnings?: string[];
 }
 

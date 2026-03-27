@@ -6,6 +6,8 @@ import {
   fetchDeals,
   updateDealStage,
 } from "./api";
+import DealCard from "./components/DealCard";
+import DetailPanel from "./components/DetailPanel";
 import {
   CATEGORY_OPTIONS,
   CONDITION_GRADE_OPTIONS,
@@ -51,6 +53,11 @@ interface DealFormState {
   repair_cost: string;
   prep_cost: string;
   estimated_market_value: string;
+  units_total: string;
+  units_working: string;
+  units_minor_issue: string;
+  units_defective: string;
+  units_locked: string;
 }
 
 function App() {
@@ -77,6 +84,11 @@ function App() {
     repair_cost: "",
     prep_cost: "",
     estimated_market_value: "",
+    units_total: "",
+    units_working: "",
+    units_minor_issue: "",
+    units_defective: "",
+    units_locked: "",
   });
 
   const loadData = async () => {
@@ -127,6 +139,16 @@ function App() {
           transport_type: formData.transport_type,
           presentation_quality: formData.presentation_quality,
         },
+        unit_breakdown:
+          formData.units_total.trim() === ""
+            ? undefined
+            : {
+                units_total: Number(formData.units_total),
+                units_working: Number(formData.units_working || "0"),
+                units_minor_issue: Number(formData.units_minor_issue || "0"),
+                units_defective: Number(formData.units_defective || "0"),
+                units_locked: Number(formData.units_locked || "0"),
+              },
       });
 
       setFormData((prev) => ({
@@ -139,6 +161,11 @@ function App() {
         repair_cost: "",
         prep_cost: "",
         estimated_market_value: "",
+        units_total: "",
+        units_working: "",
+        units_minor_issue: "",
+        units_defective: "",
+        units_locked: "",
       }));
 
       await loadData();
@@ -387,6 +414,61 @@ function App() {
           </label>
 
           <label className="field">
+            Units Total (optional)
+            <input
+              type="number"
+              value={formData.units_total}
+              onChange={(e) =>
+                setFormData({ ...formData, units_total: e.target.value })
+              }
+            />
+          </label>
+
+          <label className="field">
+            Units Working
+            <input
+              type="number"
+              value={formData.units_working}
+              onChange={(e) =>
+                setFormData({ ...formData, units_working: e.target.value })
+              }
+            />
+          </label>
+
+          <label className="field">
+            Units Minor Issue
+            <input
+              type="number"
+              value={formData.units_minor_issue}
+              onChange={(e) =>
+                setFormData({ ...formData, units_minor_issue: e.target.value })
+              }
+            />
+          </label>
+
+          <label className="field">
+            Units Defective
+            <input
+              type="number"
+              value={formData.units_defective}
+              onChange={(e) =>
+                setFormData({ ...formData, units_defective: e.target.value })
+              }
+            />
+          </label>
+
+          <label className="field">
+            Units Locked
+            <input
+              type="number"
+              value={formData.units_locked}
+              onChange={(e) =>
+                setFormData({ ...formData, units_locked: e.target.value })
+              }
+            />
+          </label>
+
+          <label className="field">
             Condition Grade
             <select
               value={formData.condition_grade}
@@ -444,42 +526,15 @@ function App() {
           {deals.map((item) => {
             const next = nextStage(item.deal.status);
             return (
-              <article className="deal" key={item.deal.id}>
-                <div className="deal-head">
-                  <h4>{item.deal.label}</h4>
-                  <strong>{item.deal.status}</strong>
-                </div>
-                <p className="deal-meta">
-                  {item.deal.category} · {item.deal.source_platform} ·{" "}
-                  {item.deal.acquisition_state}
-                </p>
-                <div className="deal-metrics">
-                  <div>
-                    <div className="card-title">Cost Basis</div>
-                    <div>${item.calculations.total_cost_basis.toFixed(2)}</div>
-                  </div>
-                  <div>
-                    <div className="card-title">Projected</div>
-                    <div>${item.calculations.projected_profit.toFixed(2)}</div>
-                  </div>
-                  <div>
-                    <div className="card-title">Realized</div>
-                    <div>${item.calculations.realized_profit.toFixed(2)}</div>
-                  </div>
-                  <div>
-                    <div className="card-title">Days In Stage</div>
-                    <div>{item.calculations.days_in_stage}</div>
-                  </div>
-                </div>
-                <div className="next-stage">
-                  <button
-                    disabled={!next || updatingDealId === item.deal.id}
-                    onClick={() => void handleStageAdvance(item)}
-                  >
-                    {next ? `Advance to ${next}` : "Completed"}
-                  </button>
-                </div>
-              </article>
+              <div key={item.deal.id}>
+                <DealCard
+                  deal={item}
+                  nextStage={next}
+                  disabled={!next || updatingDealId === item.deal.id}
+                  onAdvance={() => void handleStageAdvance(item)}
+                />
+                <DetailPanel deal={item} />
+              </div>
             );
           })}
         </div>

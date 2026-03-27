@@ -54,4 +54,13 @@ export const initializeDatabase = (): void => {
       FOREIGN KEY (deal_id) REFERENCES deals(id) ON DELETE CASCADE
     );
   `);
+
+  // Migration-safe additions for optional unit breakdown support.
+  const dealColumns = db.prepare(`PRAGMA table_info(deals)`).all() as Array<{
+    name: string;
+  }>;
+  const hasUnitBreakdown = dealColumns.some((column) => column.name === "unit_breakdown");
+  if (!hasUnitBreakdown) {
+    db.exec(`ALTER TABLE deals ADD COLUMN unit_breakdown TEXT;`);
+  }
 };

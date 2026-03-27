@@ -109,6 +109,16 @@
   padding-left: 18px;
 }
 
+.warning-banner {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+  font-weight: 600;
+}
+
 .deals-table-wrap {
   overflow-x: auto;
 }
@@ -141,12 +151,84 @@
   cursor: not-allowed;
 }
 
+.deal-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+.deal-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.deal-card-head h4 {
+  margin: 0;
+}
+
+.deal-card-meta {
+  margin: 8px 0;
+  color: #4b5563;
+}
+
+.deal-card-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.deal-card-actions {
+  margin-top: 10px;
+}
+
+.deal-card-actions button {
+  font: inherit;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #111827;
+  background: #111827;
+  color: #fff;
+  cursor: pointer;
+}
+
+.deal-card-actions button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.detail-panel {
+  margin-top: 12px;
+  border-top: 1px solid #e5e7eb;
+  padding-top: 12px;
+}
+
+.detail-panel h4 {
+  margin: 0 0 8px;
+}
+
+.detail-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
 @media (max-width: 900px) {
   .dashboard-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .deal-form {
+    grid-template-columns: 1fr;
+  }
+
+  .deal-card-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .detail-panel-grid {
     grid-template-columns: 1fr;
   }
 }

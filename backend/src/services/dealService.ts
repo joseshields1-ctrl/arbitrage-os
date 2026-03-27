@@ -8,13 +8,16 @@ import {
   MetadataInput,
   MetadataRow,
   SourcePlatform,
+  UnitBreakdown,
 } from "../models/dealV32";
 import { db } from "../db/sqlite";
 import {
   calculateDealMetrics,
   calculateDaysInStage,
+  hasTransportCategoryMismatch,
   isAgingAlert,
 } from "./dealCalculations";
+import { categoryProfiles } from "../config/categoryProfiles";
 
 export interface CreateDealInput {
   label: string;
@@ -28,6 +31,7 @@ export interface CreateDealInput {
   listing_date?: string | null;
   sale_date?: string | null;
   completion_date?: string | null;
+  unit_breakdown?: UnitBreakdown | null;
   financials: FinancialInput;
   metadata: MetadataInput;
 }
@@ -36,6 +40,7 @@ export interface DealView {
   deal: DealRow;
   financials: FinancialRow;
   metadata: MetadataRow;
+  warnings: string[];
   calculations: {
     total_cost_basis: number;
     projected_profit: number;
@@ -59,6 +64,45 @@ export interface DashboardView {
 
 const nowIso = (): string => new Date().toISOString();
 const normalizeNullableDate = (value?: string | null): string | null => value ?? null;
+const parseUnitBreakdown = (value: unknown): UnitBreakdown | null => {
+  if (!value) {
+    return null;
+  }
+
+  let parsedValue: unknown = value;
+  if (typeof value === "string") {
+    try {
+      parsedValue = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+
+  if (typeof parsedValue !== "object" || parsedValue === null) {
+    return null;
+  }
+
+  const breakdown = parsedValue as Record<string, unknown>;
+  const toNonNegativeInteger = (raw: unknown): number =>
+    Math.max(0, Math.floor(Number(raw ?? 0)));
+
+  return {
+    units_total: toNonNegativeInteger(breakdown.units_total),
+    units_working: toNonNegativeInteger(breakdown.units_working),
+    units_minor_issue: toNonNegativeInteger(breakdown.units_minor_issue),
+    units_defective: toNonNegativeInteger(breakdown.units_defective),
+    units_locked: toNonNegativeInteger(breakdown.units_locked),
+  };
+};
+const getDealWarnings = (deal: DealRow, metadata: MetadataRow): string[] => {
+  const warnings: string[] = [];
+  if (hasTransportCategoryMismatch(deal.category, metadata.transport_type)) {
+    warnings.push(
+      "Potential transport mismatch: electronics_bulk usually fits local_pickup or freight."
+    );
+  }
+  return warnings;
+};
 
 const mapDealRow = (row: Record<string, unknown>): DealRow => ({
   id: String(row.id),
@@ -73,6 +117,7 @@ const mapDealRow = (row: Record<string, unknown>): DealRow => ({
   listing_date: (row.listing_date as string | null) ?? null,
   sale_date: (row.sale_date as string | null) ?? null,
   completion_date: (row.completion_date as string | null) ?? null,
+  unit_breakdown: parseUnitBreakdown(row.unit_breakdown),
 });
 
 const mapFinancialRow = (row: Record<string, unknown>): FinancialRow => ({
@@ -127,6 +172,7 @@ const computeAndPersistFinancials = (dealId: string): void => {
     stage_updated_at: String(joined.stage_updated_at),
     acquisition_cost: Number(joined.acquisition_cost),
     buyer_premium_pct: Number(joined.buyer_premium_pct),
+    category: joined.category as DealCategory,
     transport_type: joined.transport_type as MetadataRow["transport_type"],
     transport_cost_actual: (joined.transport_cost_actual as number | null) ?? null,
     transport_cost_estimated: (joined.transport_cost_estimated as number | null) ?? null,
@@ -158,6 +204,7 @@ const getDealViewById = (dealId: string): DealView | null => {
         d.listing_date,
         d.sale_date,
         d.completion_date,
+        d.unit_breakdown,
         f.deal_id AS f_deal_id,
         f.acquisition_cost,
         f.buyer_premium_pct,
@@ -210,6 +257,7 @@ const getDealViewById = (dealId: string): DealView | null => {
     stage_updated_at: deal.stage_updated_at,
     acquisition_cost: financials.acquisition_cost,
     buyer_premium_pct: financials.buyer_premium_pct,
+    category: deal.category,
     transport_type: metadata.transport_type,
     transport_cost_actual: financials.transport_cost_actual,
     transport_cost_estimated: financials.transport_cost_estimated,
@@ -217,6 +265,7 @@ const getDealViewById = (dealId: string): DealView | null => {
     prep_cost: financials.prep_cost,
     estimated_market_value: financials.estimated_market_value,
   });
+  const warnings = getDealWarnings(deal, metadata);
 
   return {
     deal,
@@ -226,6 +275,7 @@ const getDealViewById = (dealId: string): DealView | null => {
       realized_profit: recalculated.realized_profit,
     },
     metadata,
+    warnings,
     calculations: {
       total_cost_basis: recalculated.total_cost_basis,
       projected_profit: recalculated.projected_profit,
@@ -244,13 +294,16 @@ export const createDeal = (input: CreateDealInput): DealView => {
   const listingDate = normalizeNullableDate(input.listing_date);
   const saleDate = normalizeNullableDate(input.sale_date);
   const completionDate = normalizeNullableDate(input.completion_date);
+  const defaultTransportType = categoryProfiles[input.category].default_transport_type;
+  const resolvedTransportType =
+    input.metadata.transport_type ?? (defaultTransportType as MetadataRow["transport_type"]);
 
   const tx = db.transaction(() => {
     db.prepare(
       `INSERT INTO deals (
         id, label, category, source_platform, acquisition_state, status, stage_updated_at,
-        discovered_date, purchase_date, listing_date, sale_date, completion_date
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        discovered_date, purchase_date, listing_date, sale_date, completion_date, unit_breakdown
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       input.label,
@@ -263,7 +316,8 @@ export const createDeal = (input: CreateDealInput): DealView => {
       purchaseDate,
       listingDate,
       saleDate,
-      completionDate
+      completionDate,
+      input.unit_breakdown ? JSON.stringify(input.unit_breakdown) : null
     );
 
     db.prepare(
@@ -291,7 +345,7 @@ export const createDeal = (input: CreateDealInput): DealView => {
       id,
       input.metadata.condition_grade,
       input.metadata.condition_notes,
-      input.metadata.transport_type,
+      resolvedTransportType,
       input.metadata.presentation_quality
     );
   });

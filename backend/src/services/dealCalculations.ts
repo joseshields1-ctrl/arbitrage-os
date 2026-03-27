@@ -1,4 +1,4 @@
-import { DealStatus, TransportType } from "../models/dealV32";
+import { DealCategory, DealStatus, TransportType } from "../models/dealV32";
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
@@ -12,6 +12,7 @@ export interface CalculationInput {
   stage_updated_at: string;
   acquisition_cost: number;
   buyer_premium_pct: number;
+  category: DealCategory;
   transport_type: TransportType;
   transport_cost_actual: number | null;
   transport_cost_estimated: number | null;
@@ -21,13 +22,22 @@ export interface CalculationInput {
 }
 
 export const calculateTotalCostBasis = (input: CalculationInput): number => {
+  // V3.2: buyer_premium_pct is stored as a decimal (0.10 = 10%).
   const buyerPremium =
-    toNumber(input.acquisition_cost) * (toNumber(input.buyer_premium_pct) / 100);
+    toNumber(input.acquisition_cost) * toNumber(input.buyer_premium_pct);
 
+  const normalizedTransportActual =
+    input.transport_type === "local_pickup" || input.transport_type === "none"
+      ? 0
+      : input.transport_cost_actual;
+  const normalizedTransportEstimated =
+    input.transport_type === "local_pickup" || input.transport_type === "none"
+      ? 0
+      : input.transport_cost_estimated;
   const includeTransport =
     input.transport_type !== "local_pickup" && input.transport_type !== "none";
   const transportCost = includeTransport
-    ? input.transport_cost_actual ?? input.transport_cost_estimated ?? 0
+    ? normalizedTransportActual ?? normalizedTransportEstimated ?? 0
     : 0;
 
   const total =
@@ -87,6 +97,11 @@ export const calculateDealMetrics = (input: CalculationInput) => {
     days_in_stage,
   };
 };
+
+export const hasTransportCategoryMismatch = (
+  category: DealCategory,
+  transportType: TransportType
+): boolean => category === "electronics_bulk" && transportType === "parcel";
 
 export const isAgingAlert = (daysInStage: number, status: DealStatus): boolean => {
   if (status === "completed") {

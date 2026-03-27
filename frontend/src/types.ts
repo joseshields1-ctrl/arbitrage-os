@@ -48,6 +48,13 @@ export interface DealRecord {
   listing_date: string | null;
   sale_date: string | null;
   completion_date: string | null;
+  unit_breakdown?: {
+    units_total: number;
+    units_working: number;
+    units_minor_issue: number;
+    units_defective: number;
+    units_locked: number;
+  } | null;
 }
 
 export interface FinancialRecord {
@@ -72,22 +79,10 @@ export interface MetadataRecord {
 }
 
 export interface DealView {
-  deal: {
-    id: DealRecord["id"];
-    label: DealRecord["label"];
-    category: DealRecord["category"];
-    source_platform: DealRecord["source_platform"];
-    acquisition_state: DealRecord["acquisition_state"];
-    status: DealRecord["status"];
-    stage_updated_at: DealRecord["stage_updated_at"];
-    discovered_date: DealRecord["discovered_date"];
-    purchase_date: DealRecord["purchase_date"];
-    listing_date: DealRecord["listing_date"];
-    sale_date: DealRecord["sale_date"];
-    completion_date: DealRecord["completion_date"];
-  };
+  deal: DealRecord;
   financials: FinancialRecord;
   metadata: MetadataRecord;
+  warnings?: string[];
   calculations: {
     total_cost_basis: number;
     projected_profit: number;
@@ -122,6 +117,13 @@ export interface CreateDealRequest {
     condition_notes: string;
     transport_type: TransportType;
     presentation_quality: string;
+  };
+  unit_breakdown?: {
+    units_total: number;
+    units_working: number;
+    units_minor_issue: number;
+    units_defective: number;
+    units_locked: number;
   };
 }
 

@@ -25,8 +25,8 @@ export const calculateTotalCostBasis = (deal: Deal): CostBasisResult => {
   const estimated_inputs: string[] = [];
 
   const acquisitionCost = toAmount(deal.acquisition_cost);
-  // buyer_premium_pct is a whole-percent number (10 => 10%, 12.5 => 12.5%).
-  const buyerPremium = acquisitionCost * (toAmount(deal.buyer_premium_pct) / 100);
+  // buyer_premium_pct is stored as decimal (0.10 = 10%, 0.125 = 12.5%).
+  const buyerPremium = acquisitionCost * toAmount(deal.buyer_premium_pct);
   const tax = toAmount(deal.tax);
 
   let transport = 0;
