@@ -7,6 +7,7 @@ import {
   FinancialRow,
   MetadataInput,
   MetadataRow,
+  PrepMetrics,
   SourcePlatform,
   UnitBreakdown,
 } from "../models/dealV32";
@@ -14,7 +15,9 @@ import { db } from "../db/sqlite";
 import {
   calculateDealMetrics,
   calculateDaysInStage,
+  calculateEfficiency,
   hasTransportCategoryMismatch,
+  isLowQualitySource,
   isAgingAlert,
 } from "./dealCalculations";
 import { categoryProfiles } from "../config/categoryProfiles";
@@ -32,6 +35,7 @@ export interface CreateDealInput {
   sale_date?: string | null;
   completion_date?: string | null;
   unit_breakdown?: UnitBreakdown | null;
+  prep_metrics?: PrepMetrics | null;
   financials: FinancialInput;
   metadata: MetadataInput;
 }
@@ -41,6 +45,11 @@ export interface DealView {
   financials: FinancialRow;
   metadata: MetadataRow;
   warnings: string[];
+  prep_metrics: PrepMetrics | null;
+  efficiency: {
+    efficiency_score: number | null;
+    rating: "GOOD" | "WARNING" | "BAD" | null;
+  };
   calculations: {
     total_cost_basis: number;
     projected_profit: number;
@@ -94,12 +103,55 @@ const parseUnitBreakdown = (value: unknown): UnitBreakdown | null => {
     units_locked: toNonNegativeInteger(breakdown.units_locked),
   };
 };
-const getDealWarnings = (deal: DealRow, metadata: MetadataRow): string[] => {
+
+const parsePrepMetrics = (value: unknown): PrepMetrics | null => {
+  if (!value) {
+    return null;
+  }
+
+  let parsedValue: unknown = value;
+  if (typeof value === "string") {
+    try {
+      parsedValue = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+
+  if (typeof parsedValue !== "object" || parsedValue === null) {
+    return null;
+  }
+
+  const metrics = parsedValue as Record<string, unknown>;
+  const toNonNegativeInteger = (raw: unknown): number =>
+    Math.max(0, Math.floor(Number(raw ?? 0)));
+  const toNonNegativeNumber = (raw: unknown): number =>
+    Math.max(0, Number(raw ?? 0));
+
+  return {
+    total_units: toNonNegativeInteger(metrics.total_units),
+    working_units: toNonNegativeInteger(metrics.working_units),
+    cosmetic_units: toNonNegativeInteger(metrics.cosmetic_units),
+    functional_units: toNonNegativeInteger(metrics.functional_units),
+    defective_units: toNonNegativeInteger(metrics.defective_units),
+    locked_units: toNonNegativeInteger(metrics.locked_units),
+    total_prep_time_minutes: toNonNegativeNumber(metrics.total_prep_time_minutes),
+    avg_time_per_unit: toNonNegativeNumber(metrics.avg_time_per_unit),
+  };
+};
+const getDealWarnings = (
+  deal: DealRow,
+  metadata: MetadataRow,
+  prepMetrics: PrepMetrics | null
+): string[] => {
   const warnings: string[] = [];
   if (hasTransportCategoryMismatch(deal.category, metadata.transport_type)) {
     warnings.push(
       "Potential transport mismatch: electronics_bulk usually fits local_pickup or freight."
     );
+  }
+  if (isLowQualitySource(prepMetrics)) {
+    warnings.push("LOW QUALITY SOURCE");
   }
   return warnings;
 };
@@ -118,6 +170,7 @@ const mapDealRow = (row: Record<string, unknown>): DealRow => ({
   sale_date: (row.sale_date as string | null) ?? null,
   completion_date: (row.completion_date as string | null) ?? null,
   unit_breakdown: parseUnitBreakdown(row.unit_breakdown),
+  prep_metrics: parsePrepMetrics(row.prep_metrics),
 });
 
 const mapFinancialRow = (row: Record<string, unknown>): FinancialRow => ({
@@ -146,6 +199,7 @@ const computeAndPersistFinancials = (dealId: string): void => {
     .prepare(
       `SELECT
         d.id AS deal_id,
+        d.category,
         d.status,
         d.stage_updated_at,
         f.acquisition_cost,
@@ -205,6 +259,7 @@ const getDealViewById = (dealId: string): DealView | null => {
         d.sale_date,
         d.completion_date,
         d.unit_breakdown,
+        d.prep_metrics,
         f.deal_id AS f_deal_id,
         f.acquisition_cost,
         f.buyer_premium_pct,
@@ -265,7 +320,8 @@ const getDealViewById = (dealId: string): DealView | null => {
     prep_cost: financials.prep_cost,
     estimated_market_value: financials.estimated_market_value,
   });
-  const warnings = getDealWarnings(deal, metadata);
+  const warnings = getDealWarnings(deal, metadata, deal.prep_metrics ?? null);
+  const efficiency = calculateEfficiency(deal.prep_metrics ?? null);
 
   return {
     deal,
@@ -276,6 +332,8 @@ const getDealViewById = (dealId: string): DealView | null => {
     },
     metadata,
     warnings,
+    prep_metrics: deal.prep_metrics ?? null,
+    efficiency,
     calculations: {
       total_cost_basis: recalculated.total_cost_basis,
       projected_profit: recalculated.projected_profit,
@@ -294,6 +352,10 @@ export const createDeal = (input: CreateDealInput): DealView => {
   const listingDate = normalizeNullableDate(input.listing_date);
   const saleDate = normalizeNullableDate(input.sale_date);
   const completionDate = normalizeNullableDate(input.completion_date);
+  const prepMetrics =
+    input.prep_metrics && input.prep_metrics.total_units > 0
+      ? input.prep_metrics
+      : null;
   const defaultTransportType = categoryProfiles[input.category].default_transport_type;
   const resolvedTransportType =
     input.metadata.transport_type ?? (defaultTransportType as MetadataRow["transport_type"]);
@@ -302,8 +364,8 @@ export const createDeal = (input: CreateDealInput): DealView => {
     db.prepare(
       `INSERT INTO deals (
         id, label, category, source_platform, acquisition_state, status, stage_updated_at,
-        discovered_date, purchase_date, listing_date, sale_date, completion_date, unit_breakdown
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        discovered_date, purchase_date, listing_date, sale_date, completion_date, unit_breakdown, prep_metrics
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       input.label,
@@ -317,7 +379,8 @@ export const createDeal = (input: CreateDealInput): DealView => {
       listingDate,
       saleDate,
       completionDate,
-      input.unit_breakdown ? JSON.stringify(input.unit_breakdown) : null
+      input.unit_breakdown ? JSON.stringify(input.unit_breakdown) : null,
+      prepMetrics ? JSON.stringify(prepMetrics) : null
     );
 
     db.prepare(

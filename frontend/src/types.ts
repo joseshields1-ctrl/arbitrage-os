@@ -55,6 +55,16 @@ export interface DealRecord {
     units_defective: number;
     units_locked: number;
   } | null;
+  prep_metrics?: {
+    total_units: number;
+    working_units: number;
+    cosmetic_units: number;
+    functional_units: number;
+    defective_units: number;
+    locked_units: number;
+    total_prep_time_minutes: number;
+    avg_time_per_unit: number;
+  } | null;
 }
 
 export interface FinancialRecord {
@@ -88,6 +98,8 @@ export interface DealView {
     projected_profit: number;
     realized_profit: number;
     days_in_stage: number;
+    efficiency_score?: number | null;
+    efficiency_rating?: "GOOD" | "WARNING" | "BAD" | null;
   };
 }
 
@@ -124,6 +136,16 @@ export interface CreateDealRequest {
     units_minor_issue: number;
     units_defective: number;
     units_locked: number;
+  };
+  prep_metrics?: {
+    total_units: number;
+    working_units: number;
+    cosmetic_units: number;
+    functional_units: number;
+    defective_units: number;
+    locked_units: number;
+    total_prep_time_minutes: number;
+    avg_time_per_unit: number;
   };
 }
 

@@ -21,6 +21,59 @@ export interface CalculationInput {
   estimated_market_value: number;
 }
 
+export const getEfficiencyRating = (
+  efficiencyScore: number | null
+): "GOOD" | "WARNING" | "BAD" | null => {
+  if (efficiencyScore === null) {
+    return null;
+  }
+  if (efficiencyScore < 5) {
+    return "GOOD";
+  }
+  if (efficiencyScore <= 8) {
+    return "WARNING";
+  }
+  return "BAD";
+};
+
+export const calculateEfficiency = (
+  prepMetrics:
+    | {
+        total_units: number;
+        total_prep_time_minutes: number;
+      }
+    | null
+    | undefined
+): { efficiency_score: number | null; rating: "GOOD" | "WARNING" | "BAD" | null } => {
+  if (!prepMetrics || prepMetrics.total_units <= 0) {
+    return { efficiency_score: null, rating: null };
+  }
+
+  const score =
+    Math.round(
+      ((prepMetrics.total_prep_time_minutes / prepMetrics.total_units) + Number.EPSILON) * 100
+    ) / 100;
+  return {
+    efficiency_score: score,
+    rating: getEfficiencyRating(score),
+  };
+};
+
+export const isLowQualitySource = (
+  prepMetrics:
+    | {
+        total_units: number;
+        locked_units: number;
+      }
+    | null
+    | undefined
+): boolean => {
+  if (!prepMetrics || prepMetrics.total_units <= 0) {
+    return false;
+  }
+  return prepMetrics.locked_units / prepMetrics.total_units > 0.2;
+};
+
 export const calculateTotalCostBasis = (input: CalculationInput): number => {
   // V3.2: buyer_premium_pct is stored as a decimal (0.10 = 10%).
   const buyerPremium =

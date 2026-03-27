@@ -63,4 +63,9 @@ export const initializeDatabase = (): void => {
   if (!hasUnitBreakdown) {
     db.exec(`ALTER TABLE deals ADD COLUMN unit_breakdown TEXT;`);
   }
+
+  const hasPrepMetrics = dealColumns.some((column) => column.name === "prep_metrics");
+  if (!hasPrepMetrics) {
+    db.exec(`ALTER TABLE deals ADD COLUMN prep_metrics TEXT;`);
+  }
 };

@@ -6,6 +6,7 @@ interface DetailPanelProps {
 
 const DetailPanel = ({ deal }: DetailPanelProps) => {
   const unitBreakdown = deal.deal.unit_breakdown;
+  const prepMetrics = deal.deal.prep_metrics;
   const mismatch = (deal.warnings ?? []).some((warning) =>
     warning.includes("Potential transport mismatch")
   );
@@ -36,6 +37,28 @@ const DetailPanel = ({ deal }: DetailPanelProps) => {
           <div>
             <div className="card-title">Locked</div>
             <div>{unitBreakdown.units_locked}</div>
+          </div>
+        </div>
+      ) : null}
+      {prepMetrics ? (
+        <div className="unit-breakdown">
+          <div className="card-title">Prep Metrics</div>
+          <div>Total Units: {prepMetrics.total_units}</div>
+          <div>
+            Working: {prepMetrics.working_units} · Cosmetic: {prepMetrics.cosmetic_units}
+          </div>
+          <div>
+            Functional: {prepMetrics.functional_units} · Defective:{" "}
+            {prepMetrics.defective_units}
+          </div>
+          <div>
+            Locked: {prepMetrics.locked_units} · Total Prep Minutes:{" "}
+            {prepMetrics.total_prep_time_minutes}
+          </div>
+          <div>Avg Time Per Unit: {prepMetrics.avg_time_per_unit.toFixed(2)} min</div>
+          <div>
+            Efficiency: {deal.calculations.efficiency_rating} (
+            {(deal.calculations.efficiency_score ?? 0).toFixed(2)} min/unit)
           </div>
         </div>
       ) : null}

@@ -30,6 +30,17 @@ export interface UnitBreakdown {
   units_locked: number;
 }
 
+export interface PrepMetrics {
+  total_units: number;
+  working_units: number;
+  cosmetic_units: number;
+  functional_units: number;
+  defective_units: number;
+  locked_units: number;
+  total_prep_time_minutes: number;
+  avg_time_per_unit: number;
+}
+
 export interface DealRow {
   id: string;
   label: string;
@@ -44,6 +55,7 @@ export interface DealRow {
   sale_date: string | null;
   completion_date: string | null;
   unit_breakdown?: UnitBreakdown | null;
+  prep_metrics?: PrepMetrics | null;
 }
 
 export interface FinancialInput {
@@ -90,6 +102,8 @@ export interface DealComputedMetrics {
   projected_profit: number;
   realized_profit: number;
   days_in_stage: number;
+  efficiency_score: number | null;
+  efficiency_rating: "GOOD" | "WARNING" | "BAD" | null;
 }
 
 export interface DealView {

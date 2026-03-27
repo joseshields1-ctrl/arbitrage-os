@@ -58,6 +58,14 @@ interface DealFormState {
   units_minor_issue: string;
   units_defective: string;
   units_locked: string;
+  prep_total_units: string;
+  prep_working_units: string;
+  prep_cosmetic_units: string;
+  prep_functional_units: string;
+  prep_defective_units: string;
+  prep_locked_units: string;
+  total_prep_time_minutes: string;
+  avg_time_per_unit: string;
 }
 
 function App() {
@@ -89,6 +97,14 @@ function App() {
     units_minor_issue: "",
     units_defective: "",
     units_locked: "",
+    prep_total_units: "",
+    prep_working_units: "",
+    prep_cosmetic_units: "",
+    prep_functional_units: "",
+    prep_defective_units: "",
+    prep_locked_units: "",
+    total_prep_time_minutes: "",
+    avg_time_per_unit: "",
   });
 
   const loadData = async () => {
@@ -149,6 +165,20 @@ function App() {
                 units_defective: Number(formData.units_defective || "0"),
                 units_locked: Number(formData.units_locked || "0"),
               },
+        prep_metrics:
+          formData.prep_total_units.trim() === "" &&
+          formData.total_prep_time_minutes.trim() === ""
+            ? undefined
+            : {
+                total_units: Number(formData.prep_total_units || "0"),
+                working_units: Number(formData.prep_working_units || "0"),
+                cosmetic_units: Number(formData.prep_cosmetic_units || "0"),
+                functional_units: Number(formData.prep_functional_units || "0"),
+                defective_units: Number(formData.prep_defective_units || "0"),
+                locked_units: Number(formData.prep_locked_units || "0"),
+                total_prep_time_minutes: Number(formData.total_prep_time_minutes || "0"),
+                avg_time_per_unit: Number(formData.avg_time_per_unit || "0"),
+              },
       });
 
       setFormData((prev) => ({
@@ -166,6 +196,14 @@ function App() {
         units_minor_issue: "",
         units_defective: "",
         units_locked: "",
+        prep_total_units: "",
+        prep_working_units: "",
+        prep_cosmetic_units: "",
+        prep_functional_units: "",
+        prep_defective_units: "",
+        prep_locked_units: "",
+        total_prep_time_minutes: "",
+        avg_time_per_unit: "",
       }));
 
       await loadData();
@@ -464,6 +502,96 @@ function App() {
               value={formData.units_locked}
               onChange={(e) =>
                 setFormData({ ...formData, units_locked: e.target.value })
+              }
+            />
+          </label>
+
+          <label className="field">
+            Prep Total Units (optional)
+            <input
+              type="number"
+              value={formData.prep_total_units}
+              onChange={(e) =>
+                setFormData({ ...formData, prep_total_units: e.target.value })
+              }
+            />
+          </label>
+
+          <label className="field">
+            Prep Working Units
+            <input
+              type="number"
+              value={formData.prep_working_units}
+              onChange={(e) =>
+                setFormData({ ...formData, prep_working_units: e.target.value })
+              }
+            />
+          </label>
+
+          <label className="field">
+            Prep Cosmetic Units
+            <input
+              type="number"
+              value={formData.prep_cosmetic_units}
+              onChange={(e) =>
+                setFormData({ ...formData, prep_cosmetic_units: e.target.value })
+              }
+            />
+          </label>
+
+          <label className="field">
+            Prep Functional Units
+            <input
+              type="number"
+              value={formData.prep_functional_units}
+              onChange={(e) =>
+                setFormData({ ...formData, prep_functional_units: e.target.value })
+              }
+            />
+          </label>
+
+          <label className="field">
+            Prep Defective Units
+            <input
+              type="number"
+              value={formData.prep_defective_units}
+              onChange={(e) =>
+                setFormData({ ...formData, prep_defective_units: e.target.value })
+              }
+            />
+          </label>
+
+          <label className="field">
+            Prep Locked Units
+            <input
+              type="number"
+              value={formData.prep_locked_units}
+              onChange={(e) =>
+                setFormData({ ...formData, prep_locked_units: e.target.value })
+              }
+            />
+          </label>
+
+          <label className="field">
+            Total Prep Time (minutes)
+            <input
+              type="number"
+              step="0.01"
+              value={formData.total_prep_time_minutes}
+              onChange={(e) =>
+                setFormData({ ...formData, total_prep_time_minutes: e.target.value })
+              }
+            />
+          </label>
+
+          <label className="field">
+            Avg Time Per Unit (optional)
+            <input
+              type="number"
+              step="0.01"
+              value={formData.avg_time_per_unit}
+              onChange={(e) =>
+                setFormData({ ...formData, avg_time_per_unit: e.target.value })
               }
             />
           </label>

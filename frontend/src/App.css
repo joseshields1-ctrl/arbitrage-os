@@ -215,6 +215,21 @@
   gap: 8px;
 }
 
+.efficiency-good {
+  color: #166534;
+  font-weight: 600;
+}
+
+.efficiency-warning {
+  color: #92400e;
+  font-weight: 600;
+}
+
+.efficiency-bad {
+  color: #991b1b;
+  font-weight: 600;
+}
+
 @media (max-width: 900px) {
   .dashboard-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
