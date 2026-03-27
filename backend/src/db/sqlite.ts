@@ -24,7 +24,8 @@ export const initializeDatabase = (): void => {
       purchase_date TEXT,
       listing_date TEXT,
       sale_date TEXT,
-      completion_date TEXT
+      completion_date TEXT,
+      unit_count INTEGER
     );
   `);
 
@@ -67,5 +68,10 @@ export const initializeDatabase = (): void => {
   const hasPrepMetrics = dealColumns.some((column) => column.name === "prep_metrics");
   if (!hasPrepMetrics) {
     db.exec(`ALTER TABLE deals ADD COLUMN prep_metrics TEXT;`);
+  }
+
+  const hasUnitCount = dealColumns.some((column) => column.name === "unit_count");
+  if (!hasUnitCount) {
+    db.exec(`ALTER TABLE deals ADD COLUMN unit_count INTEGER;`);
   }
 };

@@ -38,7 +38,6 @@ export interface PrepMetrics {
   defective_units: number;
   locked_units: number;
   total_prep_time_minutes: number;
-  avg_time_per_unit: number;
 }
 
 export interface DealRow {
@@ -54,6 +53,7 @@ export interface DealRow {
   listing_date: string | null;
   sale_date: string | null;
   completion_date: string | null;
+  unit_count?: number | null;
   unit_breakdown?: UnitBreakdown | null;
   prep_metrics?: PrepMetrics | null;
 }
@@ -104,6 +104,9 @@ export interface DealComputedMetrics {
   days_in_stage: number;
   efficiency_score: number | null;
   efficiency_rating: "GOOD" | "WARNING" | "BAD" | null;
+  avg_time_per_unit: number | null;
+  locked_ratio: number | null;
+  source_quality_flag: "LOW_QUALITY_SOURCE" | null;
 }
 
 export interface DealView {

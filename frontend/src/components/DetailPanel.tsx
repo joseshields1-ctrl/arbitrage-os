@@ -10,6 +10,15 @@ const DetailPanel = ({ deal }: DetailPanelProps) => {
   const mismatch = (deal.warnings ?? []).some((warning) =>
     warning.includes("Potential transport mismatch")
   );
+  const qualityFlag = deal.calculations.source_quality_flag;
+  const efficiencyClass =
+    deal.calculations.efficiency_rating === "GOOD"
+      ? "efficiency-good"
+      : deal.calculations.efficiency_rating === "WARNING"
+        ? "efficiency-warning"
+        : deal.calculations.efficiency_rating === "BAD"
+          ? "efficiency-bad"
+          : undefined;
 
   return (
     <div className="detail-panel">
@@ -55,11 +64,22 @@ const DetailPanel = ({ deal }: DetailPanelProps) => {
             Locked: {prepMetrics.locked_units} · Total Prep Minutes:{" "}
             {prepMetrics.total_prep_time_minutes}
           </div>
-          <div>Avg Time Per Unit: {prepMetrics.avg_time_per_unit.toFixed(2)} min</div>
           <div>
-            Efficiency: {deal.calculations.efficiency_rating} (
-            {(deal.calculations.efficiency_score ?? 0).toFixed(2)} min/unit)
+            Avg Time / Unit:{" "}
+            {deal.calculations.avg_time_per_unit === null
+              ? "N/A"
+              : `${deal.calculations.avg_time_per_unit.toFixed(2)} min`}
           </div>
+          {deal.calculations.efficiency_rating ? (
+            <div className={efficiencyClass}>
+              Efficiency Rating: {deal.calculations.efficiency_rating}
+            </div>
+          ) : (
+            <div>Efficiency Rating: N/A</div>
+          )}
+          {qualityFlag ? (
+            <p className="warning-text">Source Quality Flag: {qualityFlag}</p>
+          ) : null}
         </div>
       ) : null}
       {mismatch ? (

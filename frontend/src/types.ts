@@ -48,6 +48,7 @@ export interface DealRecord {
   listing_date: string | null;
   sale_date: string | null;
   completion_date: string | null;
+  unit_count?: number | null;
   unit_breakdown?: {
     units_total: number;
     units_working: number;
@@ -63,7 +64,6 @@ export interface DealRecord {
     defective_units: number;
     locked_units: number;
     total_prep_time_minutes: number;
-    avg_time_per_unit: number;
   } | null;
 }
 
@@ -98,8 +98,11 @@ export interface DealView {
     projected_profit: number;
     realized_profit: number;
     days_in_stage: number;
-    efficiency_score?: number | null;
-    efficiency_rating?: "GOOD" | "WARNING" | "BAD" | null;
+    avg_time_per_unit: number | null;
+    efficiency_score: number | null;
+    efficiency_rating: "GOOD" | "WARNING" | "BAD" | null;
+    locked_ratio: number | null;
+    source_quality_flag: "LOW_QUALITY_SOURCE" | null;
   };
 }
 
@@ -137,6 +140,7 @@ export interface CreateDealRequest {
     units_defective: number;
     units_locked: number;
   };
+  unit_count?: number | null;
   prep_metrics?: {
     total_units: number;
     working_units: number;
@@ -145,7 +149,6 @@ export interface CreateDealRequest {
     defective_units: number;
     locked_units: number;
     total_prep_time_minutes: number;
-    avg_time_per_unit: number;
   };
 }
 

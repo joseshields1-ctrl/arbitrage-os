@@ -58,6 +58,7 @@ interface DealFormState {
   units_minor_issue: string;
   units_defective: string;
   units_locked: string;
+  unit_count: string;
   prep_total_units: string;
   prep_working_units: string;
   prep_cosmetic_units: string;
@@ -65,7 +66,6 @@ interface DealFormState {
   prep_defective_units: string;
   prep_locked_units: string;
   total_prep_time_minutes: string;
-  avg_time_per_unit: string;
 }
 
 function App() {
@@ -97,6 +97,7 @@ function App() {
     units_minor_issue: "",
     units_defective: "",
     units_locked: "",
+    unit_count: "",
     prep_total_units: "",
     prep_working_units: "",
     prep_cosmetic_units: "",
@@ -104,7 +105,6 @@ function App() {
     prep_defective_units: "",
     prep_locked_units: "",
     total_prep_time_minutes: "",
-    avg_time_per_unit: "",
   });
 
   const loadData = async () => {
@@ -165,6 +165,7 @@ function App() {
                 units_defective: Number(formData.units_defective || "0"),
                 units_locked: Number(formData.units_locked || "0"),
               },
+        unit_count: toNullableNumber(formData.unit_count),
         prep_metrics:
           formData.prep_total_units.trim() === "" &&
           formData.total_prep_time_minutes.trim() === ""
@@ -177,7 +178,6 @@ function App() {
                 defective_units: Number(formData.prep_defective_units || "0"),
                 locked_units: Number(formData.prep_locked_units || "0"),
                 total_prep_time_minutes: Number(formData.total_prep_time_minutes || "0"),
-                avg_time_per_unit: Number(formData.avg_time_per_unit || "0"),
               },
       });
 
@@ -196,6 +196,7 @@ function App() {
         units_minor_issue: "",
         units_defective: "",
         units_locked: "",
+        unit_count: "",
         prep_total_units: "",
         prep_working_units: "",
         prep_cosmetic_units: "",
@@ -203,7 +204,6 @@ function App() {
         prep_defective_units: "",
         prep_locked_units: "",
         total_prep_time_minutes: "",
-        avg_time_per_unit: "",
       }));
 
       await loadData();
@@ -507,6 +507,17 @@ function App() {
           </label>
 
           <label className="field">
+            Unit Count (fallback)
+            <input
+              type="number"
+              value={formData.unit_count}
+              onChange={(e) =>
+                setFormData({ ...formData, unit_count: e.target.value })
+              }
+            />
+          </label>
+
+          <label className="field">
             Prep Total Units (optional)
             <input
               type="number"
@@ -584,17 +595,6 @@ function App() {
             />
           </label>
 
-          <label className="field">
-            Avg Time Per Unit (optional)
-            <input
-              type="number"
-              step="0.01"
-              value={formData.avg_time_per_unit}
-              onChange={(e) =>
-                setFormData({ ...formData, avg_time_per_unit: e.target.value })
-              }
-            />
-          </label>
 
           <label className="field">
             Condition Grade

@@ -15,9 +15,8 @@ import { db } from "../db/sqlite";
 import {
   calculateDealMetrics,
   calculateDaysInStage,
-  calculateEfficiency,
+  calculateExecutionMetrics,
   hasTransportCategoryMismatch,
-  isLowQualitySource,
   isAgingAlert,
 } from "./dealCalculations";
 import { categoryProfiles } from "../config/categoryProfiles";
@@ -34,6 +33,7 @@ export interface CreateDealInput {
   listing_date?: string | null;
   sale_date?: string | null;
   completion_date?: string | null;
+  unit_count?: number | null;
   unit_breakdown?: UnitBreakdown | null;
   prep_metrics?: PrepMetrics | null;
   financials: FinancialInput;
@@ -45,16 +45,16 @@ export interface DealView {
   financials: FinancialRow;
   metadata: MetadataRow;
   warnings: string[];
-  prep_metrics: PrepMetrics | null;
-  efficiency: {
-    efficiency_score: number | null;
-    rating: "GOOD" | "WARNING" | "BAD" | null;
-  };
   calculations: {
     total_cost_basis: number;
     projected_profit: number;
     realized_profit: number;
     days_in_stage: number;
+    avg_time_per_unit: number | null;
+    efficiency_score: number | null;
+    efficiency_rating: "GOOD" | "WARNING" | "BAD" | null;
+    locked_ratio: number | null;
+    source_quality_flag: "LOW_QUALITY_SOURCE" | null;
   };
 }
 
@@ -73,6 +73,27 @@ export interface DashboardView {
 
 const nowIso = (): string => new Date().toISOString();
 const normalizeNullableDate = (value?: string | null): string | null => value ?? null;
+const normalizeOptionalCount = (value?: number | null): number | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const normalized = Math.max(0, Math.floor(Number(value)));
+  return normalized > 0 ? normalized : null;
+};
+const normalizePrepMetricsInput = (value?: PrepMetrics | null): PrepMetrics | null => {
+  if (!value) {
+    return null;
+  }
+  return {
+    total_units: Math.max(0, Math.floor(Number(value.total_units ?? 0))),
+    working_units: Math.max(0, Math.floor(Number(value.working_units ?? 0))),
+    cosmetic_units: Math.max(0, Math.floor(Number(value.cosmetic_units ?? 0))),
+    functional_units: Math.max(0, Math.floor(Number(value.functional_units ?? 0))),
+    defective_units: Math.max(0, Math.floor(Number(value.defective_units ?? 0))),
+    locked_units: Math.max(0, Math.floor(Number(value.locked_units ?? 0))),
+    total_prep_time_minutes: Math.max(0, Number(value.total_prep_time_minutes ?? 0)),
+  };
+};
 const parseUnitBreakdown = (value: unknown): UnitBreakdown | null => {
   if (!value) {
     return null;
@@ -136,13 +157,12 @@ const parsePrepMetrics = (value: unknown): PrepMetrics | null => {
     defective_units: toNonNegativeInteger(metrics.defective_units),
     locked_units: toNonNegativeInteger(metrics.locked_units),
     total_prep_time_minutes: toNonNegativeNumber(metrics.total_prep_time_minutes),
-    avg_time_per_unit: toNonNegativeNumber(metrics.avg_time_per_unit),
   };
 };
 const getDealWarnings = (
   deal: DealRow,
   metadata: MetadataRow,
-  prepMetrics: PrepMetrics | null
+  sourceQualityFlag: "LOW_QUALITY_SOURCE" | null
 ): string[] => {
   const warnings: string[] = [];
   if (hasTransportCategoryMismatch(deal.category, metadata.transport_type)) {
@@ -150,8 +170,8 @@ const getDealWarnings = (
       "Potential transport mismatch: electronics_bulk usually fits local_pickup or freight."
     );
   }
-  if (isLowQualitySource(prepMetrics)) {
-    warnings.push("LOW QUALITY SOURCE");
+  if (sourceQualityFlag) {
+    warnings.push(sourceQualityFlag);
   }
   return warnings;
 };
@@ -169,6 +189,7 @@ const mapDealRow = (row: Record<string, unknown>): DealRow => ({
   listing_date: (row.listing_date as string | null) ?? null,
   sale_date: (row.sale_date as string | null) ?? null,
   completion_date: (row.completion_date as string | null) ?? null,
+  unit_count: normalizeOptionalCount(row.unit_count as number | null | undefined),
   unit_breakdown: parseUnitBreakdown(row.unit_breakdown),
   prep_metrics: parsePrepMetrics(row.prep_metrics),
 });
@@ -258,6 +279,7 @@ const getDealViewById = (dealId: string): DealView | null => {
         d.listing_date,
         d.sale_date,
         d.completion_date,
+        d.unit_count,
         d.unit_breakdown,
         d.prep_metrics,
         f.deal_id AS f_deal_id,
@@ -320,8 +342,11 @@ const getDealViewById = (dealId: string): DealView | null => {
     prep_cost: financials.prep_cost,
     estimated_market_value: financials.estimated_market_value,
   });
-  const warnings = getDealWarnings(deal, metadata, deal.prep_metrics ?? null);
-  const efficiency = calculateEfficiency(deal.prep_metrics ?? null);
+  const executionMetrics = calculateExecutionMetrics(
+    deal.prep_metrics ?? null,
+    deal.unit_count ?? null
+  );
+  const warnings = getDealWarnings(deal, metadata, executionMetrics.source_quality_flag);
 
   return {
     deal,
@@ -332,13 +357,16 @@ const getDealViewById = (dealId: string): DealView | null => {
     },
     metadata,
     warnings,
-    prep_metrics: deal.prep_metrics ?? null,
-    efficiency,
     calculations: {
       total_cost_basis: recalculated.total_cost_basis,
       projected_profit: recalculated.projected_profit,
       realized_profit: recalculated.realized_profit,
       days_in_stage: recalculated.days_in_stage,
+      avg_time_per_unit: executionMetrics.avg_time_per_unit,
+      efficiency_score: executionMetrics.efficiency_score,
+      efficiency_rating: executionMetrics.efficiency_rating,
+      locked_ratio: executionMetrics.locked_ratio,
+      source_quality_flag: executionMetrics.source_quality_flag,
     },
   };
 };
@@ -352,10 +380,10 @@ export const createDeal = (input: CreateDealInput): DealView => {
   const listingDate = normalizeNullableDate(input.listing_date);
   const saleDate = normalizeNullableDate(input.sale_date);
   const completionDate = normalizeNullableDate(input.completion_date);
-  const prepMetrics =
-    input.prep_metrics && input.prep_metrics.total_units > 0
-      ? input.prep_metrics
-      : null;
+  const normalizedUnitCount = normalizeOptionalCount(input.unit_count);
+  const prepMetrics = normalizePrepMetricsInput(input.prep_metrics);
+  // V3.3 unit rule: prep_metrics presence takes priority and unit_count is ignored.
+  const resolvedUnitCount = input.prep_metrics ? null : normalizedUnitCount;
   const defaultTransportType = categoryProfiles[input.category].default_transport_type;
   const resolvedTransportType =
     input.metadata.transport_type ?? (defaultTransportType as MetadataRow["transport_type"]);
@@ -364,8 +392,9 @@ export const createDeal = (input: CreateDealInput): DealView => {
     db.prepare(
       `INSERT INTO deals (
         id, label, category, source_platform, acquisition_state, status, stage_updated_at,
-        discovered_date, purchase_date, listing_date, sale_date, completion_date, unit_breakdown, prep_metrics
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        discovered_date, purchase_date, listing_date, sale_date, completion_date, unit_count,
+        unit_breakdown, prep_metrics
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       input.label,
@@ -379,6 +408,7 @@ export const createDeal = (input: CreateDealInput): DealView => {
       listingDate,
       saleDate,
       completionDate,
+      resolvedUnitCount,
       input.unit_breakdown ? JSON.stringify(input.unit_breakdown) : null,
       prepMetrics ? JSON.stringify(prepMetrics) : null
     );

@@ -1,4 +1,8 @@
-import { DealCategory, DealStatus, TransportType } from "../models/dealV32";
+import {
+  PREP_EFFICIENCY_THRESHOLDS,
+  SOURCE_QUALITY_THRESHOLDS,
+} from "../config/executionThresholds";
+import type { DealCategory, DealStatus, PrepMetrics, TransportType } from "../models/dealV32";
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
@@ -21,30 +25,27 @@ export interface CalculationInput {
   estimated_market_value: number;
 }
 
+export type EfficiencyRating = "GOOD" | "WARNING" | "BAD";
+export type SourceQualityFlag = "LOW_QUALITY_SOURCE";
+
 export const getEfficiencyRating = (
   efficiencyScore: number | null
-): "GOOD" | "WARNING" | "BAD" | null => {
+): EfficiencyRating | null => {
   if (efficiencyScore === null) {
     return null;
   }
-  if (efficiencyScore < 5) {
+  if (efficiencyScore < PREP_EFFICIENCY_THRESHOLDS.good) {
     return "GOOD";
   }
-  if (efficiencyScore <= 8) {
+  if (efficiencyScore <= PREP_EFFICIENCY_THRESHOLDS.warning) {
     return "WARNING";
   }
   return "BAD";
 };
 
 export const calculateEfficiency = (
-  prepMetrics:
-    | {
-        total_units: number;
-        total_prep_time_minutes: number;
-      }
-    | null
-    | undefined
-): { efficiency_score: number | null; rating: "GOOD" | "WARNING" | "BAD" | null } => {
+  prepMetrics: Pick<PrepMetrics, "total_units" | "total_prep_time_minutes"> | null | undefined
+): { efficiency_score: number | null; rating: EfficiencyRating | null } => {
   if (!prepMetrics || prepMetrics.total_units <= 0) {
     return { efficiency_score: null, rating: null };
   }
@@ -60,18 +61,78 @@ export const calculateEfficiency = (
 };
 
 export const isLowQualitySource = (
-  prepMetrics:
-    | {
-        total_units: number;
-        locked_units: number;
-      }
-    | null
-    | undefined
+  prepMetrics: Pick<PrepMetrics, "total_units" | "locked_units"> | null | undefined
 ): boolean => {
   if (!prepMetrics || prepMetrics.total_units <= 0) {
     return false;
   }
-  return prepMetrics.locked_units / prepMetrics.total_units > 0.2;
+  return (
+    prepMetrics.locked_units / prepMetrics.total_units >
+    SOURCE_QUALITY_THRESHOLDS.locked_ratio_alert
+  );
+};
+
+const roundRatio = (value: number): number =>
+  Math.round((value + Number.EPSILON) * 10000) / 10000;
+
+const normalizeUnitCount = (value: number | null | undefined): number | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const normalized = Math.max(0, Math.floor(Number(value)));
+  return normalized > 0 ? normalized : null;
+};
+
+export interface ExecutionMetrics {
+  avg_time_per_unit: number | null;
+  efficiency_score: number | null;
+  efficiency_rating: EfficiencyRating | null;
+  locked_ratio: number | null;
+  source_quality_flag: SourceQualityFlag | null;
+}
+
+export const calculateExecutionMetrics = (
+  prepMetrics: PrepMetrics | null | undefined,
+  unitCount: number | null | undefined
+): ExecutionMetrics => {
+  // V3.3 unit rule: when prep_metrics exists, unit_count is ignored.
+  const fallbackUnitCount = prepMetrics ? null : normalizeUnitCount(unitCount);
+
+  if (prepMetrics && prepMetrics.total_units > 0) {
+    const avgTimePerUnit = roundCurrency(
+      prepMetrics.total_prep_time_minutes / prepMetrics.total_units
+    );
+    const lockedRatio = roundRatio(prepMetrics.locked_units / prepMetrics.total_units);
+
+    return {
+      avg_time_per_unit: avgTimePerUnit,
+      efficiency_score: avgTimePerUnit,
+      efficiency_rating: getEfficiencyRating(avgTimePerUnit),
+      locked_ratio: lockedRatio,
+      source_quality_flag:
+        lockedRatio > SOURCE_QUALITY_THRESHOLDS.locked_ratio_alert
+          ? "LOW_QUALITY_SOURCE"
+          : null,
+    };
+  }
+
+  if (fallbackUnitCount !== null) {
+    return {
+      avg_time_per_unit: null,
+      efficiency_score: null,
+      efficiency_rating: null,
+      locked_ratio: null,
+      source_quality_flag: null,
+    };
+  }
+
+  return {
+    avg_time_per_unit: null,
+    efficiency_score: null,
+    efficiency_rating: null,
+    locked_ratio: null,
+    source_quality_flag: null,
+  };
 };
 
 export const calculateTotalCostBasis = (input: CalculationInput): number => {
