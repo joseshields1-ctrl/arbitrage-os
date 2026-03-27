@@ -33,12 +33,14 @@ export const initializeDatabase = (): void => {
     CREATE TABLE IF NOT EXISTS financials (
       deal_id TEXT PRIMARY KEY,
       acquisition_cost REAL NOT NULL,
-      buyer_premium_pct REAL NOT NULL,
+      buyer_premium_pct REAL,
+      buyer_premium_overridden INTEGER NOT NULL DEFAULT 0,
       transport_cost_actual REAL,
       transport_cost_estimated REAL,
       repair_cost REAL,
       prep_cost REAL,
       estimated_market_value REAL NOT NULL,
+      sale_price_actual REAL,
       projected_profit REAL NOT NULL,
       realized_profit REAL NOT NULL,
       FOREIGN KEY (deal_id) REFERENCES deals(id) ON DELETE CASCADE
@@ -73,5 +75,19 @@ export const initializeDatabase = (): void => {
   const hasUnitCount = dealColumns.some((column) => column.name === "unit_count");
   if (!hasUnitCount) {
     db.exec(`ALTER TABLE deals ADD COLUMN unit_count INTEGER;`);
+  }
+
+  const financialColumns = db.prepare(`PRAGMA table_info(financials)`).all() as Array<{
+    name: string;
+  }>;
+  const hasBuyerPremiumOverridden = financialColumns.some(
+    (column) => column.name === "buyer_premium_overridden"
+  );
+  if (!hasBuyerPremiumOverridden) {
+    db.exec(`ALTER TABLE financials ADD COLUMN buyer_premium_overridden INTEGER NOT NULL DEFAULT 0;`);
+  }
+  const hasSalePriceActual = financialColumns.some((column) => column.name === "sale_price_actual");
+  if (!hasSalePriceActual) {
+    db.exec(`ALTER TABLE financials ADD COLUMN sale_price_actual REAL;`);
   }
 };

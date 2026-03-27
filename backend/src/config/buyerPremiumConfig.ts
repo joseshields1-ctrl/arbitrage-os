@@ -6,7 +6,7 @@ export type SourcePlatform =
   | "other";
 
 export interface PlatformBuyerPremiumConfig {
-  // Whole percent values (10 = 10%, 12.5 = 12.5%)
+  // Decimal values (0.10 = 10%, 0.125 = 12.5%).
   default_pct: number;
   by_state: Record<string, number>;
 }
@@ -15,21 +15,21 @@ export type BuyerPremiumConfig = Record<SourcePlatform, PlatformBuyerPremiumConf
 
 export const buyerPremiumConfig: BuyerPremiumConfig = {
   govdeals: {
-    default_pct: 12.5,
+    default_pct: 0.125,
     by_state: {
-      TX: 10,
-      CA: 12,
-      FL: 12.5,
-      NY: 13,
+      TX: 0.1,
+      CA: 0.12,
+      FL: 0.125,
+      NY: 0.13,
     },
   },
   publicsurplus: {
-    default_pct: 10,
+    default_pct: 0.1,
     by_state: {
-      TX: 9,
-      CA: 10,
-      WA: 10,
-      AZ: 9.5,
+      TX: 0.09,
+      CA: 0.1,
+      WA: 0.1,
+      AZ: 0.095,
     },
   },
   ebay: {

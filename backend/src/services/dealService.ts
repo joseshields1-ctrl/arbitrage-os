@@ -12,14 +12,8 @@ import {
   UnitBreakdown,
 } from "../models/dealV32";
 import { db } from "../db/sqlite";
-import {
-  calculateDealMetrics,
-  calculateDaysInStage,
-  calculateExecutionMetrics,
-  hasTransportCategoryMismatch,
-  isAgingAlert,
-} from "./dealCalculations";
 import { categoryProfiles } from "../config/categoryProfiles";
+import { enrichDeal } from "./engine/enrichDeal";
 
 export interface CreateDealInput {
   label: string;
@@ -45,11 +39,14 @@ export interface DealView {
   financials: FinancialRow;
   metadata: MetadataRow;
   warnings: string[];
+  engine: ReturnType<typeof enrichDeal>["engine"];
   calculations: {
     total_cost_basis: number;
     projected_profit: number;
     realized_profit: number;
     days_in_stage: number;
+    days_in_current_stage: number;
+    stage_alert: boolean;
     avg_time_per_unit: number | null;
     efficiency_score: number | null;
     efficiency_rating: "GOOD" | "WARNING" | "BAD" | null;
@@ -124,7 +121,6 @@ const parseUnitBreakdown = (value: unknown): UnitBreakdown | null => {
     units_locked: toNonNegativeInteger(breakdown.units_locked),
   };
 };
-
 const parsePrepMetrics = (value: unknown): PrepMetrics | null => {
   if (!value) {
     return null;
@@ -159,22 +155,6 @@ const parsePrepMetrics = (value: unknown): PrepMetrics | null => {
     total_prep_time_minutes: toNonNegativeNumber(metrics.total_prep_time_minutes),
   };
 };
-const getDealWarnings = (
-  deal: DealRow,
-  metadata: MetadataRow,
-  sourceQualityFlag: "LOW_QUALITY_SOURCE" | null
-): string[] => {
-  const warnings: string[] = [];
-  if (hasTransportCategoryMismatch(deal.category, metadata.transport_type)) {
-    warnings.push(
-      "Potential transport mismatch: electronics_bulk usually fits local_pickup or freight."
-    );
-  }
-  if (sourceQualityFlag) {
-    warnings.push(sourceQualityFlag);
-  }
-  return warnings;
-};
 
 const mapDealRow = (row: Record<string, unknown>): DealRow => ({
   id: String(row.id),
@@ -198,11 +178,13 @@ const mapFinancialRow = (row: Record<string, unknown>): FinancialRow => ({
   deal_id: String(row.deal_id),
   acquisition_cost: Number(row.acquisition_cost),
   buyer_premium_pct: Number(row.buyer_premium_pct),
+  buyer_premium_overridden: Boolean(Number(row.buyer_premium_overridden ?? 0)),
   transport_cost_actual: (row.transport_cost_actual as number | null) ?? null,
   transport_cost_estimated: (row.transport_cost_estimated as number | null) ?? null,
   repair_cost: (row.repair_cost as number | null) ?? null,
   prep_cost: (row.prep_cost as number | null) ?? null,
   estimated_market_value: Number(row.estimated_market_value),
+  sale_price_actual: (row.sale_price_actual as number | null) ?? null,
   projected_profit: Number(row.projected_profit),
   realized_profit: Number(row.realized_profit),
 });
@@ -220,17 +202,33 @@ const computeAndPersistFinancials = (dealId: string): void => {
     .prepare(
       `SELECT
         d.id AS deal_id,
+        d.label,
         d.category,
+        d.source_platform,
+        d.acquisition_state,
         d.status,
         d.stage_updated_at,
+        d.discovered_date,
+        d.purchase_date,
+        d.listing_date,
+        d.sale_date,
+        d.completion_date,
+        d.unit_count,
+        d.unit_breakdown,
+        d.prep_metrics,
         f.acquisition_cost,
         f.buyer_premium_pct,
+        f.buyer_premium_overridden,
         f.transport_cost_actual,
         f.transport_cost_estimated,
         f.repair_cost,
         f.prep_cost,
         f.estimated_market_value,
-        m.transport_type
+        f.sale_price_actual,
+        m.condition_grade,
+        m.condition_notes,
+        m.transport_type,
+        m.presentation_quality
        FROM deals d
        JOIN financials f ON f.deal_id = d.id
        JOIN metadata m ON m.deal_id = d.id
@@ -242,25 +240,87 @@ const computeAndPersistFinancials = (dealId: string): void => {
     return;
   }
 
-  const metrics = calculateDealMetrics({
-    status: joined.status as DealStatus,
-    stage_updated_at: String(joined.stage_updated_at),
-    acquisition_cost: Number(joined.acquisition_cost),
-    buyer_premium_pct: Number(joined.buyer_premium_pct),
-    category: joined.category as DealCategory,
-    transport_type: joined.transport_type as MetadataRow["transport_type"],
-    transport_cost_actual: (joined.transport_cost_actual as number | null) ?? null,
-    transport_cost_estimated: (joined.transport_cost_estimated as number | null) ?? null,
-    repair_cost: (joined.repair_cost as number | null) ?? null,
-    prep_cost: (joined.prep_cost as number | null) ?? null,
-    estimated_market_value: Number(joined.estimated_market_value),
+  const enriched = enrichDeal({
+    deal: {
+      id: String(joined.deal_id),
+      label: String(joined.label),
+      category: joined.category as DealCategory,
+      source_platform: joined.source_platform as SourcePlatform,
+      acquisition_state: String(joined.acquisition_state),
+      status: joined.status as DealStatus,
+      stage_updated_at: String(joined.stage_updated_at),
+      discovered_date: (joined.discovered_date as string | null) ?? null,
+      purchase_date: (joined.purchase_date as string | null) ?? null,
+      listing_date: (joined.listing_date as string | null) ?? null,
+      sale_date: (joined.sale_date as string | null) ?? null,
+      completion_date: (joined.completion_date as string | null) ?? null,
+      unit_count: normalizeOptionalCount(joined.unit_count as number | null | undefined),
+      unit_breakdown: parseUnitBreakdown(joined.unit_breakdown),
+      prep_metrics: parsePrepMetrics(joined.prep_metrics),
+    },
+    financials: {
+      deal_id: String(joined.deal_id),
+      acquisition_cost: Number(joined.acquisition_cost),
+      buyer_premium_pct: Number(joined.buyer_premium_pct),
+      buyer_premium_overridden: Boolean(Number(joined.buyer_premium_overridden ?? 0)),
+      transport_cost_actual: (joined.transport_cost_actual as number | null) ?? null,
+      transport_cost_estimated: (joined.transport_cost_estimated as number | null) ?? null,
+      repair_cost: (joined.repair_cost as number | null) ?? null,
+      prep_cost: (joined.prep_cost as number | null) ?? null,
+      estimated_market_value: Number(joined.estimated_market_value),
+      sale_price_actual: (joined.sale_price_actual as number | null) ?? null,
+      projected_profit: 0,
+      realized_profit: 0,
+    },
+    metadata: {
+      deal_id: String(joined.deal_id),
+      condition_grade: joined.condition_grade as MetadataRow["condition_grade"],
+      condition_notes: String(joined.condition_notes ?? ""),
+      transport_type: joined.transport_type as MetadataRow["transport_type"],
+      presentation_quality: String(joined.presentation_quality ?? "standard"),
+    },
   });
 
   db.prepare(
     `UPDATE financials
-     SET projected_profit = ?, realized_profit = ?
+     SET buyer_premium_pct = ?, buyer_premium_overridden = ?, projected_profit = ?, realized_profit = ?
      WHERE deal_id = ?`
-  ).run(metrics.projected_profit, metrics.realized_profit, dealId);
+  ).run(
+    enriched.financials.buyer_premium_pct,
+    enriched.financials.buyer_premium_overridden ? 1 : 0,
+    enriched.financials.projected_profit,
+    enriched.financials.realized_profit,
+    dealId
+  );
+};
+
+const buildEnrichedDealView = (
+  deal: DealRow,
+  financials: FinancialRow,
+  metadata: MetadataRow
+): DealView => {
+  const enriched = enrichDeal({ deal, financials, metadata });
+
+  return {
+    deal: enriched.deal,
+    financials: enriched.financials,
+    metadata: enriched.metadata,
+    warnings: enriched.warnings,
+    engine: enriched.engine,
+    calculations: {
+      total_cost_basis: enriched.calculations.total_cost_basis,
+      projected_profit: enriched.calculations.projected_profit,
+      realized_profit: enriched.calculations.realized_profit,
+      days_in_stage: enriched.calculations.days_in_stage,
+      days_in_current_stage: enriched.calculations.days_in_current_stage,
+      stage_alert: enriched.calculations.stage_alert,
+      avg_time_per_unit: enriched.calculations.avg_time_per_unit,
+      efficiency_score: enriched.calculations.efficiency_score,
+      efficiency_rating: enriched.calculations.efficiency_rating,
+      locked_ratio: enriched.calculations.locked_ratio,
+      source_quality_flag: enriched.calculations.source_quality_flag,
+    },
+  };
 };
 
 const getDealViewById = (dealId: string): DealView | null => {
@@ -285,11 +345,13 @@ const getDealViewById = (dealId: string): DealView | null => {
         f.deal_id AS f_deal_id,
         f.acquisition_cost,
         f.buyer_premium_pct,
+        f.buyer_premium_overridden,
         f.transport_cost_actual,
         f.transport_cost_estimated,
         f.repair_cost,
         f.prep_cost,
         f.estimated_market_value,
+        f.sale_price_actual,
         f.projected_profit,
         f.realized_profit,
         m.deal_id AS m_deal_id,
@@ -311,13 +373,15 @@ const getDealViewById = (dealId: string): DealView | null => {
   const deal = mapDealRow(joinedRows);
   const financials = mapFinancialRow({
     deal_id: joinedRows.f_deal_id,
-    acquisition_cost: joinedRows.acquisition_cost,
+    acquisition_cost: Number(joinedRows.acquisition_cost),
     buyer_premium_pct: joinedRows.buyer_premium_pct,
+    buyer_premium_overridden: joinedRows.buyer_premium_overridden,
     transport_cost_actual: joinedRows.transport_cost_actual,
     transport_cost_estimated: joinedRows.transport_cost_estimated,
     repair_cost: joinedRows.repair_cost,
     prep_cost: joinedRows.prep_cost,
     estimated_market_value: joinedRows.estimated_market_value,
+    sale_price_actual: joinedRows.sale_price_actual,
     projected_profit: joinedRows.projected_profit,
     realized_profit: joinedRows.realized_profit,
   });
@@ -328,47 +392,7 @@ const getDealViewById = (dealId: string): DealView | null => {
     transport_type: joinedRows.transport_type,
     presentation_quality: joinedRows.presentation_quality,
   });
-
-  const recalculated = calculateDealMetrics({
-    status: deal.status,
-    stage_updated_at: deal.stage_updated_at,
-    acquisition_cost: financials.acquisition_cost,
-    buyer_premium_pct: financials.buyer_premium_pct,
-    category: deal.category,
-    transport_type: metadata.transport_type,
-    transport_cost_actual: financials.transport_cost_actual,
-    transport_cost_estimated: financials.transport_cost_estimated,
-    repair_cost: financials.repair_cost,
-    prep_cost: financials.prep_cost,
-    estimated_market_value: financials.estimated_market_value,
-  });
-  const executionMetrics = calculateExecutionMetrics(
-    deal.prep_metrics ?? null,
-    deal.unit_count ?? null
-  );
-  const warnings = getDealWarnings(deal, metadata, executionMetrics.source_quality_flag);
-
-  return {
-    deal,
-    financials: {
-      ...financials,
-      projected_profit: recalculated.projected_profit,
-      realized_profit: recalculated.realized_profit,
-    },
-    metadata,
-    warnings,
-    calculations: {
-      total_cost_basis: recalculated.total_cost_basis,
-      projected_profit: recalculated.projected_profit,
-      realized_profit: recalculated.realized_profit,
-      days_in_stage: recalculated.days_in_stage,
-      avg_time_per_unit: executionMetrics.avg_time_per_unit,
-      efficiency_score: executionMetrics.efficiency_score,
-      efficiency_rating: executionMetrics.efficiency_rating,
-      locked_ratio: executionMetrics.locked_ratio,
-      source_quality_flag: executionMetrics.source_quality_flag,
-    },
-  };
+  return buildEnrichedDealView(deal, financials, metadata);
 };
 
 export const createDeal = (input: CreateDealInput): DealView => {
@@ -415,19 +439,23 @@ export const createDeal = (input: CreateDealInput): DealView => {
 
     db.prepare(
       `INSERT INTO financials (
-        deal_id, acquisition_cost, buyer_premium_pct, transport_cost_actual,
-        transport_cost_estimated, repair_cost, prep_cost, estimated_market_value,
+        deal_id, acquisition_cost, buyer_premium_pct, buyer_premium_overridden, transport_cost_actual,
+        transport_cost_estimated, repair_cost, prep_cost, estimated_market_value, sale_price_actual,
         projected_profit, realized_profit
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`
     ).run(
       id,
       input.financials.acquisition_cost,
-      input.financials.buyer_premium_pct ?? 0,
+      input.financials.buyer_premium_pct ?? null,
+      input.financials.buyer_premium_overridden && input.financials.buyer_premium_pct !== undefined
+        ? 1
+        : 0,
       input.financials.transport_cost_actual ?? null,
       input.financials.transport_cost_estimated ?? null,
       input.financials.repair_cost ?? null,
       input.financials.prep_cost ?? null,
-      input.financials.estimated_market_value
+      input.financials.estimated_market_value,
+      input.financials.sale_price_actual ?? null
     );
 
     db.prepare(
@@ -527,7 +555,7 @@ export const getDashboard = (): DashboardView => {
   );
 
   const agingAlerts = deals
-    .filter((item) => isAgingAlert(item.calculations.days_in_stage, item.deal.status))
+    .filter((item) => item.calculations.stage_alert)
     .map((item) => ({
       id: item.deal.id,
       label: item.deal.label,
@@ -546,10 +574,14 @@ export const getDashboard = (): DashboardView => {
 
 export const getDealStageAge = (dealId: string): number | null => {
   const row = db
-    .prepare(`SELECT stage_updated_at FROM deals WHERE id = ?`)
-    .get(dealId) as { stage_updated_at: string } | undefined;
+    .prepare(`SELECT id FROM deals WHERE id = ?`)
+    .get(dealId) as { id: string } | undefined;
   if (!row) {
     return null;
   }
-  return calculateDaysInStage(row.stage_updated_at);
+  const deal = getDealViewById(dealId);
+  if (!deal) {
+    return null;
+  }
+  return deal.calculations.days_in_current_stage;
 };

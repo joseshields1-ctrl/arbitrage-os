@@ -39,7 +39,7 @@ export const resolveBuyerPremium = (
 ): BuyerPremiumResolution => {
   if (typeof manualOverride === "number") {
     return {
-      // buyer_premium_pct is a whole percent number (10 = 10%).
+      // buyer_premium_pct is decimal (0.10 = 10%).
       buyer_premium_pct: manualOverride,
       buyer_premium_overridden: true,
     };
@@ -49,7 +49,7 @@ export const resolveBuyerPremium = (
   const resolved = resolveFromConfig(config, acquisitionState);
 
   return {
-    // buyer_premium_pct is a whole percent number (10 = 10%).
+    // buyer_premium_pct is decimal (0.10 = 10%).
     buyer_premium_pct: resolved,
     buyer_premium_overridden: false,
   };
