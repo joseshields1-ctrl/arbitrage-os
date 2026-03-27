@@ -37,6 +37,7 @@ export interface Deal {
   stage: DealStage;
   stage_updated_at: string;
   acquisition_cost: number;
+  // Whole percent format: 10 => 10%, 12.5 => 12.5%.
   buyer_premium_pct: number;
   buyer_premium_overridden: boolean;
   tax: number;

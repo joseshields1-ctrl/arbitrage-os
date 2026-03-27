@@ -21,11 +21,16 @@ export const calculateTotalCostBasis = (deal: Deal): CostBasisResult => {
   const estimated_inputs: string[] = [];
 
   const acquisitionCost = toAmount(deal.acquisition_cost);
+  // buyer_premium_pct is a whole-percent number (10 => 10%, 12.5 => 12.5%).
   const buyerPremium = acquisitionCost * (toAmount(deal.buyer_premium_pct) / 100);
   const tax = toAmount(deal.tax);
 
   let transport = 0;
-  if (deal.transport_paid_by === "buyer" && deal.transport_type !== "none") {
+  const transportIncludedTypes = ["auto_transport", "freight", "parcel"] as const;
+  if (
+    deal.transport_paid_by === "buyer" &&
+    transportIncludedTypes.includes(deal.transport_type)
+  ) {
     if (deal.transport_cost_actual !== null) {
       transport = toAmount(deal.transport_cost_actual);
     } else if (deal.transport_cost_estimated !== null) {
