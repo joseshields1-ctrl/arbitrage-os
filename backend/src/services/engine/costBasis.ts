@@ -7,6 +7,8 @@ export interface CostBasisInput {
   acquisition_state: string;
   buyer_premium_pct?: number | null;
   buyer_premium_overridden?: boolean;
+  tax_rate?: number | null;
+  tax_amount?: number | null;
   transport_type: TransportType;
   transport_cost_actual?: number | null;
   transport_cost_estimated?: number | null;
@@ -32,6 +34,8 @@ export interface CostBasisResult {
   estimated_inputs: string[];
   buyer_premium_pct: number;
   buyer_premium_overridden: boolean;
+  tax_rate: number | null;
+  tax_amount: number;
 }
 
 const VEHICLE_MECHANICAL_CONTINGENCY_PCT: Record<
@@ -88,7 +92,13 @@ const computeVehicleMechanicalContingency = (
 export const computeCostBasis = (input: CostBasisInput): CostBasisResult => {
   const estimatedInputs: string[] = [];
   const acquisitionCost = toAmount(input.acquisition_cost);
-  const tax = toAmount(input.tax);
+  const hasTaxRate = input.tax_rate !== null && input.tax_rate !== undefined;
+  const taxRate = hasTaxRate ? toAmount(input.tax_rate) : null;
+  const tax = hasTaxRate ? roundCurrency(acquisitionCost * toAmount(input.tax_rate)) : 0;
+  if (!hasTaxRate) {
+    estimatedInputs.push("tax_rate");
+    estimatedInputs.push("tax_amount");
+  }
   const repairCost = toAmount(input.repair_cost);
   const prepCost = toAmount(input.prep_cost);
 
@@ -135,6 +145,8 @@ export const computeCostBasis = (input: CostBasisInput): CostBasisResult => {
     estimated_inputs: estimatedInputs,
     buyer_premium_pct: premiumResolution.buyer_premium_pct,
     buyer_premium_overridden: premiumResolution.buyer_premium_overridden,
+    tax_rate: taxRate,
+    tax_amount: roundCurrency(tax),
   };
 };
 

@@ -4,6 +4,7 @@ import type { DealCategory } from "../../models/dealV32";
 export interface LiquidationResult {
   warning: boolean;
   trigger: boolean;
+  force_liquidation: boolean;
   recommended_action: string | null;
 }
 
@@ -16,6 +17,7 @@ export const computeLiquidation = (
     return {
       warning: false,
       trigger: false,
+      force_liquidation: false,
       recommended_action: null,
     };
   }
@@ -26,7 +28,8 @@ export const computeLiquidation = (
   return {
     warning,
     trigger,
-    recommended_action: warning ? rule.recommended_action : null,
+    force_liquidation: trigger,
+    recommended_action: trigger ? "FORCE_LIQUIDATION" : warning ? rule.recommended_action : null,
   };
 };
 

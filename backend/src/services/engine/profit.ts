@@ -26,7 +26,7 @@ export interface ProfitBreakdown {
 
 export interface ProfitResult {
   projected_profit: number;
-  realized_profit: number;
+  realized_profit: number | null;
   breakdown: ProfitBreakdown;
 }
 
@@ -74,14 +74,14 @@ export const computeProjectedProfit = (
   };
 };
 
-export const computeRealizedProfit = (input: ProfitInput): number => {
+export const computeRealizedProfit = (input: ProfitInput): number | null => {
   if (input.status !== "completed") {
-    return 0;
+    return null;
   }
-  const settledRevenueBase =
-    input.sale_price_actual !== null && input.sale_price_actual !== undefined
-      ? toAmount(input.sale_price_actual)
-      : toAmount(input.estimated_market_value);
+  if (input.sale_price_actual === null || input.sale_price_actual === undefined) {
+    return null;
+  }
+  const settledRevenueBase = toAmount(input.sale_price_actual);
 
   const platformFeePct = PLATFORM_FEE_PCT[input.source_platform];
   const returnRateBufferPct = getReturnBufferPct(input.category);

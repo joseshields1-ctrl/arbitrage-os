@@ -35,6 +35,8 @@ export const initializeDatabase = (): void => {
       acquisition_cost REAL NOT NULL,
       buyer_premium_pct REAL,
       buyer_premium_overridden INTEGER NOT NULL DEFAULT 0,
+      tax_rate REAL,
+      tax_amount REAL,
       transport_cost_actual REAL,
       transport_cost_estimated REAL,
       repair_cost REAL,
@@ -42,7 +44,7 @@ export const initializeDatabase = (): void => {
       estimated_market_value REAL NOT NULL,
       sale_price_actual REAL,
       projected_profit REAL NOT NULL,
-      realized_profit REAL NOT NULL,
+      realized_profit REAL,
       FOREIGN KEY (deal_id) REFERENCES deals(id) ON DELETE CASCADE
     );
   `);
@@ -89,5 +91,13 @@ export const initializeDatabase = (): void => {
   const hasSalePriceActual = financialColumns.some((column) => column.name === "sale_price_actual");
   if (!hasSalePriceActual) {
     db.exec(`ALTER TABLE financials ADD COLUMN sale_price_actual REAL;`);
+  }
+  const hasTaxRate = financialColumns.some((column) => column.name === "tax_rate");
+  if (!hasTaxRate) {
+    db.exec(`ALTER TABLE financials ADD COLUMN tax_rate REAL;`);
+  }
+  const hasTaxAmount = financialColumns.some((column) => column.name === "tax_amount");
+  if (!hasTaxAmount) {
+    db.exec(`ALTER TABLE financials ADD COLUMN tax_amount REAL;`);
   }
 };

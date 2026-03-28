@@ -8,6 +8,15 @@ export const DEMAND_WEIGHT_BY_CATEGORY = {
   electronics_individual: 0.74,
 } as const;
 
+export const DEMAND_SIGNAL_WEIGHTS = {
+  watchers: 0.1,
+  bids: 1.0,
+  inquiries: {
+    weak_intent: 0.1,
+    strong_intent: 0.9,
+  },
+} as const;
+
 export const CONDITION_MULTIPLIER: Record<ConditionGrade, number> = {
   excellent: 1,
   used_good: 0.92,

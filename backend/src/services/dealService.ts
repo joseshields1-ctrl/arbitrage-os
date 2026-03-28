@@ -43,10 +43,11 @@ export interface DealView {
   calculations: {
     total_cost_basis: number;
     projected_profit: number;
-    realized_profit: number;
+    realized_profit: number | null;
     days_in_stage: number;
     days_in_current_stage: number;
     stage_alert: boolean;
+    data_confidence: number;
     avg_time_per_unit: number | null;
     efficiency_score: number | null;
     efficiency_rating: "GOOD" | "WARNING" | "BAD" | null;
@@ -179,6 +180,8 @@ const mapFinancialRow = (row: Record<string, unknown>): FinancialRow => ({
   acquisition_cost: Number(row.acquisition_cost),
   buyer_premium_pct: Number(row.buyer_premium_pct),
   buyer_premium_overridden: Boolean(Number(row.buyer_premium_overridden ?? 0)),
+  tax_rate: (row.tax_rate as number | null) ?? null,
+  tax_amount: (row.tax_amount as number | null) ?? null,
   transport_cost_actual: (row.transport_cost_actual as number | null) ?? null,
   transport_cost_estimated: (row.transport_cost_estimated as number | null) ?? null,
   repair_cost: (row.repair_cost as number | null) ?? null,
@@ -186,7 +189,10 @@ const mapFinancialRow = (row: Record<string, unknown>): FinancialRow => ({
   estimated_market_value: Number(row.estimated_market_value),
   sale_price_actual: (row.sale_price_actual as number | null) ?? null,
   projected_profit: Number(row.projected_profit),
-  realized_profit: Number(row.realized_profit),
+  realized_profit:
+    row.realized_profit === null || row.realized_profit === undefined
+      ? null
+      : Number(row.realized_profit),
 });
 
 const mapMetadataRow = (row: Record<string, unknown>): MetadataRow => ({
@@ -219,6 +225,8 @@ const computeAndPersistFinancials = (dealId: string): void => {
         f.acquisition_cost,
         f.buyer_premium_pct,
         f.buyer_premium_overridden,
+        f.tax_rate,
+        f.tax_amount,
         f.transport_cost_actual,
         f.transport_cost_estimated,
         f.repair_cost,
@@ -263,6 +271,8 @@ const computeAndPersistFinancials = (dealId: string): void => {
       acquisition_cost: Number(joined.acquisition_cost),
       buyer_premium_pct: Number(joined.buyer_premium_pct),
       buyer_premium_overridden: Boolean(Number(joined.buyer_premium_overridden ?? 0)),
+      tax_rate: (joined.tax_rate as number | null) ?? null,
+      tax_amount: (joined.tax_amount as number | null) ?? null,
       transport_cost_actual: (joined.transport_cost_actual as number | null) ?? null,
       transport_cost_estimated: (joined.transport_cost_estimated as number | null) ?? null,
       repair_cost: (joined.repair_cost as number | null) ?? null,
@@ -283,13 +293,16 @@ const computeAndPersistFinancials = (dealId: string): void => {
 
   db.prepare(
     `UPDATE financials
-     SET buyer_premium_pct = ?, buyer_premium_overridden = ?, projected_profit = ?, realized_profit = ?
+     SET buyer_premium_pct = ?, buyer_premium_overridden = ?, tax_rate = ?, tax_amount = ?,
+         projected_profit = ?, realized_profit = ?
      WHERE deal_id = ?`
   ).run(
     enriched.financials.buyer_premium_pct,
     enriched.financials.buyer_premium_overridden ? 1 : 0,
+    enriched.financials.tax_rate,
+    enriched.financials.tax_amount,
     enriched.financials.projected_profit,
-    enriched.financials.realized_profit,
+    enriched.financials.realized_profit ?? 0,
     dealId
   );
 };
@@ -314,6 +327,7 @@ const buildEnrichedDealView = (
       days_in_stage: enriched.calculations.days_in_stage,
       days_in_current_stage: enriched.calculations.days_in_current_stage,
       stage_alert: enriched.calculations.stage_alert,
+      data_confidence: enriched.calculations.data_confidence,
       avg_time_per_unit: enriched.calculations.avg_time_per_unit,
       efficiency_score: enriched.calculations.efficiency_score,
       efficiency_rating: enriched.calculations.efficiency_rating,
@@ -346,6 +360,8 @@ const getDealViewById = (dealId: string): DealView | null => {
         f.acquisition_cost,
         f.buyer_premium_pct,
         f.buyer_premium_overridden,
+        f.tax_rate,
+        f.tax_amount,
         f.transport_cost_actual,
         f.transport_cost_estimated,
         f.repair_cost,
@@ -376,6 +392,8 @@ const getDealViewById = (dealId: string): DealView | null => {
     acquisition_cost: Number(joinedRows.acquisition_cost),
     buyer_premium_pct: joinedRows.buyer_premium_pct,
     buyer_premium_overridden: joinedRows.buyer_premium_overridden,
+    tax_rate: joinedRows.tax_rate,
+    tax_amount: joinedRows.tax_amount,
     transport_cost_actual: joinedRows.transport_cost_actual,
     transport_cost_estimated: joinedRows.transport_cost_estimated,
     repair_cost: joinedRows.repair_cost,
@@ -439,17 +457,20 @@ export const createDeal = (input: CreateDealInput): DealView => {
 
     db.prepare(
       `INSERT INTO financials (
-        deal_id, acquisition_cost, buyer_premium_pct, buyer_premium_overridden, transport_cost_actual,
+        deal_id, acquisition_cost, buyer_premium_pct, buyer_premium_overridden, tax_rate, tax_amount,
+        transport_cost_actual,
         transport_cost_estimated, repair_cost, prep_cost, estimated_market_value, sale_price_actual,
         projected_profit, realized_profit
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`
     ).run(
       id,
       input.financials.acquisition_cost,
-      input.financials.buyer_premium_pct ?? null,
+      input.financials.buyer_premium_pct ?? 0,
       input.financials.buyer_premium_overridden && input.financials.buyer_premium_pct !== undefined
         ? 1
         : 0,
+      input.financials.tax_rate ?? null,
+      input.financials.tax_amount ?? null,
       input.financials.transport_cost_actual ?? null,
       input.financials.transport_cost_estimated ?? null,
       input.financials.repair_cost ?? null,
@@ -546,7 +567,7 @@ export const getDashboard = (): DashboardView => {
   const completedDeals = deals.filter((item) => item.deal.status === "completed");
 
   const realizedProfitTotal = completedDeals.reduce(
-    (sum, item) => sum + item.calculations.realized_profit,
+    (sum, item) => sum + (item.calculations.realized_profit ?? 0),
     0
   );
   const projectedProfitTotal = activeDeals.reduce(

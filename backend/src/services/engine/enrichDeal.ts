@@ -13,6 +13,7 @@ import { computeAging } from "./aging";
 import { computeLiquidation } from "./liquidation";
 import { computePostmortem } from "./postmortem";
 import { calculateExecutionMetrics } from "../dealCalculations";
+import { computeDataConfidence } from "./dataConfidence";
 
 export interface EnrichedDeal {
   deal: DealRow;
@@ -21,10 +22,11 @@ export interface EnrichedDeal {
   calculations: {
     total_cost_basis: number;
     projected_profit: number;
-    realized_profit: number;
+    realized_profit: number | null;
     days_in_stage: number;
     days_in_current_stage: number;
     stage_alert: boolean;
+    data_confidence: number;
     avg_time_per_unit: number | null;
     efficiency_score: number | null;
     efficiency_rating: "GOOD" | "WARNING" | "BAD" | null;
@@ -37,6 +39,7 @@ export interface EnrichedDeal {
     scoring: ReturnType<typeof computeScoring>;
     aging: ReturnType<typeof computeAging>;
     liquidation: ReturnType<typeof computeLiquidation>;
+    data_confidence: number;
     postmortem: ReturnType<typeof computePostmortem>;
   };
   warnings: string[];
@@ -98,12 +101,14 @@ export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): Enr
     acquisition_state: deal.acquisition_state,
     buyer_premium_pct: financials.buyer_premium_pct,
     buyer_premium_overridden: financials.buyer_premium_overridden,
+    tax_rate: financials.tax_rate,
+    tax_amount: financials.tax_amount,
     transport_type: metadata.transport_type,
     transport_cost_actual: financials.transport_cost_actual,
     transport_cost_estimated: financials.transport_cost_estimated,
     repair_cost: financials.repair_cost,
     prep_cost: financials.prep_cost,
-    tax: 0,
+    tax: financials.tax_amount,
     category: deal.category,
   });
 
@@ -112,7 +117,24 @@ export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): Enr
     source_platform: deal.source_platform,
     status: deal.status as DealStatus,
     estimated_market_value: financials.estimated_market_value,
+    sale_price_actual: financials.sale_price_actual,
     total_cost_basis: costBasis.total_cost_basis,
+  });
+
+  const aging = computeAging(deal.stage_updated_at, deal.status);
+  const liquidation = computeLiquidation(deal.category, aging.days_in_current_stage);
+  const dataConfidence = computeDataConfidence({
+    estimated_inputs: costBasis.estimated_inputs,
+    repair_cost: financials.repair_cost,
+    condition_grade: metadata.condition_grade,
+    condition_notes: metadata.condition_notes,
+  });
+  const execution = calculateExecutionMetrics(normalizedPrepMetrics, normalizedUnitCount);
+  const postmortem = computePostmortem({
+    projected_profit: profit.projected_profit,
+    realized_profit: profit.realized_profit ?? 0,
+    total_cost_basis: costBasis.total_cost_basis,
+    conservative_revenue_projection: profit.breakdown.conservative_revenue_projection,
   });
 
   const scoring = computeScoring({
@@ -120,16 +142,7 @@ export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): Enr
     condition_grade: metadata.condition_grade,
     projected_profit: profit.projected_profit,
     total_cost_basis: costBasis.total_cost_basis,
-  });
-
-  const aging = computeAging(deal.stage_updated_at, deal.status);
-  const liquidation = computeLiquidation(deal.category, aging.days_in_current_stage);
-  const execution = calculateExecutionMetrics(normalizedPrepMetrics, normalizedUnitCount);
-  const postmortem = computePostmortem({
-    projected_profit: profit.projected_profit,
-    realized_profit: profit.realized_profit,
-    total_cost_basis: costBasis.total_cost_basis,
-    conservative_revenue_projection: profit.breakdown.conservative_revenue_projection,
+    force_liquidation: liquidation.force_liquidation,
   });
 
   return {
@@ -141,6 +154,9 @@ export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): Enr
     financials: {
       ...financials,
       buyer_premium_pct: costBasis.buyer_premium_pct,
+      buyer_premium_overridden: costBasis.buyer_premium_overridden,
+      tax_rate: costBasis.tax_rate,
+      tax_amount: costBasis.tax_amount,
       projected_profit: profit.projected_profit,
       realized_profit: profit.realized_profit,
     },
@@ -152,6 +168,7 @@ export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): Enr
       days_in_stage: aging.days_in_current_stage,
       days_in_current_stage: aging.days_in_current_stage,
       stage_alert: aging.stage_alert,
+      data_confidence: dataConfidence,
       avg_time_per_unit: execution.avg_time_per_unit,
       efficiency_score: execution.efficiency_score,
       efficiency_rating: execution.efficiency_rating,
@@ -164,6 +181,7 @@ export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): Enr
       scoring,
       aging,
       liquidation,
+      data_confidence: dataConfidence,
       postmortem,
     },
     warnings: buildWarnings(deal.category, metadata.transport_type, execution.source_quality_flag),

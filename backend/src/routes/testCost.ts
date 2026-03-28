@@ -32,12 +32,12 @@ testCostRouter.get("/", (_req, res) => {
     acquisition_state: "TX",
     buyer_premium_pct: 0.1,
     buyer_premium_overridden: false,
+    tax_rate: 0.075,
     transport_type: mockDeal.transport_type,
     transport_cost_actual: mockDeal.transport_cost_actual,
     transport_cost_estimated: mockDeal.transport_cost_estimated,
     repair_cost: mockDeal.repair_cost,
     prep_cost: mockDeal.prep_cost,
-    tax: mockDeal.tax,
     category: mockDeal.category,
   });
 

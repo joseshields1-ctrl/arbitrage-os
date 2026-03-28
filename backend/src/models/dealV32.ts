@@ -63,6 +63,8 @@ export interface FinancialInput {
   // Decimal format: 0.10 means 10%, 0.125 means 12.5%.
   buyer_premium_pct?: number;
   buyer_premium_overridden?: boolean;
+  tax_rate?: number | null;
+  tax_amount?: number | null;
   transport_cost_actual?: number | null;
   transport_cost_estimated?: number | null;
   repair_cost?: number | null;
@@ -76,6 +78,8 @@ export interface FinancialRow {
   acquisition_cost: number;
   buyer_premium_pct: number;
   buyer_premium_overridden: boolean;
+  tax_rate: number | null;
+  tax_amount: number | null;
   transport_cost_actual: number | null;
   transport_cost_estimated: number | null;
   repair_cost: number | null;
@@ -83,7 +87,7 @@ export interface FinancialRow {
   estimated_market_value: number;
   sale_price_actual: number | null;
   projected_profit: number;
-  realized_profit: number;
+  realized_profit: number | null;
 }
 
 export interface MetadataInput {
@@ -104,10 +108,11 @@ export interface MetadataRow {
 export interface DealComputedMetrics {
   total_cost_basis: number;
   projected_profit: number;
-  realized_profit: number;
+  realized_profit: number | null;
   days_in_stage: number;
   days_in_current_stage: number;
   stage_alert: boolean;
+  data_confidence: number;
   efficiency_score: number | null;
   efficiency_rating: "GOOD" | "WARNING" | "BAD" | null;
   avg_time_per_unit: number | null;

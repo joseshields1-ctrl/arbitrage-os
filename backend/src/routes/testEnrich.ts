@@ -43,6 +43,8 @@ testEnrichRouter.get("/", (_req, res) => {
     acquisition_cost: 1000,
     buyer_premium_pct: 0.1,
     buyer_premium_overridden: false,
+    tax_rate: null,
+    tax_amount: null,
     transport_cost_actual: null,
     transport_cost_estimated: 120,
     repair_cost: 20,
@@ -50,7 +52,7 @@ testEnrichRouter.get("/", (_req, res) => {
     estimated_market_value: 1600,
     sale_price_actual: null,
     projected_profit: 0,
-    realized_profit: 0,
+    realized_profit: null,
   };
 
   const mockMetadata: MetadataRow = {
