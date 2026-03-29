@@ -55,6 +55,33 @@ export interface DashboardView {
   }>;
 }
 
+export interface OperatorDailySummary {
+  active_deals_count: number;
+  completed_deals_count: number;
+  projected_profit_total: number;
+  realized_profit_total: number;
+  critical_alert_count: number;
+  deals_requiring_action_today: number;
+  top_risk_deals: Array<{
+    id: string;
+    label: string;
+    status: DealStatus;
+    data_confidence: number;
+    projected_profit: number;
+    realized_profit: number | null;
+    recommended_action: ReturnType<typeof enrichDeal>["engine"]["recommended_action"];
+    alerts: ReturnType<typeof enrichDeal>["alerts"];
+    operator_recommendation: string;
+  }>;
+  top_profit_drift_deals: Array<{
+    id: string;
+    label: string;
+    variance_pct: number;
+    profit_delta: number;
+    drift_sources: ReturnType<typeof enrichDeal>["engine"]["postmortem"]["drift_sources"];
+  }>;
+}
+
 const nowIso = (): string => new Date().toISOString();
 const normalizeNullableDate = (value?: string | null): string | null => value ?? null;
 const isFiniteNumber = (value: unknown): value is number =>
@@ -834,6 +861,86 @@ export const getDashboard = (): DashboardView => {
     realized_profit_total: realizedProfitTotal,
     projected_profit_total: projectedProfitTotal,
     aging_alerts: agingAlerts,
+  };
+};
+
+const getRiskScore = (deal: DealView): number => {
+  const criticalAlerts = deal.alerts.filter((alert) => alert.severity === "critical").length;
+  const warningAlerts = deal.alerts.filter((alert) => alert.severity === "warning").length;
+  const negativeProjectedPenalty = deal.calculations.projected_profit < 0 ? 12 : 0;
+  const confidencePenalty = Math.max(0, 100 - deal.calculations.data_confidence) / 4;
+  const liquidationPenalty = deal.engine.liquidation.force_liquidation ? 20 : 0;
+  return (
+    criticalAlerts * 100 +
+    warningAlerts * 25 +
+    negativeProjectedPenalty +
+    confidencePenalty +
+    liquidationPenalty
+  );
+};
+
+export const getOperatorDailySummary = (): OperatorDailySummary => {
+  const deals = listDeals();
+  const activeDeals = deals.filter((item) => item.deal.status !== "completed");
+  const completedDeals = deals.filter((item) => item.deal.status === "completed");
+
+  const projectedProfitTotal = activeDeals.reduce(
+    (sum, item) => sum + item.calculations.projected_profit,
+    0
+  );
+  const realizedProfitTotal = completedDeals.reduce(
+    (sum, item) => sum + (item.calculations.realized_profit ?? 0),
+    0
+  );
+
+  const criticalAlertCount = deals.reduce(
+    (sum, item) => sum + item.alerts.filter((alert) => alert.severity === "critical").length,
+    0
+  );
+  const dealsRequiringActionToday = activeDeals.filter((item) => {
+    const action = item.engine.recommended_action;
+    return item.alerts.length > 0 || (action !== null && action !== "pass");
+  }).length;
+
+  const topRiskDeals = [...deals]
+    .sort((a, b) => getRiskScore(b) - getRiskScore(a))
+    .slice(0, 5)
+    .map((item) => ({
+      id: item.deal.id,
+      label: item.deal.label,
+      status: item.deal.status,
+      data_confidence: item.calculations.data_confidence,
+      projected_profit: item.calculations.projected_profit,
+      realized_profit: item.calculations.realized_profit,
+      recommended_action: item.engine.recommended_action,
+      alerts: item.alerts,
+      operator_recommendation: item.operator_recommendation,
+    }));
+
+  const topProfitDriftDeals = completedDeals
+    .filter(
+      (item) =>
+        item.engine.postmortem.variance_pct !== null && item.engine.postmortem.profit_delta !== null
+    )
+    .sort((a, b) => a.engine.postmortem.variance_pct! - b.engine.postmortem.variance_pct!)
+    .slice(0, 5)
+    .map((item) => ({
+      id: item.deal.id,
+      label: item.deal.label,
+      variance_pct: item.engine.postmortem.variance_pct!,
+      profit_delta: item.engine.postmortem.profit_delta!,
+      drift_sources: item.engine.postmortem.drift_sources,
+    }));
+
+  return {
+    active_deals_count: activeDeals.length,
+    completed_deals_count: completedDeals.length,
+    projected_profit_total: projectedProfitTotal,
+    realized_profit_total: realizedProfitTotal,
+    critical_alert_count: criticalAlertCount,
+    deals_requiring_action_today: dealsRequiringActionToday,
+    top_risk_deals: topRiskDeals,
+    top_profit_drift_deals: topProfitDriftDeals,
   };
 };
 

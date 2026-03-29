@@ -102,3 +102,64 @@ Postmortem output is computed in-engine when `realized_profit` exists (completed
 - If drift is strongly negative and there are multiple estimated inputs, `calculations.data_confidence` is reduced further in enrichment output.
 
 No analytics UI or additional persistence tables are added in Phase 1.2.
+
+## Operator layer payloads (Phase 1.4)
+
+### Alerts array on enriched deals
+
+Each enriched deal now includes:
+
+- `alerts: Array<{ code, severity, message }>`
+
+Alert codes:
+
+- `FORCE_LIQUIDATION`
+- `STAGE_CRITICAL`
+- `TITLE_DELAY`
+- `PROFIT_DRIFT_HIGH`
+- `COST_OVERRUN`
+- `ESTIMATION_FAILURE`
+- `POSTMORTEM_INCOMPLETE`
+- `LOW_DATA_CONFIDENCE`
+
+`warnings` continues to include transport/source warnings and now also includes alert codes for simple UI display.
+
+### Daily operator summary
+
+New endpoint:
+
+- `GET /api/dashboard/operator-summary`
+
+Payload includes:
+
+- `active_deals_count`
+- `completed_deals_count`
+- `projected_profit_total`
+- `realized_profit_total`
+- `critical_alert_count`
+- `deals_requiring_action_today`
+- `top_risk_deals`
+- `top_profit_drift_deals`
+
+### Assistant-readiness context object
+
+Each enriched deal now includes:
+
+- `assistant_context.current_deal`
+- `assistant_context.calculations`
+- `assistant_context.engine`
+- `assistant_context.warnings`
+- `assistant_context.postmortem`
+- `assistant_context.recommendation_summary`
+
+### Operator validation route
+
+New route for inspection/testing:
+
+- `GET /test-operator`
+
+Returns:
+
+- `alerts_preview`
+- `operator_summary`
+- `assistant_context_preview`

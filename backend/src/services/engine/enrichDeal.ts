@@ -23,6 +23,22 @@ export type EngineRecommendedAction =
   | "liquidate_now"
   | null;
 
+export type OperatorAlertCode =
+  | "FORCE_LIQUIDATION"
+  | "STAGE_CRITICAL"
+  | "TITLE_DELAY"
+  | "PROFIT_DRIFT_HIGH"
+  | "COST_OVERRUN"
+  | "ESTIMATION_FAILURE"
+  | "POSTMORTEM_INCOMPLETE"
+  | "LOW_DATA_CONFIDENCE";
+
+export interface OperatorAlert {
+  code: OperatorAlertCode;
+  severity: "critical" | "warning" | "info";
+  message: string;
+}
+
 export interface EnrichedDeal {
   deal: DealRow;
   financials: FinancialRow;
@@ -51,8 +67,30 @@ export interface EnrichedDeal {
     postmortem: ReturnType<typeof computePostmortem>;
     recommended_action: EngineRecommendedAction;
   };
+  alerts: OperatorAlert[];
   warnings: string[];
+  operator_recommendation: string;
+  assistant_context: {
+    current_deal: {
+      deal: DealRow;
+      financials: FinancialRow;
+      metadata: MetadataRow;
+    };
+    calculations: EnrichedDeal["calculations"];
+    engine: EnrichedDeal["engine"];
+    warnings: string[];
+    postmortem: ReturnType<typeof computePostmortem>;
+    recommendation_summary: string;
+  };
 }
+
+const LOW_DATA_CONFIDENCE_THRESHOLD = 60;
+const TITLE_DELAY_DAYS = 14;
+const TITLE_DELAY_CATEGORIES: ReadonlySet<DealCategory> = new Set([
+  "vehicle_suv",
+  "vehicle_police_fleet",
+  "powersports",
+]);
 
 const normalizePrepMetrics = (value: PrepMetrics | null | undefined): PrepMetrics | null => {
   if (!value) {
@@ -69,13 +107,95 @@ const normalizePrepMetrics = (value: PrepMetrics | null | undefined): PrepMetric
   };
 };
 
+const buildAlerts = (input: {
+  deal: DealRow;
+  stage_alert: "OK" | "WARNING" | "CRITICAL";
+  liquidation: ReturnType<typeof computeLiquidation>;
+  postmortem: ReturnType<typeof computePostmortem>;
+  estimated_inputs: string[];
+  data_confidence: number;
+}): OperatorAlert[] => {
+  const alerts: OperatorAlert[] = [];
+
+  if (input.liquidation.force_liquidation) {
+    alerts.push({
+      code: "FORCE_LIQUIDATION",
+      severity: "critical",
+      message: "Liquidation trigger is active for this deal.",
+    });
+  }
+  if (input.stage_alert === "CRITICAL") {
+    alerts.push({
+      code: "STAGE_CRITICAL",
+      severity: "critical",
+      message: "Deal is in a critical stage-aging state.",
+    });
+  }
+  if (
+    TITLE_DELAY_CATEGORIES.has(input.deal.category) &&
+    (input.deal.status === "acquired" || input.deal.status === "prep" || input.deal.status === "listed") &&
+    input.deal.purchase_date
+  ) {
+    const purchaseTs = Date.parse(input.deal.purchase_date);
+    if (Number.isFinite(purchaseTs)) {
+      const daysSincePurchase = (Date.now() - purchaseTs) / (1000 * 60 * 60 * 24);
+      if (daysSincePurchase > TITLE_DELAY_DAYS) {
+        alerts.push({
+          code: "TITLE_DELAY",
+          severity: "warning",
+          message: "Deal may be delayed by title/registration timeline.",
+        });
+      }
+    }
+  }
+  if (input.postmortem.profit_drift_flag === "HIGH_NEGATIVE") {
+    alerts.push({
+      code: "PROFIT_DRIFT_HIGH",
+      severity: "critical",
+      message: "Postmortem shows high negative profit drift.",
+    });
+  }
+  if (input.postmortem.cost_overrun_flag) {
+    alerts.push({
+      code: "COST_OVERRUN",
+      severity: "warning",
+      message: "Actual cost basis materially exceeded projected baseline.",
+    });
+  }
+  if (
+    (input.postmortem.profit_drift_flag === "HIGH_NEGATIVE" ||
+      input.postmortem.profit_drift_flag === "NEGATIVE") &&
+    input.estimated_inputs.length >= 2
+  ) {
+    alerts.push({
+      code: "ESTIMATION_FAILURE",
+      severity: "warning",
+      message: "Multiple estimated inputs likely contributed to drift.",
+    });
+  }
+  if (input.deal.status === "completed" && input.postmortem.postmortem_incomplete) {
+    alerts.push({
+      code: "POSTMORTEM_INCOMPLETE",
+      severity: "warning",
+      message: "Completed deal is missing required data for full postmortem.",
+    });
+  }
+  if (input.data_confidence <= LOW_DATA_CONFIDENCE_THRESHOLD) {
+    alerts.push({
+      code: "LOW_DATA_CONFIDENCE",
+      severity: "warning",
+      message: "Data confidence is below the operator threshold.",
+    });
+  }
+
+  return alerts;
+};
+
 const buildWarnings = (
   category: DealCategory,
   transportType: MetadataRow["transport_type"],
   sourceQualityFlag: "LOW_QUALITY_SOURCE" | null,
-  postmortem: ReturnType<typeof computePostmortem>,
-  estimatedInputs: string[],
-  status: DealStatus
+  alerts: OperatorAlert[]
 ): string[] => {
   const warnings: string[] = [];
   if (category === "electronics_bulk" && transportType === "parcel") {
@@ -86,22 +206,10 @@ const buildWarnings = (
   if (sourceQualityFlag) {
     warnings.push(sourceQualityFlag);
   }
-  if (postmortem.profit_drift_flag === "HIGH_NEGATIVE") {
-    warnings.push("PROFIT_DRIFT_HIGH");
+  for (const alert of alerts) {
+    warnings.push(alert.code);
   }
-  if (postmortem.cost_overrun_flag) {
-    warnings.push("COST_OVERRUN");
-  }
-  if (
-    (postmortem.profit_drift_flag === "HIGH_NEGATIVE" || postmortem.profit_drift_flag === "NEGATIVE") &&
-    estimatedInputs.length >= 2
-  ) {
-    warnings.push("ESTIMATION_FAILURE");
-  }
-  if (status === "completed" && postmortem.postmortem_incomplete) {
-    warnings.push("POSTMORTEM_INCOMPLETE");
-  }
-  return warnings;
+  return Array.from(new Set(warnings));
 };
 
 const normalizeOptionalCount = (value: number | null | undefined): number | null => {
@@ -110,6 +218,41 @@ const normalizeOptionalCount = (value: number | null | undefined): number | null
   }
   const normalized = Math.max(0, Math.floor(Number(value)));
   return normalized > 0 ? normalized : null;
+};
+
+const buildOperatorRecommendationSummary = (input: {
+  status: DealStatus;
+  recommended_action: EngineRecommendedAction;
+  projected_profit: number;
+  scoring: ReturnType<typeof computeScoring>;
+  liquidation: ReturnType<typeof computeLiquidation>;
+  data_confidence: number;
+  postmortem: ReturnType<typeof computePostmortem>;
+}): string => {
+  const actionText = input.recommended_action ?? "completed";
+  const reasons: string[] = [];
+  if (input.liquidation.force_liquidation) {
+    reasons.push("Liquidation trigger is active due to category/stage thresholds.");
+  }
+  if (input.status !== "completed" && input.projected_profit < 0) {
+    reasons.push("Projected profit is negative.");
+  }
+  if (input.scoring.acquisition_score < 40 || input.scoring.exit_score < 40) {
+    reasons.push("Acquisition/exit scoring is weak.");
+  }
+  if (input.data_confidence <= LOW_DATA_CONFIDENCE_THRESHOLD) {
+    reasons.push("Data confidence is low, so operator review is recommended.");
+  }
+  if (input.postmortem.profit_drift_flag === "HIGH_NEGATIVE") {
+    reasons.push("Postmortem indicates high negative profit drift.");
+  }
+  if (input.status === "completed" && input.postmortem.postmortem_incomplete) {
+    reasons.push("Postmortem is incomplete due to missing settlement context.");
+  }
+  if (reasons.length === 0) {
+    reasons.push("No major operator risks detected.");
+  }
+  return `Action: ${actionText}. ${reasons.join(" ")}`;
 };
 
 export interface EnrichDealInput {
@@ -199,6 +342,29 @@ export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): Enr
   const stageAlert: EnrichedDeal["calculations"]["stage_alert"] = liquidation.force_liquidation
     ? "CRITICAL"
     : aging.stage_alert;
+  const alerts = buildAlerts({
+    deal,
+    stage_alert: stageAlert,
+    liquidation,
+    postmortem,
+    estimated_inputs: costBasis.estimated_inputs,
+    data_confidence: adjustedDataConfidence,
+  });
+  const warnings = buildWarnings(
+    deal.category,
+    metadata.transport_type,
+    execution.source_quality_flag,
+    alerts
+  );
+  const operatorRecommendation = buildOperatorRecommendationSummary({
+    status: deal.status,
+    recommended_action: recommendedAction,
+    projected_profit: profit.projected_profit,
+    scoring,
+    liquidation,
+    data_confidence: adjustedDataConfidence,
+    postmortem,
+  });
 
   return {
     deal: {
@@ -240,14 +406,55 @@ export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): Enr
       postmortem,
       recommended_action: recommendedAction,
     },
-    warnings: buildWarnings(
-      deal.category,
-      metadata.transport_type,
-      execution.source_quality_flag,
+    alerts,
+    warnings,
+    operator_recommendation: operatorRecommendation,
+    assistant_context: {
+      current_deal: {
+        deal: {
+          ...deal,
+          unit_count: normalizedPrepMetrics ? null : normalizedUnitCount,
+          prep_metrics: normalizedPrepMetrics,
+        },
+        financials: {
+          ...financials,
+          buyer_premium_pct: costBasis.buyer_premium_pct,
+          buyer_premium_overridden: costBasis.buyer_premium_overridden,
+          tax_rate: costBasis.tax_rate,
+          tax: costBasis.tax,
+          projected_profit: profit.projected_profit,
+          realized_profit: profit.realized_profit,
+        },
+        metadata,
+      },
+      calculations: {
+        total_cost_basis: costBasis.total_cost_basis,
+        projected_profit: profit.projected_profit,
+        realized_profit: profit.realized_profit,
+        days_in_stage: aging.days_in_current_stage,
+        days_in_current_stage: aging.days_in_current_stage,
+        stage_alert: stageAlert,
+        data_confidence: adjustedDataConfidence,
+        avg_time_per_unit: execution.avg_time_per_unit,
+        efficiency_score: execution.efficiency_score,
+        efficiency_rating: execution.efficiency_rating,
+        locked_ratio: execution.locked_ratio,
+        source_quality_flag: execution.source_quality_flag,
+      },
+      engine: {
+        cost_basis: costBasis,
+        profit,
+        scoring,
+        aging,
+        liquidation,
+        data_confidence: adjustedDataConfidence,
+        postmortem,
+        recommended_action: recommendedAction,
+      },
+      warnings,
       postmortem,
-      costBasis.estimated_inputs,
-      deal.status
-    ),
+      recommendation_summary: operatorRecommendation,
+    },
   };
 };
 
