@@ -86,7 +86,19 @@ Postmortem output is computed in-engine when `realized_profit` exists (completed
   - `postmortem.profit_delta`
   - `postmortem.variance_pct`
   - `postmortem.revenue_variance`
+  - `postmortem.profit_drift_flag` (`HIGH_NEGATIVE`, `NEGATIVE`, `STABLE`, `POSITIVE`)
+  - `postmortem.cost_overrun_flag` (true when actual cost basis > projected baseline by >10%)
+  - `postmortem.drift_sources` (attribution list)
 - Placeholder/null until completion inputs exist:
   - all postmortem fields are `null` when realized profit is unavailable
+  - `postmortem.postmortem_incomplete` is `true` when completed output cannot fully compute drift
+  - warning `POSTMORTEM_INCOMPLETE` is emitted for completed deals without computable postmortem
+
+### Drift warnings and confidence interaction
+
+- `PROFIT_DRIFT_HIGH` when `postmortem.profit_drift_flag = HIGH_NEGATIVE`
+- `COST_OVERRUN` when `postmortem.cost_overrun_flag = true`
+- `ESTIMATION_FAILURE` when negative drift occurred with multiple estimated cost inputs
+- If drift is strongly negative and there are multiple estimated inputs, `calculations.data_confidence` is reduced further in enrichment output.
 
 No analytics UI or additional persistence tables are added in Phase 1.2.

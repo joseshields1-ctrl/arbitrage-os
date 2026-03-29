@@ -54,17 +54,6 @@ export interface EnrichedDeal {
   warnings: string[];
 }
 
-const normalizeIncomingTax = (value: FinancialRow["tax"]): number | null => {
-  if (value === null || value === undefined) {
-    return null;
-  }
-  const amount = Number(value);
-  if (!Number.isFinite(amount)) {
-    return null;
-  }
-  return amount;
-};
-
 const normalizePrepMetrics = (value: PrepMetrics | null | undefined): PrepMetrics | null => {
   if (!value) {
     return null;
@@ -83,7 +72,10 @@ const normalizePrepMetrics = (value: PrepMetrics | null | undefined): PrepMetric
 const buildWarnings = (
   category: DealCategory,
   transportType: MetadataRow["transport_type"],
-  sourceQualityFlag: "LOW_QUALITY_SOURCE" | null
+  sourceQualityFlag: "LOW_QUALITY_SOURCE" | null,
+  postmortem: ReturnType<typeof computePostmortem>,
+  estimatedInputs: string[],
+  status: DealStatus
 ): string[] => {
   const warnings: string[] = [];
   if (category === "electronics_bulk" && transportType === "parcel") {
@@ -93,6 +85,21 @@ const buildWarnings = (
   }
   if (sourceQualityFlag) {
     warnings.push(sourceQualityFlag);
+  }
+  if (postmortem.profit_drift_flag === "HIGH_NEGATIVE") {
+    warnings.push("PROFIT_DRIFT_HIGH");
+  }
+  if (postmortem.cost_overrun_flag) {
+    warnings.push("COST_OVERRUN");
+  }
+  if (
+    (postmortem.profit_drift_flag === "HIGH_NEGATIVE" || postmortem.profit_drift_flag === "NEGATIVE") &&
+    estimatedInputs.length >= 2
+  ) {
+    warnings.push("ESTIMATION_FAILURE");
+  }
+  if (status === "completed" && postmortem.postmortem_incomplete) {
+    warnings.push("POSTMORTEM_INCOMPLETE");
   }
   return warnings;
 };
@@ -153,7 +160,18 @@ export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): Enr
     realized_profit: profit.realized_profit,
     total_cost_basis: costBasis.total_cost_basis,
     conservative_revenue_projection: profit.breakdown.conservative_revenue_projection,
+    estimated_inputs: costBasis.estimated_inputs,
+    cost_basis_breakdown: costBasis.cost_basis_breakdown,
+    transport_cost_actual: financials.transport_cost_actual,
+    transport_cost_estimated: financials.transport_cost_estimated,
+    sale_price_actual: financials.sale_price_actual,
+    return_rate_buffer: profit.breakdown.return_rate_buffer,
   });
+  const shouldReduceConfidenceForDrift =
+    postmortem.profit_drift_flag === "HIGH_NEGATIVE" && costBasis.estimated_inputs.length >= 2;
+  const adjustedDataConfidence = shouldReduceConfidenceForDrift
+    ? Math.max(0, dataConfidence - 15)
+    : dataConfidence;
 
   const scoring = computeScoring({
     category: deal.category,
@@ -205,7 +223,7 @@ export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): Enr
       days_in_stage: aging.days_in_current_stage,
       days_in_current_stage: aging.days_in_current_stage,
       stage_alert: stageAlert,
-      data_confidence: dataConfidence,
+      data_confidence: adjustedDataConfidence,
       avg_time_per_unit: execution.avg_time_per_unit,
       efficiency_score: execution.efficiency_score,
       efficiency_rating: execution.efficiency_rating,
@@ -218,11 +236,18 @@ export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): Enr
       scoring,
       aging,
       liquidation,
-      data_confidence: dataConfidence,
+      data_confidence: adjustedDataConfidence,
       postmortem,
       recommended_action: recommendedAction,
     },
-    warnings: buildWarnings(deal.category, metadata.transport_type, execution.source_quality_flag),
+    warnings: buildWarnings(
+      deal.category,
+      metadata.transport_type,
+      execution.source_quality_flag,
+      postmortem,
+      costBasis.estimated_inputs,
+      deal.status
+    ),
   };
 };
 
