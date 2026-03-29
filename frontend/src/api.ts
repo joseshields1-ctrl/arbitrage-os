@@ -1,4 +1,6 @@
 import type {
+  AssistantQueryRequest,
+  AssistantQueryResponse,
   CreateDealRequest,
   DashboardResponse,
   DealStage,
@@ -45,4 +47,15 @@ export const updateDealStage = async (
 export const fetchDashboard = async (): Promise<DashboardResponse> => {
   const response = await fetch(`${API_BASE}/api/dashboard`);
   return handleResponse<DashboardResponse>(response);
+};
+
+export const queryAssistant = async (
+  payload: AssistantQueryRequest
+): Promise<AssistantQueryResponse> => {
+  const response = await fetch(`${API_BASE}/api/assistant/query`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<AssistantQueryResponse>(response);
 };

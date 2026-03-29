@@ -957,3 +957,14 @@ export const getDealStageAge = (dealId: string): number | null => {
   }
   return deal.calculations.days_in_current_stage;
 };
+
+export const getDealById = (dealId: string): DealView | null => {
+  const row = db
+    .prepare(`SELECT id FROM deals WHERE id = ?`)
+    .get(dealId) as { id: string } | undefined;
+  if (!row) {
+    return null;
+  }
+  computeAndPersistFinancials(dealId);
+  return getDealViewById(dealId);
+};

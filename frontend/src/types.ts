@@ -96,6 +96,20 @@ export interface DealView {
   deal: DealRecord;
   financials: FinancialRecord;
   metadata: MetadataRecord;
+  alerts?: Array<{
+    code:
+      | "FORCE_LIQUIDATION"
+      | "STAGE_CRITICAL"
+      | "TITLE_DELAY"
+      | "PROFIT_DRIFT_HIGH"
+      | "COST_OVERRUN"
+      | "ESTIMATION_FAILURE"
+      | "POSTMORTEM_INCOMPLETE"
+      | "LOW_DATA_CONFIDENCE";
+    severity: "critical" | "warning" | "info";
+    message: string;
+  }>;
+  operator_recommendation?: string;
   warnings?: string[];
   engine: {
     cost_basis: {
@@ -161,6 +175,10 @@ export interface DealView {
       profit_delta: number | null;
       variance_pct: number | null;
       revenue_variance: number | null;
+      profit_drift_flag: "HIGH_NEGATIVE" | "NEGATIVE" | "STABLE" | "POSITIVE" | null;
+      cost_overrun_flag: boolean;
+      drift_sources: string[];
+      postmortem_incomplete: boolean;
     };
     recommended_action:
       | "pass"
@@ -169,6 +187,18 @@ export interface DealView {
       | "reduce_price"
       | "liquidate_now"
       | null;
+  };
+  assistant_context: {
+    current_deal: {
+      deal: DealRecord;
+      financials: FinancialRecord;
+      metadata: MetadataRecord;
+    };
+    calculations: DealView["calculations"];
+    engine: DealView["engine"];
+    warnings: string[];
+    postmortem: DealView["engine"]["postmortem"];
+    recommendation_summary: string;
   };
   calculations: {
     total_cost_basis: number;
@@ -246,6 +276,19 @@ export interface DashboardSummary {
 }
 
 export type DashboardResponse = DashboardSummary;
+
+export interface AssistantQueryRequest {
+  deal_id?: string;
+  assistant_context?: DealView["assistant_context"];
+  question: string;
+}
+
+export interface AssistantQueryResponse {
+  response: string;
+  key_points: string[];
+  risk_level: "low" | "medium" | "high";
+  suggested_action: string;
+}
 
 export const CATEGORY_OPTIONS: DealCategory[] = [
   "vehicle_suv",
