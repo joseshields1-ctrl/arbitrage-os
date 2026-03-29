@@ -1,6 +1,7 @@
 import {
   DealCategory,
   DealRow,
+  DEAL_LIFECYCLE_STAGES,
   DealStatus,
   DealStageInput,
   FinancialInput,
@@ -34,6 +35,11 @@ export interface CreateDealInput {
   metadata: MetadataInput;
 }
 
+export interface CompleteDealInput {
+  sale_price_actual: number;
+  completion_date?: string;
+}
+
 export type DealView = ReturnType<typeof enrichDeal>;
 
 export interface DashboardView {
@@ -51,6 +57,172 @@ export interface DashboardView {
 
 const nowIso = (): string => new Date().toISOString();
 const normalizeNullableDate = (value?: string | null): string | null => value ?? null;
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+const stageSequence = [...DEAL_LIFECYCLE_STAGES];
+const validSourcePlatforms = new Set<SourcePlatform>([
+  "govdeals",
+  "publicsurplus",
+  "ebay",
+  "facebook",
+  "other",
+]);
+const validConditionGrades = new Set<MetadataRow["condition_grade"]>([
+  "excellent",
+  "used_good",
+  "used",
+  "used_cosmetic",
+  "used_functional",
+  "defective",
+  "parts_only",
+]);
+const validTransportTypes = new Set<MetadataRow["transport_type"]>([
+  "auto_transport",
+  "freight",
+  "parcel",
+  "local_pickup",
+  "none",
+]);
+
+const ensureNonEmptyString = (value: unknown, fieldName: string): string => {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${fieldName} is required`);
+  }
+  return value.trim();
+};
+
+const parseNumericInput = (
+  value: unknown,
+  fieldName: string,
+  options?: { required?: boolean; min?: number }
+): number | null => {
+  if (value === null || value === undefined) {
+    if (options?.required) {
+      throw new Error(`${fieldName} is required`);
+    }
+    return null;
+  }
+  const parsed = Number(value);
+  if (!isFiniteNumber(parsed)) {
+    throw new Error(`${fieldName} must be a valid number`);
+  }
+  if (options?.min !== undefined && parsed < options.min) {
+    throw new Error(`${fieldName} must be >= ${options.min}`);
+  }
+  return parsed;
+};
+
+const ensureIsoDate = (value: string, fieldName: string): void => {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    throw new Error(`${fieldName} must be a valid ISO timestamp`);
+  }
+};
+
+const validateOptionalIsoDate = (value: string | null | undefined, fieldName: string): void => {
+  if (value === null || value === undefined) {
+    return;
+  }
+  ensureIsoDate(value, fieldName);
+};
+
+const validateCreateOrPreviewInput = (input: CreateDealInput): void => {
+  if (!input || typeof input !== "object") {
+    throw new Error("Invalid payload");
+  }
+  if (!input.financials || typeof input.financials !== "object") {
+    throw new Error("financials is required");
+  }
+  if (!input.metadata || typeof input.metadata !== "object") {
+    throw new Error("metadata is required");
+  }
+  if (!Object.prototype.hasOwnProperty.call(categoryProfiles, input.category)) {
+    throw new Error("category is invalid");
+  }
+  if (!validSourcePlatforms.has(input.source_platform)) {
+    throw new Error("source_platform is invalid");
+  }
+  if (!validConditionGrades.has(input.metadata.condition_grade)) {
+    throw new Error("metadata.condition_grade is invalid");
+  }
+  if (
+    input.metadata.transport_type !== undefined &&
+    !validTransportTypes.has(input.metadata.transport_type)
+  ) {
+    throw new Error("metadata.transport_type is invalid");
+  }
+
+  ensureNonEmptyString(input.label, "label");
+  ensureNonEmptyString(input.acquisition_state, "acquisition_state");
+  ensureNonEmptyString(input.metadata.condition_notes, "metadata.condition_notes");
+  ensureNonEmptyString(input.metadata.presentation_quality, "metadata.presentation_quality");
+
+  parseNumericInput(input.financials.acquisition_cost, "financials.acquisition_cost", {
+    required: true,
+    min: 0,
+  });
+  parseNumericInput(input.financials.estimated_market_value, "financials.estimated_market_value", {
+    required: true,
+    min: 0,
+  });
+  parseNumericInput(input.financials.buyer_premium_pct, "financials.buyer_premium_pct", {
+    min: 0,
+  });
+  parseNumericInput(input.financials.transport_cost_actual, "financials.transport_cost_actual", {
+    min: 0,
+  });
+  parseNumericInput(input.financials.transport_cost_estimated, "financials.transport_cost_estimated", {
+    min: 0,
+  });
+  parseNumericInput(input.financials.repair_cost, "financials.repair_cost", { min: 0 });
+  parseNumericInput(input.financials.prep_cost, "financials.prep_cost", { min: 0 });
+  parseNumericInput(input.financials.tax_rate, "financials.tax_rate", { min: 0 });
+  parseNumericInput(input.financials.sale_price_actual, "financials.sale_price_actual", { min: 0 });
+
+  validateOptionalIsoDate(input.stage_updated_at, "stage_updated_at");
+  validateOptionalIsoDate(input.discovered_date, "discovered_date");
+  validateOptionalIsoDate(input.purchase_date, "purchase_date");
+  validateOptionalIsoDate(input.listing_date, "listing_date");
+  validateOptionalIsoDate(input.sale_date, "sale_date");
+  validateOptionalIsoDate(input.completion_date, "completion_date");
+
+  const status: DealStatus = input.status ?? "sourced";
+  if (!stageSequence.includes(status)) {
+    throw new Error("status is invalid");
+  }
+  if (status === "completed") {
+    if (!input.completion_date) {
+      throw new Error("completion_date is required when status is completed");
+    }
+    const salePriceActual = parseNumericInput(
+      input.financials.sale_price_actual,
+      "financials.sale_price_actual",
+      { required: true, min: 0 }
+    );
+    if (salePriceActual === null) {
+      throw new Error("financials.sale_price_actual is required when status is completed");
+    }
+  }
+};
+
+const assertValidStageTransition = (currentStage: DealStatus, nextStage: DealStageInput): void => {
+  const currentIndex = stageSequence.indexOf(currentStage);
+  const nextIndex = stageSequence.indexOf(nextStage);
+
+  if (currentIndex < 0 || nextIndex < 0) {
+    throw new Error("Invalid stage transition");
+  }
+  if (currentIndex === nextIndex) {
+    throw new Error(`Invalid stage transition: deal is already in ${currentStage}`);
+  }
+  if (nextIndex !== currentIndex + 1) {
+    const allowed = stageSequence[currentIndex + 1];
+    throw new Error(
+      `Invalid stage transition: ${currentStage} -> ${nextStage}. Allowed next stage: ${allowed}`
+    );
+  }
+};
+
 const normalizeOptionalCount = (value?: number | null): number | null => {
   if (value === null || value === undefined) {
     return null;
@@ -295,6 +467,76 @@ const buildEnrichedDealView = (
   return enrichDeal({ deal, financials, metadata });
 };
 
+interface PreparedDealRows {
+  deal: DealRow;
+  financials: FinancialRow;
+  metadata: MetadataRow;
+}
+
+const buildPreparedDealRows = (input: CreateDealInput, id: string): PreparedDealRows => {
+  validateCreateOrPreviewInput(input);
+
+  const stageUpdatedAt = input.stage_updated_at ?? nowIso();
+  const status: DealStatus = input.status ?? "sourced";
+  const discoveredDate = normalizeNullableDate(input.discovered_date);
+  const purchaseDate = normalizeNullableDate(input.purchase_date);
+  const listingDate = normalizeNullableDate(input.listing_date);
+  const saleDate = normalizeNullableDate(input.sale_date);
+  const completionDate = normalizeNullableDate(input.completion_date);
+  const normalizedUnitCount = normalizeOptionalCount(input.unit_count);
+  const prepMetrics = normalizePrepMetricsInput(input.prep_metrics);
+  // V3.3 unit rule: prep_metrics presence takes priority and unit_count is ignored.
+  const resolvedUnitCount = input.prep_metrics ? null : normalizedUnitCount;
+  const defaultTransportType = categoryProfiles[input.category].default_transport_type;
+  const resolvedTransportType =
+    input.metadata.transport_type ?? (defaultTransportType as MetadataRow["transport_type"]);
+
+  return {
+    deal: {
+      id,
+      label: input.label,
+      category: input.category,
+      source_platform: input.source_platform,
+      acquisition_state: input.acquisition_state.toUpperCase(),
+      status,
+      stage_updated_at: stageUpdatedAt,
+      discovered_date: discoveredDate,
+      purchase_date: purchaseDate,
+      listing_date: listingDate,
+      sale_date: saleDate,
+      completion_date: completionDate,
+      unit_count: resolvedUnitCount,
+      unit_breakdown: input.unit_breakdown ?? null,
+      prep_metrics: prepMetrics,
+    },
+    financials: {
+      deal_id: id,
+      acquisition_cost: input.financials.acquisition_cost,
+      buyer_premium_pct: input.financials.buyer_premium_pct ?? 0,
+      buyer_premium_overridden:
+        Boolean(input.financials.buyer_premium_overridden) &&
+        input.financials.buyer_premium_pct !== undefined,
+      tax_rate: input.financials.tax_rate ?? null,
+      tax: null,
+      transport_cost_actual: input.financials.transport_cost_actual ?? null,
+      transport_cost_estimated: input.financials.transport_cost_estimated ?? null,
+      repair_cost: input.financials.repair_cost ?? null,
+      prep_cost: input.financials.prep_cost ?? null,
+      estimated_market_value: input.financials.estimated_market_value,
+      sale_price_actual: input.financials.sale_price_actual ?? null,
+      projected_profit: 0,
+      realized_profit: null,
+    },
+    metadata: {
+      deal_id: id,
+      condition_grade: input.metadata.condition_grade,
+      condition_notes: input.metadata.condition_notes,
+      transport_type: resolvedTransportType,
+      presentation_quality: input.metadata.presentation_quality,
+    },
+  };
+};
+
 const getDealViewById = (dealId: string): DealView | null => {
   const joinedRows = db
     .prepare(
@@ -373,20 +615,7 @@ const getDealViewById = (dealId: string): DealView | null => {
 
 export const createDeal = (input: CreateDealInput): DealView => {
   const id = crypto.randomUUID();
-  const stageUpdatedAt = input.stage_updated_at ?? nowIso();
-  const status: DealStatus = input.status ?? "sourced";
-  const discoveredDate = normalizeNullableDate(input.discovered_date);
-  const purchaseDate = normalizeNullableDate(input.purchase_date);
-  const listingDate = normalizeNullableDate(input.listing_date);
-  const saleDate = normalizeNullableDate(input.sale_date);
-  const completionDate = normalizeNullableDate(input.completion_date);
-  const normalizedUnitCount = normalizeOptionalCount(input.unit_count);
-  const prepMetrics = normalizePrepMetricsInput(input.prep_metrics);
-  // V3.3 unit rule: prep_metrics presence takes priority and unit_count is ignored.
-  const resolvedUnitCount = input.prep_metrics ? null : normalizedUnitCount;
-  const defaultTransportType = categoryProfiles[input.category].default_transport_type;
-  const resolvedTransportType =
-    input.metadata.transport_type ?? (defaultTransportType as MetadataRow["transport_type"]);
+  const prepared = buildPreparedDealRows(input, id);
 
   const tx = db.transaction(() => {
     db.prepare(
@@ -396,21 +625,21 @@ export const createDeal = (input: CreateDealInput): DealView => {
         unit_breakdown, prep_metrics
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
-      id,
-      input.label,
-      input.category,
-      input.source_platform,
-      input.acquisition_state.toUpperCase(),
-      status,
-      stageUpdatedAt,
-      discoveredDate,
-      purchaseDate,
-      listingDate,
-      saleDate,
-      completionDate,
-      resolvedUnitCount,
-      input.unit_breakdown ? JSON.stringify(input.unit_breakdown) : null,
-      prepMetrics ? JSON.stringify(prepMetrics) : null
+      prepared.deal.id,
+      prepared.deal.label,
+      prepared.deal.category,
+      prepared.deal.source_platform,
+      prepared.deal.acquisition_state,
+      prepared.deal.status,
+      prepared.deal.stage_updated_at,
+      prepared.deal.discovered_date,
+      prepared.deal.purchase_date,
+      prepared.deal.listing_date,
+      prepared.deal.sale_date,
+      prepared.deal.completion_date,
+      prepared.deal.unit_count,
+      prepared.deal.unit_breakdown ? JSON.stringify(prepared.deal.unit_breakdown) : null,
+      prepared.deal.prep_metrics ? JSON.stringify(prepared.deal.prep_metrics) : null
     );
 
     db.prepare(
@@ -421,20 +650,18 @@ export const createDeal = (input: CreateDealInput): DealView => {
         projected_profit, realized_profit
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)`
     ).run(
-      id,
-      input.financials.acquisition_cost,
-      input.financials.buyer_premium_pct ?? 0,
-      input.financials.buyer_premium_overridden && input.financials.buyer_premium_pct !== undefined
-        ? 1
-        : 0,
-      input.financials.tax_rate ?? null,
+      prepared.financials.deal_id,
+      prepared.financials.acquisition_cost,
+      prepared.financials.buyer_premium_pct,
+      prepared.financials.buyer_premium_overridden ? 1 : 0,
+      prepared.financials.tax_rate,
       null,
-      input.financials.transport_cost_actual ?? null,
-      input.financials.transport_cost_estimated ?? null,
-      input.financials.repair_cost ?? null,
-      input.financials.prep_cost ?? null,
-      input.financials.estimated_market_value,
-      input.financials.sale_price_actual ?? null
+      prepared.financials.transport_cost_actual,
+      prepared.financials.transport_cost_estimated,
+      prepared.financials.repair_cost,
+      prepared.financials.prep_cost,
+      prepared.financials.estimated_market_value,
+      prepared.financials.sale_price_actual
     );
 
     db.prepare(
@@ -442,11 +669,11 @@ export const createDeal = (input: CreateDealInput): DealView => {
         deal_id, condition_grade, condition_notes, transport_type, presentation_quality
       ) VALUES (?, ?, ?, ?, ?)`
     ).run(
-      id,
-      input.metadata.condition_grade,
-      input.metadata.condition_notes,
-      resolvedTransportType,
-      input.metadata.presentation_quality
+      prepared.metadata.deal_id,
+      prepared.metadata.condition_grade,
+      prepared.metadata.condition_notes,
+      prepared.metadata.transport_type,
+      prepared.metadata.presentation_quality
     );
   });
 
@@ -462,64 +689,8 @@ export const createDeal = (input: CreateDealInput): DealView => {
 
 export const previewDeal = (input: CreateDealInput): DealView => {
   const id = `preview-${crypto.randomUUID()}`;
-  const stageUpdatedAt = input.stage_updated_at ?? nowIso();
-  const status: DealStatus = input.status ?? "sourced";
-  const discoveredDate = normalizeNullableDate(input.discovered_date);
-  const purchaseDate = normalizeNullableDate(input.purchase_date);
-  const listingDate = normalizeNullableDate(input.listing_date);
-  const saleDate = normalizeNullableDate(input.sale_date);
-  const completionDate = normalizeNullableDate(input.completion_date);
-  const normalizedUnitCount = normalizeOptionalCount(input.unit_count);
-  const prepMetrics = normalizePrepMetricsInput(input.prep_metrics);
-  const resolvedUnitCount = input.prep_metrics ? null : normalizedUnitCount;
-  const defaultTransportType = categoryProfiles[input.category].default_transport_type;
-  const resolvedTransportType =
-    input.metadata.transport_type ?? (defaultTransportType as MetadataRow["transport_type"]);
-
-  return buildEnrichedDealView(
-    {
-      id,
-      label: input.label,
-      category: input.category,
-      source_platform: input.source_platform,
-      acquisition_state: input.acquisition_state.toUpperCase(),
-      status,
-      stage_updated_at: stageUpdatedAt,
-      discovered_date: discoveredDate,
-      purchase_date: purchaseDate,
-      listing_date: listingDate,
-      sale_date: saleDate,
-      completion_date: completionDate,
-      unit_count: resolvedUnitCount,
-      unit_breakdown: input.unit_breakdown ?? null,
-      prep_metrics: prepMetrics,
-    },
-    {
-      deal_id: id,
-      acquisition_cost: input.financials.acquisition_cost,
-      buyer_premium_pct: input.financials.buyer_premium_pct ?? 0,
-      buyer_premium_overridden:
-        Boolean(input.financials.buyer_premium_overridden) &&
-        input.financials.buyer_premium_pct !== undefined,
-      tax_rate: input.financials.tax_rate ?? null,
-      tax: null,
-      transport_cost_actual: input.financials.transport_cost_actual ?? null,
-      transport_cost_estimated: input.financials.transport_cost_estimated ?? null,
-      repair_cost: input.financials.repair_cost ?? null,
-      prep_cost: input.financials.prep_cost ?? null,
-      estimated_market_value: input.financials.estimated_market_value,
-      sale_price_actual: input.financials.sale_price_actual ?? null,
-      projected_profit: 0,
-      realized_profit: null,
-    },
-    {
-      deal_id: id,
-      condition_grade: input.metadata.condition_grade,
-      condition_notes: input.metadata.condition_notes,
-      transport_type: resolvedTransportType,
-      presentation_quality: input.metadata.presentation_quality,
-    }
-  );
+  const prepared = buildPreparedDealRows(input, id);
+  return buildEnrichedDealView(prepared.deal, prepared.financials, prepared.metadata);
 };
 
 export const listDeals = (): DealView[] => {
@@ -552,14 +723,59 @@ const stageDateFieldMap: Record<
 
 export const updateDealStage = (
   dealId: string,
-  nextStage: DealStageInput
+  nextStage: DealStageInput,
+  completionInput?: CompleteDealInput
 ): DealView | null => {
-  const existing = db.prepare(`SELECT id FROM deals WHERE id = ?`).get(dealId) as
-    | { id: string }
+  const existing = db
+    .prepare(
+      `SELECT d.id, d.status, d.completion_date, f.sale_price_actual
+       FROM deals d
+       JOIN financials f ON f.deal_id = d.id
+       WHERE d.id = ?`
+    )
+    .get(dealId) as
+    | {
+        id: string;
+        status: DealStatus;
+        completion_date: string | null;
+        sale_price_actual: number | null;
+      }
     | undefined;
 
   if (!existing) {
     return null;
+  }
+
+  if (nextStage === "completed") {
+    if (existing.status !== "sold") {
+      throw new Error("Invalid stage transition: completed is only allowed from sold");
+    }
+  } else {
+    assertValidStageTransition(existing.status, nextStage);
+  }
+  if (nextStage !== "completed" && completionInput) {
+    throw new Error("completion_data is only allowed when transitioning to completed");
+  }
+  let nextCompletionDate: string | null = null;
+  if (nextStage === "completed") {
+    if (!completionInput) {
+      throw new Error(
+        "completion_data is required when transitioning to completed (sale_price_actual required)"
+      );
+    }
+    const parsedSalePrice = parseNumericInput(
+      completionInput.sale_price_actual,
+      "financials.sale_price_actual",
+      { required: true, min: 0 }
+    );
+    if (parsedSalePrice === null) {
+      throw new Error("financials.sale_price_actual is required when transitioning to completed");
+    }
+    if (!completionInput.completion_date) {
+      throw new Error("completion_data.completion_date is required when transitioning to completed");
+    }
+    validateOptionalIsoDate(completionInput.completion_date, "completion_date");
+    nextCompletionDate = completionInput.completion_date;
   }
 
   const now = nowIso();
@@ -575,6 +791,14 @@ export const updateDealStage = (
     db.prepare(
       `UPDATE deals SET ${stageDateField} = COALESCE(${stageDateField}, ?) WHERE id = ?`
     ).run(now, dealId);
+
+    if (nextStage === "completed" && completionInput) {
+      db.prepare(`UPDATE financials SET sale_price_actual = ? WHERE deal_id = ?`).run(
+        completionInput.sale_price_actual,
+        dealId
+      );
+      db.prepare(`UPDATE deals SET completion_date = ? WHERE id = ?`).run(nextCompletionDate, dealId);
+    }
   })();
 
   computeAndPersistFinancials(dealId);

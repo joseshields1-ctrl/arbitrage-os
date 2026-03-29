@@ -33,13 +33,16 @@ dealsRouter.patch("/:id/stage", (req, res) => {
   try {
     const id = req.params.id;
     const stage = req.body?.stage as DealStatus | undefined;
+    const completionData = req.body?.completion_data as
+      | { sale_price_actual: number; completion_date?: string }
+      | undefined;
 
     if (!stage) {
       res.status(400).json({ error: "stage is required" });
       return;
     }
 
-    const updated = updateDealStage(id, stage);
+    const updated = updateDealStage(id, stage, completionData);
     if (!updated) {
       res.status(404).json({ error: "Deal not found" });
       return;
