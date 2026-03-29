@@ -7,7 +7,18 @@ import type {
   DealView,
 } from "./types";
 
-const API_BASE = "http://localhost:3000";
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/+$/, "");
+const apiUrl = (path: string): string => {
+  if (!API_BASE) {
+    return path;
+  }
+
+  if (API_BASE.endsWith("/api") && path.startsWith("/api/")) {
+    return `${API_BASE}${path.slice(4)}`;
+  }
+
+  return `${API_BASE}${path}`;
+};
 
 const handleResponse = async <T>(response: Response): Promise<T> => {
   if (!response.ok) {
@@ -18,7 +29,7 @@ const handleResponse = async <T>(response: Response): Promise<T> => {
 };
 
 export const createDeal = async (payload: CreateDealRequest): Promise<DealView> => {
-  const response = await fetch(`${API_BASE}/api/deals`, {
+  const response = await fetch(apiUrl("/api/deals"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -27,35 +38,49 @@ export const createDeal = async (payload: CreateDealRequest): Promise<DealView> 
 };
 
 export const fetchDeals = async (): Promise<DealView[]> => {
-  const response = await fetch(`${API_BASE}/api/deals`);
+  const response = await fetch(apiUrl("/api/deals"));
   const body = await handleResponse<{ deals: DealView[] }>(response);
   return body.deals;
 };
 
 export const updateDealStage = async (
   dealId: string,
-  stage: DealStage
+  stage: DealStage,
+  completionData?: { sale_price_actual: number; completion_date: string }
 ): Promise<DealView> => {
-  const response = await fetch(`${API_BASE}/api/deals/${dealId}/stage`, {
+  const response = await fetch(apiUrl(`/api/deals/${dealId}/stage`), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ stage }),
+    body: JSON.stringify(
+      completionData
+        ? { stage, completion_data: completionData }
+        : { stage }
+    ),
   });
   return handleResponse<DealView>(response);
 };
 
 export const fetchDashboard = async (): Promise<DashboardResponse> => {
-  const response = await fetch(`${API_BASE}/api/dashboard`);
+  const response = await fetch(apiUrl("/api/dashboard"));
   return handleResponse<DashboardResponse>(response);
 };
 
 export const queryAssistant = async (
   payload: AssistantQueryRequest
 ): Promise<AssistantQueryResponse> => {
-  const response = await fetch(`${API_BASE}/api/assistant/query`, {
+  const response = await fetch(apiUrl("/api/assistant/query"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   return handleResponse<AssistantQueryResponse>(response);
+};
+
+export const previewDeal = async (payload: CreateDealRequest): Promise<DealView> => {
+  const response = await fetch(apiUrl("/api/deals/preview"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<DealView>(response);
 };

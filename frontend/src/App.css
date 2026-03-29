@@ -38,6 +38,12 @@
   font-size: 1.2rem;
 }
 
+.panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .deal-form {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -197,6 +203,46 @@
 .deal-card-actions button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.deals {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.unit-breakdown {
+  margin-top: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.warning-flags {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: #92400e;
+}
+
+.warning-text {
+  margin: 8px 0 0;
+  color: #92400e;
+  font-weight: 600;
+}
+
+.entry-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.preview-box {
+  margin-top: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f9fafb;
 }
 
 .detail-panel {

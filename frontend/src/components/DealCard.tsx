@@ -20,15 +20,15 @@ function DealCard({
   const unitBreakdown = deal.deal.unit_breakdown;
 
   return (
-    <article className="deal" key={deal.deal.id}>
-      <div className="deal-head">
+    <article className="deal-card" key={deal.deal.id}>
+      <div className="deal-card-head">
         <h4>{deal.deal.label}</h4>
         <strong>{deal.deal.status}</strong>
       </div>
-      <p className="deal-meta">
+      <p className="deal-card-meta">
         {deal.deal.category} · {deal.deal.source_platform} · {deal.deal.acquisition_state}
       </p>
-      <div className="deal-metrics">
+      <div className="deal-card-metrics">
         <div>
           <div className="card-title">Cost Basis</div>
           <div>{formatCurrency(calculations.total_cost_basis)}</div>
@@ -70,7 +70,7 @@ function DealCard({
         </ul>
       ) : null}
 
-      <div className="next-stage">
+      <div className="deal-card-actions">
         <button
           disabled={!nextStage || disabled}
           onClick={onAdvance}

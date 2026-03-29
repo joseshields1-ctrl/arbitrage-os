@@ -4,6 +4,8 @@ import {
   createDeal,
   fetchDashboard,
   fetchDeals,
+  previewDeal,
+  queryAssistant,
   updateDealStage,
 } from "./api";
 import DealCard from "./components/DealCard";
@@ -16,6 +18,7 @@ import {
   TRANSPORT_TYPE_OPTIONS,
 } from "./types";
 import type {
+  AssistantQueryResponse,
   DashboardSummary,
   DealCategory,
   DealStage,
@@ -70,11 +73,17 @@ interface DealFormState {
 
 function App() {
   const [deals, setDeals] = useState<DealView[]>([]);
+  const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
+  const [previewResult, setPreviewResult] = useState<DealView | null>(null);
   const [dashboard, setDashboard] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [updatingDealId, setUpdatingDealId] = useState<string | null>(null);
+  const [assistantQuestion, setAssistantQuestion] = useState("");
+  const [assistantResponse, setAssistantResponse] = useState<AssistantQueryResponse | null>(null);
+  const [assistantLoading, setAssistantLoading] = useState(false);
+  const [assistantError, setAssistantError] = useState<string | null>(null);
 
   const [formData, setFormData] = useState<DealFormState>({
     label: "",
@@ -130,82 +139,102 @@ function App() {
     void loadData();
   }, []);
 
+  const buildPayload = () => ({
+    label: formData.label,
+    category: formData.category,
+    source_platform: formData.source_platform,
+    acquisition_state: formData.acquisition_state,
+    financials: {
+      acquisition_cost: Number(formData.acquisition_cost),
+      buyer_premium_pct: Number(formData.buyer_premium_pct),
+      transport_cost_actual: toNullableNumber(formData.transport_cost_actual),
+      transport_cost_estimated: toNullableNumber(formData.transport_cost_estimated),
+      repair_cost: toNullableNumber(formData.repair_cost),
+      prep_cost: toNullableNumber(formData.prep_cost),
+      estimated_market_value: Number(formData.estimated_market_value),
+    },
+    metadata: {
+      condition_grade: formData.condition_grade,
+      condition_notes: formData.condition_notes,
+      transport_type: formData.transport_type,
+      presentation_quality: formData.presentation_quality,
+    },
+    unit_breakdown:
+      formData.units_total.trim() === ""
+        ? undefined
+        : {
+            units_total: Number(formData.units_total),
+            units_working: Number(formData.units_working || "0"),
+            units_minor_issue: Number(formData.units_minor_issue || "0"),
+            units_defective: Number(formData.units_defective || "0"),
+            units_locked: Number(formData.units_locked || "0"),
+          },
+    unit_count: toNullableNumber(formData.unit_count),
+    prep_metrics:
+      formData.prep_total_units.trim() === "" &&
+      formData.total_prep_time_minutes.trim() === ""
+        ? undefined
+        : {
+            total_units: Number(formData.prep_total_units || "0"),
+            working_units: Number(formData.prep_working_units || "0"),
+            cosmetic_units: Number(formData.prep_cosmetic_units || "0"),
+            functional_units: Number(formData.prep_functional_units || "0"),
+            defective_units: Number(formData.prep_defective_units || "0"),
+            locked_units: Number(formData.prep_locked_units || "0"),
+            total_prep_time_minutes: Number(formData.total_prep_time_minutes || "0"),
+          },
+  });
+
+  const resetFormAfterSave = () => {
+    setFormData((prev) => ({
+      ...prev,
+      label: "",
+      condition_notes: "",
+      acquisition_cost: "",
+      transport_cost_actual: "",
+      transport_cost_estimated: "",
+      repair_cost: "",
+      prep_cost: "",
+      estimated_market_value: "",
+      units_total: "",
+      units_working: "",
+      units_minor_issue: "",
+      units_defective: "",
+      units_locked: "",
+      unit_count: "",
+      prep_total_units: "",
+      prep_working_units: "",
+      prep_cosmetic_units: "",
+      prep_functional_units: "",
+      prep_defective_units: "",
+      prep_locked_units: "",
+      total_prep_time_minutes: "",
+    }));
+  };
+
+  const handlePreview = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const preview = await previewDeal(buildPayload());
+      setPreviewResult(preview);
+    } catch (previewError) {
+      const message =
+        previewError instanceof Error ? previewError.message : "Failed to preview deal";
+      setError(message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setSubmitting(true);
     setError(null);
     try {
-      await createDeal({
-        label: formData.label,
-        category: formData.category,
-        source_platform: formData.source_platform,
-        acquisition_state: formData.acquisition_state,
-        financials: {
-          acquisition_cost: Number(formData.acquisition_cost),
-          buyer_premium_pct: Number(formData.buyer_premium_pct),
-          transport_cost_actual: toNullableNumber(formData.transport_cost_actual),
-          transport_cost_estimated: toNullableNumber(formData.transport_cost_estimated),
-          repair_cost: toNullableNumber(formData.repair_cost),
-          prep_cost: toNullableNumber(formData.prep_cost),
-          estimated_market_value: Number(formData.estimated_market_value),
-        },
-        metadata: {
-          condition_grade: formData.condition_grade,
-          condition_notes: formData.condition_notes,
-          transport_type: formData.transport_type,
-          presentation_quality: formData.presentation_quality,
-        },
-        unit_breakdown:
-          formData.units_total.trim() === ""
-            ? undefined
-            : {
-                units_total: Number(formData.units_total),
-                units_working: Number(formData.units_working || "0"),
-                units_minor_issue: Number(formData.units_minor_issue || "0"),
-                units_defective: Number(formData.units_defective || "0"),
-                units_locked: Number(formData.units_locked || "0"),
-              },
-        unit_count: toNullableNumber(formData.unit_count),
-        prep_metrics:
-          formData.prep_total_units.trim() === "" &&
-          formData.total_prep_time_minutes.trim() === ""
-            ? undefined
-            : {
-                total_units: Number(formData.prep_total_units || "0"),
-                working_units: Number(formData.prep_working_units || "0"),
-                cosmetic_units: Number(formData.prep_cosmetic_units || "0"),
-                functional_units: Number(formData.prep_functional_units || "0"),
-                defective_units: Number(formData.prep_defective_units || "0"),
-                locked_units: Number(formData.prep_locked_units || "0"),
-                total_prep_time_minutes: Number(formData.total_prep_time_minutes || "0"),
-              },
-      });
-
-      setFormData((prev) => ({
-        ...prev,
-        label: "",
-        condition_notes: "",
-        acquisition_cost: "",
-        transport_cost_actual: "",
-        transport_cost_estimated: "",
-        repair_cost: "",
-        prep_cost: "",
-        estimated_market_value: "",
-        units_total: "",
-        units_working: "",
-        units_minor_issue: "",
-        units_defective: "",
-        units_locked: "",
-        unit_count: "",
-        prep_total_units: "",
-        prep_working_units: "",
-        prep_cosmetic_units: "",
-        prep_functional_units: "",
-        prep_defective_units: "",
-        prep_locked_units: "",
-        total_prep_time_minutes: "",
-      }));
-
+      const createdDeal = await createDeal(buildPayload());
+      setPreviewResult(createdDeal);
+      resetFormAfterSave();
       await loadData();
     } catch (submitError) {
       const message =
@@ -225,7 +254,34 @@ function App() {
     setUpdatingDealId(deal.deal.id);
     setError(null);
     try {
-      await updateDealStage(deal.deal.id, stage);
+      if (stage === "completed") {
+        const saleInput = window.prompt(
+          `Enter sale_price_actual for ${deal.deal.label}`,
+          deal.financials.estimated_market_value.toString()
+        );
+        const completionInput = window.prompt(
+          `Enter completion_date (YYYY-MM-DD) for ${deal.deal.label}`,
+          new Date().toISOString().slice(0, 10)
+        );
+
+        if (!saleInput || !completionInput) {
+          setError("Completion requires sale price and completion date.");
+          return;
+        }
+
+        const saleValue = Number(saleInput);
+        if (Number.isNaN(saleValue) || saleValue <= 0) {
+          setError("sale_price_actual must be a positive number.");
+          return;
+        }
+
+        await updateDealStage(deal.deal.id, stage, {
+          sale_price_actual: saleValue,
+          completion_date: completionInput,
+        });
+      } else {
+        await updateDealStage(deal.deal.id, stage);
+      }
       await loadData();
     } catch (updateError) {
       const message =
@@ -236,50 +292,90 @@ function App() {
     }
   };
 
+  const selectedDeal =
+    deals.find((deal) => deal.deal.id === selectedDealId) ??
+    previewResult ??
+    deals[0] ??
+    null;
+
+  const handleAssistantSubmit = async () => {
+    if (!selectedDeal) {
+      setAssistantError("Select a deal first.");
+      return;
+    }
+
+    const trimmedQuestion = assistantQuestion.trim();
+    if (!trimmedQuestion) {
+      return;
+    }
+
+    setAssistantLoading(true);
+    setAssistantError(null);
+    try {
+      const response = await queryAssistant({
+        deal_id: selectedDeal.deal.id,
+        assistant_context: selectedDeal.assistant_context,
+        question: trimmedQuestion,
+      });
+      setAssistantResponse(response);
+    } catch (assistantQueryError) {
+      const message =
+        assistantQueryError instanceof Error
+          ? assistantQueryError.message
+          : "Assistant query failed";
+      setAssistantError(message);
+    } finally {
+      setAssistantLoading(false);
+    }
+  };
+
   return (
-    <main className="app">
-      <h1>Arbitrage OS</h1>
-      <h2>Phase 1 Dashboard</h2>
+    <main className="app-shell">
+      <header className="hero">
+        <h1>Arbitrage OS</h1>
+        <p>Phase 1 Dashboard</p>
+      </header>
 
-      {error ? <p className="error">{error}</p> : null}
+      {error ? <p className="error-banner">{error}</p> : null}
 
-      <section className="cards">
-        <article className="card">
-          <div className="card-title">Active Deals</div>
-          <div className="card-value">{dashboard?.active_deals ?? 0}</div>
-        </article>
-        <article className="card">
-          <div className="card-title">Completed Deals</div>
-          <div className="card-value">{dashboard?.completed_deals ?? 0}</div>
-        </article>
-        <article className="card">
-          <div className="card-title">Projected Profit</div>
-          <div className="card-value">
-            ${(dashboard?.projected_profit_total ?? 0).toFixed(2)}
+      <section className="panel">
+        <h2>Dashboard Summary</h2>
+        <div className="dashboard-grid">
+          <article>
+            <h3>Active Deals</h3>
+            <p>{dashboard?.active_deals ?? 0}</p>
+          </article>
+          <article>
+            <h3>Completed Deals</h3>
+            <p>{dashboard?.completed_deals ?? 0}</p>
+          </article>
+          <article>
+            <h3>Projected Profit</h3>
+            <p>${(dashboard?.projected_profit_total ?? 0).toFixed(2)}</p>
+          </article>
+          <article>
+            <h3>Realized Profit</h3>
+            <p>${(dashboard?.realized_profit_total ?? 0).toFixed(2)}</p>
+          </article>
+        </div>
+        {dashboard && dashboard.aging_alerts.length > 0 ? (
+          <div className="alerts">
+            <h3>Aging Alerts</h3>
+            <ul>
+              {dashboard.aging_alerts.map((alert) => (
+                <li key={alert.id}>
+                  {alert.label} ({alert.status}) - {alert.days_in_stage} days in stage
+                </li>
+              ))}
+            </ul>
           </div>
-        </article>
-        <article className="card">
-          <div className="card-title">Realized Profit</div>
-          <div className="card-value">
-            ${(dashboard?.realized_profit_total ?? 0).toFixed(2)}
-          </div>
-        </article>
+        ) : null}
       </section>
 
-      {dashboard && dashboard.aging_alerts.length > 0 ? (
-        <ul className="alerts">
-          {dashboard.aging_alerts.map((alert) => (
-            <li key={alert.id}>
-              {alert.label} ({alert.status}) - {alert.days_in_stage} days in stage
-            </li>
-          ))}
-        </ul>
-      ) : null}
-
-      <section className="section">
-        <h3>Deal Entry</h3>
-        <form className="grid" onSubmit={handleSubmit}>
-          <label className="field">
+      <section className="panel">
+        <h2>Deal Entry</h2>
+        <form className="deal-form" onSubmit={handleSubmit}>
+          <label>
             Label
             <input
               required
@@ -288,7 +384,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Category
             <select
               value={formData.category}
@@ -307,7 +403,7 @@ function App() {
             </select>
           </label>
 
-          <label className="field">
+          <label>
             Source Platform
             <select
               value={formData.source_platform}
@@ -326,7 +422,7 @@ function App() {
             </select>
           </label>
 
-          <label className="field">
+          <label>
             Acquisition State
             <input
               required
@@ -340,7 +436,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Acquisition Cost
             <input
               required
@@ -353,7 +449,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Buyer Premium (decimal)
             <input
               required
@@ -366,7 +462,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Transport Type
             <select
               value={formData.transport_type}
@@ -385,7 +481,7 @@ function App() {
             </select>
           </label>
 
-          <label className="field">
+          <label>
             Transport Cost Actual
             <input
               type="number"
@@ -397,7 +493,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Transport Cost Estimated
             <input
               type="number"
@@ -409,7 +505,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Repair Cost
             <input
               type="number"
@@ -419,7 +515,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Prep Cost
             <input
               type="number"
@@ -429,7 +525,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Estimated Market Value
             <input
               required
@@ -442,7 +538,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Units Total (optional)
             <input
               type="number"
@@ -453,7 +549,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Units Working
             <input
               type="number"
@@ -464,7 +560,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Units Minor Issue
             <input
               type="number"
@@ -475,7 +571,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Units Defective
             <input
               type="number"
@@ -486,7 +582,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Units Locked
             <input
               type="number"
@@ -497,7 +593,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Unit Count (fallback)
             <input
               type="number"
@@ -508,7 +604,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Prep Total Units (optional)
             <input
               type="number"
@@ -519,7 +615,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Prep Working Units
             <input
               type="number"
@@ -530,7 +626,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Prep Cosmetic Units
             <input
               type="number"
@@ -541,7 +637,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Prep Functional Units
             <input
               type="number"
@@ -552,7 +648,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Prep Defective Units
             <input
               type="number"
@@ -563,7 +659,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Prep Locked Units
             <input
               type="number"
@@ -574,7 +670,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Total Prep Time (minutes)
             <input
               type="number"
@@ -586,8 +682,7 @@ function App() {
             />
           </label>
 
-
-          <label className="field">
+          <label>
             Condition Grade
             <select
               value={formData.condition_grade}
@@ -606,7 +701,7 @@ function App() {
             </select>
           </label>
 
-          <label className="field full">
+          <label>
             Condition Notes
             <textarea
               rows={2}
@@ -617,7 +712,7 @@ function App() {
             />
           </label>
 
-          <label className="field">
+          <label>
             Presentation Quality
             <input
               value={formData.presentation_quality}
@@ -627,17 +722,36 @@ function App() {
             />
           </label>
 
-          <label className="field">
-            &nbsp;
-            <button type="submit" disabled={submitting}>
+          <label>
+            Actions
+            <div className="entry-actions">
+              <button type="button" disabled={submitting} onClick={() => void handlePreview()}>
+                {submitting ? "Working..." : "Preview Deal"}
+              </button>
+              <button type="submit" disabled={submitting}>
               {submitting ? "Saving..." : "Create Deal"}
-            </button>
+              </button>
+            </div>
           </label>
         </form>
+        {previewResult ? (
+          <div className="preview-box">
+            <h3>Latest Preview Output</h3>
+            <p>
+              <strong>{previewResult.deal.label}</strong> · action:{" "}
+              {previewResult.engine.recommended_action ?? "completed"}
+            </p>
+            <p>
+              Cost basis ${previewResult.calculations.total_cost_basis.toFixed(2)} · projected $
+              {previewResult.calculations.projected_profit.toFixed(2)} · stage alert{" "}
+              {previewResult.calculations.stage_alert}
+            </p>
+          </div>
+        ) : null}
       </section>
 
-      <section className="section">
-        <h3>Deal Tracking</h3>
+      <section className="panel">
+        <h2>Deal Tracking</h2>
         {loading ? <p>Loading...</p> : null}
         {!loading && deals.length === 0 ? <p>No deals yet.</p> : null}
 
@@ -653,21 +767,58 @@ function App() {
                   onAdvance={() => void handleStageAdvance(item)}
                 />
                 <DetailPanel deal={item} />
+                <div className="deal-card-actions">
+                  <button type="button" onClick={() => setSelectedDealId(item.deal.id)}>
+                    Ask About This Deal
+                  </button>
+                </div>
               </div>
             );
           })}
         </div>
       </section>
 
-      <section className="section">
-        <h3>Totals</h3>
-        <p>Active deals: {dashboard?.active_deals ?? 0}</p>
-        <p>Completed deals: {dashboard?.completed_deals ?? 0}</p>
+      <section className="panel">
+        <h2>Assistant</h2>
         <p>
-          Realized vs Projected: $
-          {(dashboard?.realized_profit_total ?? 0).toFixed(2)} / $
-          {(dashboard?.projected_profit_total ?? 0).toFixed(2)}
+          Selected deal:{" "}
+          {selectedDeal ? `${selectedDeal.deal.label} (${selectedDeal.deal.id})` : "None selected"}
         </p>
+        <label>
+          Ask about this deal
+          <textarea
+            rows={3}
+            value={assistantQuestion}
+            onChange={(event) => setAssistantQuestion(event.target.value)}
+            placeholder="What are the top risks and next action?"
+          />
+        </label>
+        <div className="entry-actions">
+          <button type="button" disabled={assistantLoading || !selectedDeal} onClick={() => void handleAssistantSubmit()}>
+            {assistantLoading ? "Asking..." : "Ask Assistant"}
+          </button>
+        </div>
+        {assistantError ? <p className="warning-banner">{assistantError}</p> : null}
+        {assistantResponse ? (
+          <div className="preview-box">
+            <p>
+              <strong>Response:</strong> {assistantResponse.response}
+            </p>
+            <p>
+              <strong>Risk:</strong> {assistantResponse.risk_level}
+            </p>
+            <p>
+              <strong>Suggested Action:</strong> {assistantResponse.suggested_action}
+            </p>
+            {assistantResponse.key_points.length > 0 ? (
+              <ul>
+                {assistantResponse.key_points.map((point) => (
+                  <li key={point}>{point}</li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
       </section>
     </main>
   );
