@@ -50,6 +50,19 @@ const resolveRiskLevel = (context: EnrichedDeal["assistant_context"]): "low" | "
   return "low";
 };
 
+const buildRecommendationExplanation = (
+  context: EnrichedDeal["assistant_context"],
+  suggestedAction: string
+): string => {
+  const alerts = context.warnings.length > 0 ? context.warnings.join(", ") : "none";
+  return [
+    `Recommendation: ${suggestedAction}.`,
+    `Projected profit is ${context.calculations.projected_profit.toFixed(2)}.`,
+    `Data confidence is ${context.calculations.data_confidence}.`,
+    `Active alerts: ${alerts}.`,
+  ].join(" ");
+};
+
 const buildHeuristicAdvice = (
   context: EnrichedDeal["assistant_context"],
   question: string
@@ -69,12 +82,18 @@ const buildHeuristicAdvice = (
   }
 
   const riskLevel = resolveRiskLevel(context);
-  const suggestedAction = context.engine.recommended_action ?? "completed";
+  const suggestedAction = context.ai_recommendation.suggested_action;
+  const recommendationExplanation = buildRecommendationExplanation(context, suggestedAction);
+  const latestDecision = context.operator_decision_history[0] ?? null;
   const response = [
     "Advisory analysis based only on provided deal context.",
     `Question: ${question}`,
+    recommendationExplanation,
     context.recommendation_summary,
     `Risk level: ${riskLevel}. Suggested action: ${suggestedAction}.`,
+    latestDecision?.decision === "rejected"
+      ? "You previously rejected this recommendation. Please capture your operator reasoning for continuous improvement."
+      : "",
   ].join(" ");
 
   return {
@@ -107,6 +126,8 @@ const buildSystemPrompt = (context: EnrichedDeal["assistant_context"]): string =
     "Advisory-only mode: do not execute actions, do not modify deals, do not change scores, do not override backend logic.",
     "Use ONLY the provided context. If data is missing, explicitly say it is missing.",
     "Your task: explain deal performance, identify risks, and recommend next actions for operator review.",
+    "Always explain WHY the recommendation is buy/pass/investigate by referencing alerts, projected profit, and data confidence.",
+    "If latest operator decision is rejected, ask for operator reasoning.",
     "Respond with concise operational guidance.",
     "",
     "Context JSON:",
@@ -139,10 +160,11 @@ const buildOpenAIAdvice = async (
 
   const responseText = openaiResponse.output_text?.trim() || "No assistant response generated.";
   const riskLevel = resolveRiskLevel(context);
-  const suggestedAction = context.engine.recommended_action ?? "completed";
+  const suggestedAction = context.ai_recommendation.suggested_action;
+  const recommendationExplanation = buildRecommendationExplanation(context, suggestedAction);
 
   return {
-    response: responseText,
+    response: `${recommendationExplanation} ${responseText}`.trim(),
     key_points: [
       `Projected profit: ${context.calculations.projected_profit.toFixed(2)}`,
       `Data confidence: ${context.calculations.data_confidence}`,

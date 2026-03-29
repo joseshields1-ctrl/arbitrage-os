@@ -92,6 +92,22 @@ export interface MetadataRecord {
   presentation_quality: string;
 }
 
+export interface AiRecommendation {
+  suggested_action: "buy" | "pass" | "investigate";
+  confidence: number;
+  reasoning: string;
+  key_factors: string[];
+}
+
+export interface OperatorDecisionRecord {
+  id: string;
+  deal_id: string;
+  decision: "approved" | "rejected";
+  reason: string;
+  decided_at: string;
+  ai_recommendation_snapshot: AiRecommendation;
+}
+
 export interface DealView {
   deal: DealRecord;
   financials: FinancialRecord;
@@ -110,6 +126,8 @@ export interface DealView {
     message: string;
   }>;
   operator_recommendation?: string;
+  ai_recommendation: AiRecommendation;
+  operator_decision_history: OperatorDecisionRecord[];
   warnings?: string[];
   engine: {
     cost_basis: {
@@ -199,6 +217,8 @@ export interface DealView {
     warnings: string[];
     postmortem: DealView["engine"]["postmortem"];
     recommendation_summary: string;
+    ai_recommendation: AiRecommendation;
+    operator_decision_history: OperatorDecisionRecord[];
   };
   calculations: {
     total_cost_basis: number;
@@ -288,6 +308,16 @@ export interface AssistantQueryResponse {
   key_points: string[];
   risk_level: "low" | "medium" | "high";
   suggested_action: string;
+}
+
+export interface DealDecisionRequest {
+  decision: "approved" | "rejected";
+  reason: string;
+}
+
+export interface DealDecisionResponse {
+  deal: DealView;
+  stored_decision: OperatorDecisionRecord;
 }
 
 export const CATEGORY_OPTIONS: DealCategory[] = [

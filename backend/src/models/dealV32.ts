@@ -119,11 +119,29 @@ export interface DealComputedMetrics {
   source_quality_flag: "LOW_QUALITY_SOURCE" | null;
 }
 
+export interface AiRecommendation {
+  suggested_action: "buy" | "pass" | "investigate";
+  confidence: number;
+  reasoning: string;
+  key_factors: string[];
+}
+
+export interface OperatorDecisionRecord {
+  id: string;
+  deal_id: string;
+  decision: "approved" | "rejected";
+  reason: string;
+  decided_at: string;
+  ai_recommendation_snapshot: AiRecommendation;
+}
+
 export interface DealView {
   deal: DealRow;
   financials: FinancialRow;
   metadata: MetadataRow;
   calculations: DealComputedMetrics;
+  ai_recommendation: AiRecommendation;
+  operator_decision_history: OperatorDecisionRecord[];
   warnings?: string[];
 }
 

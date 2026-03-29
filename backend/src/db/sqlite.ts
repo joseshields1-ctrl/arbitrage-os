@@ -60,6 +60,18 @@ export const initializeDatabase = (): void => {
     );
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS operator_decisions (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL,
+      decision TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      decided_at TEXT NOT NULL,
+      ai_recommendation_snapshot TEXT NOT NULL,
+      FOREIGN KEY (deal_id) REFERENCES deals(id) ON DELETE CASCADE
+    );
+  `);
+
   // Migration-safe additions for optional unit breakdown support.
   const dealColumns = db.prepare(`PRAGMA table_info(deals)`).all() as Array<{
     name: string;

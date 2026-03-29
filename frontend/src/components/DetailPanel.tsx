@@ -1,16 +1,23 @@
+import { useState } from "react";
+import { submitDealDecision } from "../api";
 import type { DealView } from "../types";
 
 interface DetailPanelProps {
   deal: DealView;
+  onDecisionRecorded: (updatedDeal: DealView) => void;
 }
 
-const DetailPanel = ({ deal }: DetailPanelProps) => {
+const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
   const unitBreakdown = deal.deal.unit_breakdown;
   const prepMetrics = deal.deal.prep_metrics;
   const mismatch = (deal.warnings ?? []).some((warning) =>
     warning.includes("Potential transport mismatch")
   );
+  const [decisionReason, setDecisionReason] = useState("");
+  const [decisionSubmitting, setDecisionSubmitting] = useState(false);
+  const [decisionError, setDecisionError] = useState<string | null>(null);
   const qualityFlag = deal.calculations.source_quality_flag;
+  const latestDecision = deal.operator_decision_history[0] ?? null;
   const efficiencyClass =
     deal.calculations.efficiency_rating === "GOOD"
       ? "efficiency-good"
@@ -19,6 +26,29 @@ const DetailPanel = ({ deal }: DetailPanelProps) => {
         : deal.calculations.efficiency_rating === "BAD"
           ? "efficiency-bad"
           : undefined;
+
+  const handleDecision = async (decision: "approved" | "rejected") => {
+    const trimmedReason = decisionReason.trim();
+    if (!trimmedReason) {
+      setDecisionError("Reason is required.");
+      return;
+    }
+    setDecisionSubmitting(true);
+    setDecisionError(null);
+    try {
+      const response = await submitDealDecision(deal.deal.id, {
+        decision,
+        reason: trimmedReason,
+      });
+      onDecisionRecorded(response.deal);
+      setDecisionReason("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to save decision";
+      setDecisionError(message);
+    } finally {
+      setDecisionSubmitting(false);
+    }
+  };
 
   return (
     <div className="detail-panel">
@@ -87,6 +117,69 @@ const DetailPanel = ({ deal }: DetailPanelProps) => {
           Potential mismatch: electronics_bulk usually fits local_pickup or freight.
         </p>
       ) : null}
+      <div className="decision-section">
+        <h4>AI Recommendation</h4>
+        <p>
+          <strong>Suggested Action:</strong> {deal.ai_recommendation.suggested_action}
+        </p>
+        <p>
+          <strong>Confidence:</strong> {deal.ai_recommendation.confidence}
+        </p>
+        <p>
+          <strong>Reasoning:</strong> {deal.ai_recommendation.reasoning}
+        </p>
+        {deal.ai_recommendation.key_factors.length > 0 ? (
+          <ul>
+            {deal.ai_recommendation.key_factors.map((factor) => (
+              <li key={factor}>{factor}</li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+      <div className="decision-section">
+        <h4>Your Decision</h4>
+        {latestDecision ? (
+          <div className="preview-box">
+            <p>
+              <strong>Latest:</strong> {latestDecision.decision} at{" "}
+              {new Date(latestDecision.decided_at).toLocaleString()}
+            </p>
+            <p>
+              <strong>Reason:</strong> {latestDecision.reason}
+            </p>
+            <p>
+              <strong>AI Snapshot:</strong> {latestDecision.ai_recommendation_snapshot.suggested_action} (
+              {latestDecision.ai_recommendation_snapshot.confidence})
+            </p>
+          </div>
+        ) : null}
+        <label>
+          Why? (required)
+          <textarea
+            rows={2}
+            value={decisionReason}
+            onChange={(event) => setDecisionReason(event.target.value)}
+            placeholder="Enter operator reasoning..."
+          />
+        </label>
+        <div className="entry-actions">
+          <button
+            type="button"
+            disabled={decisionSubmitting}
+            onClick={() => void handleDecision("approved")}
+          >
+            Approve
+          </button>
+          <button
+            type="button"
+            disabled={decisionSubmitting}
+            onClick={() => void handleDecision("rejected")}
+          >
+            Reject
+          </button>
+        </div>
+        {decisionError ? <p className="warning-text">{decisionError}</p> : null}
+      </div>
     </div>
   );
 };

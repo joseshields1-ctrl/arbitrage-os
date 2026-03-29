@@ -245,6 +245,14 @@
   background: #f9fafb;
 }
 
+.decision-section {
+  margin-top: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f9fafb;
+}
+
 .detail-panel {
   margin-top: 12px;
   border-top: 1px solid #e5e7eb;

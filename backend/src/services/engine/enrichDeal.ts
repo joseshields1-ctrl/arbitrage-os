@@ -1,9 +1,11 @@
 import type {
+  AiRecommendation,
   DealCategory,
   DealRow,
   DealStatus,
   FinancialRow,
   MetadataRow,
+  OperatorDecisionRecord,
   PrepMetrics,
 } from "../../models/dealV32";
 import { computeCostBasis } from "./costBasis";
@@ -67,6 +69,8 @@ export interface EnrichedDeal {
     postmortem: ReturnType<typeof computePostmortem>;
     recommended_action: EngineRecommendedAction;
   };
+  ai_recommendation: AiRecommendation;
+  operator_decision_history: OperatorDecisionRecord[];
   alerts: OperatorAlert[];
   warnings: string[];
   operator_recommendation: string;
@@ -81,6 +85,8 @@ export interface EnrichedDeal {
     warnings: string[];
     postmortem: ReturnType<typeof computePostmortem>;
     recommendation_summary: string;
+    ai_recommendation: AiRecommendation;
+    operator_decision_history: OperatorDecisionRecord[];
   };
 }
 
@@ -255,13 +261,82 @@ const buildOperatorRecommendationSummary = (input: {
   return `Action: ${actionText}. ${reasons.join(" ")}`;
 };
 
+const clampConfidence = (value: number): number => {
+  if (value < 0) {
+    return 0;
+  }
+  if (value > 100) {
+    return 100;
+  }
+  return Math.round(value);
+};
+
+const buildAiRecommendation = (input: {
+  projected_profit: number;
+  data_confidence: number;
+  alerts: OperatorAlert[];
+  recommended_action: EngineRecommendedAction;
+}): AiRecommendation => {
+  let suggestedAction: AiRecommendation["suggested_action"] = "investigate";
+  if (input.recommended_action === "pass") {
+    suggestedAction = "buy";
+  } else if (
+    input.recommended_action === "do_not_acquire" ||
+    input.recommended_action === "liquidate_now" ||
+    input.recommended_action === "reduce_price"
+  ) {
+    suggestedAction = "pass";
+  }
+
+  const criticalAlerts = input.alerts.filter((alert) => alert.severity === "critical").length;
+  const warningAlerts = input.alerts.filter((alert) => alert.severity === "warning").length;
+  let confidence = input.data_confidence;
+  confidence -= criticalAlerts * 20;
+  confidence -= warningAlerts * 8;
+  if (input.projected_profit < 0) {
+    confidence -= 15;
+  } else if (input.projected_profit > 0) {
+    confidence += 5;
+  }
+
+  const keyFactors: string[] = [
+    `Projected profit: ${input.projected_profit.toFixed(2)}`,
+    `Data confidence: ${input.data_confidence}`,
+  ];
+  if (criticalAlerts > 0 || warningAlerts > 0) {
+    keyFactors.push(
+      `Alerts: ${input.alerts.map((alert) => alert.code).join(", ")}`
+    );
+  } else {
+    keyFactors.push("Alerts: none");
+  }
+  keyFactors.push(
+    `Engine action basis: ${input.recommended_action ?? "completed"}`
+  );
+
+  const reasoning = `Suggested ${suggestedAction} based on projected profit, operator alerts, and data confidence from existing engine outputs.`;
+
+  return {
+    suggested_action: suggestedAction,
+    confidence: clampConfidence(confidence),
+    reasoning,
+    key_factors: keyFactors,
+  };
+};
+
 export interface EnrichDealInput {
   deal: DealRow;
   financials: FinancialRow;
   metadata: MetadataRow;
+  operator_decision_history?: EnrichedDeal["operator_decision_history"];
 }
 
-export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): EnrichedDeal => {
+export const enrichDeal = ({
+  deal,
+  financials,
+  metadata,
+  operator_decision_history = [],
+}: EnrichDealInput): EnrichedDeal => {
   const normalizedPrepMetrics = normalizePrepMetrics(deal.prep_metrics ?? null);
   const normalizedUnitCount = normalizeOptionalCount(deal.unit_count ?? null);
 
@@ -365,6 +440,12 @@ export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): Enr
     data_confidence: adjustedDataConfidence,
     postmortem,
   });
+  const aiRecommendation = buildAiRecommendation({
+    projected_profit: profit.projected_profit,
+    data_confidence: adjustedDataConfidence,
+    alerts,
+    recommended_action: recommendedAction,
+  });
 
   return {
     deal: {
@@ -406,6 +487,8 @@ export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): Enr
       postmortem,
       recommended_action: recommendedAction,
     },
+    ai_recommendation: aiRecommendation,
+    operator_decision_history,
     alerts,
     warnings,
     operator_recommendation: operatorRecommendation,
@@ -454,6 +537,8 @@ export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): Enr
       warnings,
       postmortem,
       recommendation_summary: operatorRecommendation,
+      ai_recommendation: aiRecommendation,
+      operator_decision_history,
     },
   };
 };

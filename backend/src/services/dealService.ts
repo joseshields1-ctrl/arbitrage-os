@@ -1,5 +1,7 @@
 import {
+  AiRecommendation,
   DealCategory,
+  OperatorDecisionRecord,
   DealRow,
   DEAL_LIFECYCLE_STAGES,
   DealStatus,
@@ -38,6 +40,11 @@ export interface CreateDealInput {
 export interface CompleteDealInput {
   sale_price_actual: number;
   completion_date?: string;
+}
+
+export interface DealDecisionInput {
+  decision: "approved" | "rejected";
+  reason: string;
 }
 
 export type DealView = ReturnType<typeof enrichDeal>;
@@ -137,6 +144,13 @@ const parseNumericInput = (
     throw new Error(`${fieldName} must be >= ${options.min}`);
   }
   return parsed;
+};
+
+const ensureDecision = (value: unknown): "approved" | "rejected" => {
+  if (value === "approved" || value === "rejected") {
+    return value;
+  }
+  throw new Error("decision must be either approved or rejected");
 };
 
 const ensureIsoDate = (value: string, fieldName: string): void => {
@@ -382,6 +396,65 @@ const mapMetadataRow = (row: Record<string, unknown>): MetadataRow => ({
   presentation_quality: row.presentation_quality as MetadataRow["presentation_quality"],
 });
 
+const parseAiRecommendationSnapshot = (value: unknown): AiRecommendation => {
+  const fallback: AiRecommendation = {
+    suggested_action: "investigate",
+    confidence: 0,
+    reasoning: "Snapshot unavailable.",
+    key_factors: [],
+  };
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return fallback;
+  }
+  try {
+    const parsed = JSON.parse(value) as Partial<AiRecommendation>;
+    const suggestedAction =
+      parsed.suggested_action === "buy" ||
+      parsed.suggested_action === "pass" ||
+      parsed.suggested_action === "investigate"
+        ? parsed.suggested_action
+        : fallback.suggested_action;
+    const confidence =
+      typeof parsed.confidence === "number" && Number.isFinite(parsed.confidence)
+        ? Math.max(0, Math.min(100, Math.round(parsed.confidence)))
+        : fallback.confidence;
+    const reasoning =
+      typeof parsed.reasoning === "string" && parsed.reasoning.trim().length > 0
+        ? parsed.reasoning
+        : fallback.reasoning;
+    const keyFactors = Array.isArray(parsed.key_factors)
+      ? parsed.key_factors.filter((item): item is string => typeof item === "string")
+      : fallback.key_factors;
+    return {
+      suggested_action: suggestedAction,
+      confidence,
+      reasoning,
+      key_factors: keyFactors,
+    };
+  } catch {
+    return fallback;
+  }
+};
+
+export const listOperatorDecisionsByDealId = (dealId: string): OperatorDecisionRecord[] => {
+  const rows = db
+    .prepare(
+      `SELECT id, deal_id, decision, reason, decided_at, ai_recommendation_snapshot
+       FROM operator_decisions
+       WHERE deal_id = ?
+       ORDER BY datetime(decided_at) DESC`
+    )
+    .all(dealId) as Array<Record<string, unknown>>;
+  return rows.map((row) => ({
+    id: String(row.id),
+    deal_id: String(row.deal_id),
+    decision: row.decision === "approved" ? "approved" : "rejected",
+    reason: String(row.reason ?? ""),
+    decided_at: String(row.decided_at),
+    ai_recommendation_snapshot: parseAiRecommendationSnapshot(row.ai_recommendation_snapshot),
+  }));
+};
+
 const computeAndPersistFinancials = (dealId: string): void => {
   const joined = db
     .prepare(
@@ -491,7 +564,13 @@ const buildEnrichedDealView = (
   financials: FinancialRow,
   metadata: MetadataRow
 ): DealView => {
-  return enrichDeal({ deal, financials, metadata });
+  const operatorDecisionHistory = listOperatorDecisionsByDealId(deal.id);
+  return enrichDeal({
+    deal,
+    financials,
+    metadata,
+    operator_decision_history: operatorDecisionHistory,
+  });
 };
 
 interface PreparedDealRows {
@@ -967,4 +1046,54 @@ export const getDealById = (dealId: string): DealView | null => {
   }
   computeAndPersistFinancials(dealId);
   return getDealViewById(dealId);
+};
+
+export const recordDealDecision = (
+  dealId: string,
+  rawInput: unknown
+): { deal: DealView; stored_decision: OperatorDecisionRecord } => {
+  const existingDeal = getDealById(dealId);
+  if (!existingDeal) {
+    throw new Error("Deal not found");
+  }
+  if (!rawInput || typeof rawInput !== "object") {
+    throw new Error("Invalid decision payload");
+  }
+
+  const input = rawInput as Partial<DealDecisionInput>;
+  const decision = ensureDecision(input.decision);
+  const reason = ensureNonEmptyString(input.reason, "reason");
+  const decidedAt = nowIso();
+  const decisionId = crypto.randomUUID();
+  const aiRecommendationSnapshot = existingDeal.ai_recommendation;
+
+  db.prepare(
+    `INSERT INTO operator_decisions (
+      id, deal_id, decision, reason, decided_at, ai_recommendation_snapshot
+    ) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(
+    decisionId,
+    dealId,
+    decision,
+    reason,
+    decidedAt,
+    JSON.stringify(aiRecommendationSnapshot)
+  );
+
+  const updatedDeal = getDealById(dealId);
+  if (!updatedDeal) {
+    throw new Error("Deal not found");
+  }
+
+  return {
+    deal: updatedDeal,
+    stored_decision: {
+      id: decisionId,
+      deal_id: dealId,
+      decision,
+      reason,
+      decided_at: decidedAt,
+      ai_recommendation_snapshot: aiRecommendationSnapshot,
+    },
+  };
 };

@@ -3,6 +3,8 @@ import type {
   AssistantQueryResponse,
   CreateDealRequest,
   DashboardResponse,
+  DealDecisionRequest,
+  DealDecisionResponse,
   DealStage,
   DealView,
 } from "./types";
@@ -83,4 +85,16 @@ export const previewDeal = async (payload: CreateDealRequest): Promise<DealView>
     body: JSON.stringify(payload),
   });
   return handleResponse<DealView>(response);
+};
+
+export const submitDealDecision = async (
+  dealId: string,
+  payload: DealDecisionRequest
+): Promise<DealDecisionResponse> => {
+  const response = await fetch(apiUrl(`/api/deals/${dealId}/decision`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<DealDecisionResponse>(response);
 };

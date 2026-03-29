@@ -312,11 +312,10 @@ function App() {
     setAssistantLoading(true);
     setAssistantError(null);
     try {
-      const response = await queryAssistant({
-        deal_id: selectedDeal.deal.id,
-        assistant_context: selectedDeal.assistant_context,
-        question: trimmedQuestion,
-      });
+    const response = await queryAssistant({
+      deal_id: selectedDeal.deal.id,
+      question: trimmedQuestion,
+    });
       setAssistantResponse(response);
     } catch (assistantQueryError) {
       const message =
@@ -766,9 +765,24 @@ function App() {
                   disabled={!next || updatingDealId === item.deal.id}
                   onAdvance={() => void handleStageAdvance(item)}
                 />
-                <DetailPanel deal={item} />
+                <DetailPanel
+                  deal={item}
+                  onDecisionRecorded={(updatedDeal) =>
+                    setDeals((prev) =>
+                      prev.map((current) =>
+                        current.deal.id === updatedDeal.deal.id ? updatedDeal : current
+                      )
+                    )
+                  }
+                />
                 <div className="deal-card-actions">
-                  <button type="button" onClick={() => setSelectedDealId(item.deal.id)}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedDealId(item.deal.id);
+                      setAssistantResponse(null);
+                    }}
+                  >
                     Ask About This Deal
                   </button>
                 </div>
