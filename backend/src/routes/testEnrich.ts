@@ -1,13 +1,11 @@
 import { Router } from "express";
-import { enrichDeal } from "../services/engine/enrichDeal";
-import type { DealRow, FinancialRow, MetadataRow } from "../models/dealV32";
+import { previewDeal } from "../services/dealService";
 
 const testEnrichRouter = Router();
 
 testEnrichRouter.get("/", (_req, res) => {
   const now = new Date().toISOString();
-  const mockDeal: DealRow = {
-    id: "enrich-001",
+  const preview = previewDeal({
     label: "Enrich Test Deal",
     category: "electronics_bulk",
     source_platform: "ebay",
@@ -36,40 +34,37 @@ testEnrichRouter.get("/", (_req, res) => {
       locked_units: 12,
       total_prep_time_minutes: 318,
     },
-  };
-
-  const mockFinancials: FinancialRow = {
-    deal_id: mockDeal.id,
-    acquisition_cost: 1000,
-    buyer_premium_pct: 0.1,
-    buyer_premium_overridden: false,
-    tax_rate: null,
-    tax: null,
-    transport_cost_actual: null,
-    transport_cost_estimated: 120,
-    repair_cost: 20,
-    prep_cost: 30,
-    estimated_market_value: 1600,
-    sale_price_actual: null,
-    projected_profit: 0,
-    realized_profit: null,
-  };
-
-  const mockMetadata: MetadataRow = {
-    deal_id: mockDeal.id,
-    condition_grade: "used_functional",
-    condition_notes: "Mixed batch quality.",
-    transport_type: "parcel",
-    presentation_quality: "standard",
-  };
-
-  const enriched = enrichDeal({
-    deal: mockDeal,
-    financials: mockFinancials,
-    metadata: mockMetadata,
+    financials: {
+      acquisition_cost: 1000,
+      buyer_premium_pct: 0.1,
+      buyer_premium_overridden: false,
+      tax_rate: null,
+      transport_cost_actual: null,
+      transport_cost_estimated: 120,
+      repair_cost: 20,
+      prep_cost: 30,
+      estimated_market_value: 1600,
+      sale_price_actual: null,
+    },
+    metadata: {
+      condition_grade: "used_functional",
+      condition_notes: "Mixed batch quality.",
+      transport_type: "parcel",
+      presentation_quality: "standard",
+    },
   });
 
-  res.json(enriched);
+  res.json(preview);
+});
+
+testEnrichRouter.post("/", (req, res) => {
+  try {
+    const preview = previewDeal(req.body);
+    res.status(200).json(preview);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to enrich input payload";
+    res.status(400).json({ error: message });
+  }
 });
 
 export default testEnrichRouter;

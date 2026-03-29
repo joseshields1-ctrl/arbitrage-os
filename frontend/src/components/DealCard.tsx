@@ -7,7 +7,8 @@ interface DealCardProps {
   onAdvance: () => void;
 }
 
-const formatCurrency = (value: number): string => `$${value.toFixed(2)}`;
+const formatCurrency = (value: number | null): string =>
+  value === null ? "N/A" : `$${value.toFixed(2)}`;
 
 function DealCard({
   deal,

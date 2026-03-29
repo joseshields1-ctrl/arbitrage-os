@@ -34,27 +34,7 @@ export interface CreateDealInput {
   metadata: MetadataInput;
 }
 
-export interface DealView {
-  deal: DealRow;
-  financials: FinancialRow;
-  metadata: MetadataRow;
-  warnings: string[];
-  engine: ReturnType<typeof enrichDeal>["engine"];
-  calculations: {
-    total_cost_basis: number;
-    projected_profit: number;
-    realized_profit: number | null;
-    days_in_stage: number;
-    days_in_current_stage: number;
-    stage_alert: "OK" | "WARNING" | "CRITICAL";
-    data_confidence: number;
-    avg_time_per_unit: number | null;
-    efficiency_score: number | null;
-    efficiency_rating: "GOOD" | "WARNING" | "BAD" | null;
-    locked_ratio: number | null;
-    source_quality_flag: "LOW_QUALITY_SOURCE" | null;
-  };
-}
+export type DealView = ReturnType<typeof enrichDeal>;
 
 export interface DashboardView {
   active_deals: number;
@@ -302,7 +282,7 @@ const computeAndPersistFinancials = (dealId: string): void => {
     enriched.financials.tax_rate,
     enriched.financials.tax,
     enriched.financials.projected_profit,
-    enriched.financials.realized_profit ?? 0,
+    enriched.financials.realized_profit ?? null,
     dealId
   );
 };
@@ -312,29 +292,7 @@ const buildEnrichedDealView = (
   financials: FinancialRow,
   metadata: MetadataRow
 ): DealView => {
-  const enriched = enrichDeal({ deal, financials, metadata });
-
-  return {
-    deal: enriched.deal,
-    financials: enriched.financials,
-    metadata: enriched.metadata,
-    warnings: enriched.warnings,
-    engine: enriched.engine,
-    calculations: {
-      total_cost_basis: enriched.calculations.total_cost_basis,
-      projected_profit: enriched.calculations.projected_profit,
-      realized_profit: enriched.calculations.realized_profit,
-      days_in_stage: enriched.calculations.days_in_stage,
-      days_in_current_stage: enriched.calculations.days_in_current_stage,
-      stage_alert: enriched.calculations.stage_alert,
-      data_confidence: enriched.calculations.data_confidence,
-      avg_time_per_unit: enriched.calculations.avg_time_per_unit,
-      efficiency_score: enriched.calculations.efficiency_score,
-      efficiency_rating: enriched.calculations.efficiency_rating,
-      locked_ratio: enriched.calculations.locked_ratio,
-      source_quality_flag: enriched.calculations.source_quality_flag,
-    },
-  };
+  return enrichDeal({ deal, financials, metadata });
 };
 
 const getDealViewById = (dealId: string): DealView | null => {
@@ -500,6 +458,68 @@ export const createDeal = (input: CreateDealInput): DealView => {
     throw new Error("Failed to create deal");
   }
   return created;
+};
+
+export const previewDeal = (input: CreateDealInput): DealView => {
+  const id = `preview-${crypto.randomUUID()}`;
+  const stageUpdatedAt = input.stage_updated_at ?? nowIso();
+  const status: DealStatus = input.status ?? "sourced";
+  const discoveredDate = normalizeNullableDate(input.discovered_date);
+  const purchaseDate = normalizeNullableDate(input.purchase_date);
+  const listingDate = normalizeNullableDate(input.listing_date);
+  const saleDate = normalizeNullableDate(input.sale_date);
+  const completionDate = normalizeNullableDate(input.completion_date);
+  const normalizedUnitCount = normalizeOptionalCount(input.unit_count);
+  const prepMetrics = normalizePrepMetricsInput(input.prep_metrics);
+  const resolvedUnitCount = input.prep_metrics ? null : normalizedUnitCount;
+  const defaultTransportType = categoryProfiles[input.category].default_transport_type;
+  const resolvedTransportType =
+    input.metadata.transport_type ?? (defaultTransportType as MetadataRow["transport_type"]);
+
+  return buildEnrichedDealView(
+    {
+      id,
+      label: input.label,
+      category: input.category,
+      source_platform: input.source_platform,
+      acquisition_state: input.acquisition_state.toUpperCase(),
+      status,
+      stage_updated_at: stageUpdatedAt,
+      discovered_date: discoveredDate,
+      purchase_date: purchaseDate,
+      listing_date: listingDate,
+      sale_date: saleDate,
+      completion_date: completionDate,
+      unit_count: resolvedUnitCount,
+      unit_breakdown: input.unit_breakdown ?? null,
+      prep_metrics: prepMetrics,
+    },
+    {
+      deal_id: id,
+      acquisition_cost: input.financials.acquisition_cost,
+      buyer_premium_pct: input.financials.buyer_premium_pct ?? 0,
+      buyer_premium_overridden:
+        Boolean(input.financials.buyer_premium_overridden) &&
+        input.financials.buyer_premium_pct !== undefined,
+      tax_rate: input.financials.tax_rate ?? null,
+      tax: null,
+      transport_cost_actual: input.financials.transport_cost_actual ?? null,
+      transport_cost_estimated: input.financials.transport_cost_estimated ?? null,
+      repair_cost: input.financials.repair_cost ?? null,
+      prep_cost: input.financials.prep_cost ?? null,
+      estimated_market_value: input.financials.estimated_market_value,
+      sale_price_actual: input.financials.sale_price_actual ?? null,
+      projected_profit: 0,
+      realized_profit: null,
+    },
+    {
+      deal_id: id,
+      condition_grade: input.metadata.condition_grade,
+      condition_notes: input.metadata.condition_notes,
+      transport_type: resolvedTransportType,
+      presentation_quality: input.metadata.presentation_quality,
+    }
+  );
 };
 
 export const listDeals = (): DealView[] => {

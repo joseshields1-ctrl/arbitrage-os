@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import {
   createDeal,
@@ -236,15 +236,6 @@ function App() {
     }
   };
 
-  const completedDeals = useMemo(
-    () => deals.filter((item) => item.deal.status === "completed"),
-    [deals]
-  );
-  const activeDeals = useMemo(
-    () => deals.filter((item) => item.deal.status !== "completed"),
-    [deals]
-  );
-
   return (
     <main className="app">
       <h1>Arbitrage OS</h1>
@@ -363,7 +354,7 @@ function App() {
           </label>
 
           <label className="field">
-            Buyer Premium %
+            Buyer Premium (decimal)
             <input
               required
               type="number"
@@ -670,8 +661,8 @@ function App() {
 
       <section className="section">
         <h3>Totals</h3>
-        <p>Active deals: {activeDeals.length}</p>
-        <p>Completed deals: {completedDeals.length}</p>
+        <p>Active deals: {dashboard?.active_deals ?? 0}</p>
+        <p>Completed deals: {dashboard?.completed_deals ?? 0}</p>
         <p>
           Realized vs Projected: $
           {(dashboard?.realized_profit_total ?? 0).toFixed(2)} / $

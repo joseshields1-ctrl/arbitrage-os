@@ -71,13 +71,17 @@ export interface FinancialRecord {
   deal_id: string;
   acquisition_cost: number;
   buyer_premium_pct: number;
+  buyer_premium_overridden: boolean;
+  tax_rate: number | null;
+  tax: number | null;
   transport_cost_actual: number | null;
   transport_cost_estimated: number | null;
   repair_cost: number | null;
   prep_cost: number | null;
   estimated_market_value: number;
+  sale_price_actual: number | null;
   projected_profit: number;
-  realized_profit: number;
+  realized_profit: number | null;
 }
 
 export interface MetadataRecord {
@@ -93,11 +97,87 @@ export interface DealView {
   financials: FinancialRecord;
   metadata: MetadataRecord;
   warnings?: string[];
+  engine: {
+    cost_basis: {
+      total_cost_basis: number;
+      cost_basis_breakdown: {
+        acquisition_cost: number;
+        buyer_premium: number;
+        tax: number;
+        transport: number;
+        repair_cost: number;
+        prep_cost: number;
+        vehicle_mechanical_contingency: number;
+      };
+      estimated_inputs: string[];
+      buyer_premium_pct: number;
+      buyer_premium_overridden: boolean;
+      tax_rate: number | null;
+      tax: number;
+    };
+    profit: {
+      projected_profit: number;
+      realized_profit: number | null;
+      breakdown: {
+        gross_value_projection: number;
+        sell_through_factor: number;
+        platform_fee_pct: number;
+        platform_fees: number;
+        return_rate_buffer_pct: number;
+        return_rate_buffer: number;
+        conservative_revenue_projection: number;
+      };
+    };
+    scoring: {
+      acquisition_score: number;
+      exit_score: number;
+      classification:
+        | "LIKELY WIN"
+        | "WORTH REVIEW"
+        | "MARGINAL"
+        | "PASS"
+        | "BEST WIN"
+        | "ACCEPTABLE WIN"
+        | "BAD DEAL";
+      defective_review_bias: number;
+    };
+    aging: {
+      days_in_current_stage: number;
+      stage_alert: "OK" | "WARNING" | "CRITICAL";
+    };
+    liquidation: {
+      warning: boolean;
+      trigger: boolean;
+      force_liquidation: boolean;
+      recommended_action:
+        | "pass"
+        | "review_only"
+        | "do_not_acquire"
+        | "reduce_price"
+        | "liquidate_now";
+    };
+    data_confidence: number;
+    postmortem: {
+      profit_delta: number | null;
+      variance_pct: number | null;
+      revenue_variance: number | null;
+    };
+    recommended_action:
+      | "pass"
+      | "review_only"
+      | "do_not_acquire"
+      | "reduce_price"
+      | "liquidate_now"
+      | null;
+  };
   calculations: {
     total_cost_basis: number;
     projected_profit: number;
-    realized_profit: number;
+    realized_profit: number | null;
     days_in_stage: number;
+    days_in_current_stage: number;
+    stage_alert: "OK" | "WARNING" | "CRITICAL";
+    data_confidence: number;
     avg_time_per_unit: number | null;
     efficiency_score: number | null;
     efficiency_rating: "GOOD" | "WARNING" | "BAD" | null;

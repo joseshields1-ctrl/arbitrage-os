@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createDeal, listDeals, updateDealStage } from "../services/dealService";
+import { createDeal, listDeals, previewDeal, updateDealStage } from "../services/dealService";
 import { DealStatus } from "../models/dealV32";
 
 const dealsRouter = Router();
@@ -10,6 +10,16 @@ dealsRouter.post("/", (req, res) => {
     res.status(201).json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to create deal";
+    res.status(400).json({ error: message });
+  }
+});
+
+dealsRouter.post("/preview", (req, res) => {
+  try {
+    const result = previewDeal(req.body);
+    res.status(200).json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to preview deal";
     res.status(400).json({ error: message });
   }
 });
