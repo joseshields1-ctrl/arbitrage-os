@@ -20,7 +20,8 @@ export type EngineRecommendedAction =
   | "review_only"
   | "do_not_acquire"
   | "reduce_price"
-  | "liquidate_now";
+  | "liquidate_now"
+  | null;
 
 export interface EnrichedDeal {
   deal: DealRow;
@@ -166,15 +167,17 @@ export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): Enr
 
   const weakScores = scoring.acquisition_score < 40 || scoring.exit_score < 40;
   const recommendedAction: EngineRecommendedAction =
-    liquidation.force_liquidation
-      ? "liquidate_now"
-      : profit.projected_profit < 0 && deal.status === "sourced"
-        ? "do_not_acquire"
-        : profit.projected_profit < 0
-          ? "reduce_price"
-          : weakScores
-            ? "review_only"
-            : "pass";
+    deal.status === "completed"
+      ? null
+      : liquidation.force_liquidation
+        ? "liquidate_now"
+        : profit.projected_profit < 0 && deal.status === "sourced"
+          ? "do_not_acquire"
+          : profit.projected_profit < 0
+            ? "reduce_price"
+            : weakScores
+              ? "review_only"
+              : "pass";
   const stageAlert: EnrichedDeal["calculations"]["stage_alert"] = liquidation.force_liquidation
     ? "CRITICAL"
     : aging.stage_alert;
