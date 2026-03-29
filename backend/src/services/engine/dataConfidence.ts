@@ -20,7 +20,7 @@ export const computeDataConfidence = (input: DataConfidenceInput): number => {
   if (estimatedInputs.has("transport_cost_estimated")) {
     score -= 20;
   }
-  if (estimatedInputs.has("tax_rate") || estimatedInputs.has("tax_amount")) {
+  if (estimatedInputs.has("tax_rate") || estimatedInputs.has("tax_estimated")) {
     score -= 25;
   }
   if (input.repair_cost === null || input.repair_cost === undefined) {

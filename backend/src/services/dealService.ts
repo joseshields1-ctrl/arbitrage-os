@@ -46,7 +46,7 @@ export interface DealView {
     realized_profit: number | null;
     days_in_stage: number;
     days_in_current_stage: number;
-    stage_alert: boolean;
+    stage_alert: "OK" | "WARNING" | "CRITICAL";
     data_confidence: number;
     avg_time_per_unit: number | null;
     efficiency_score: number | null;
@@ -181,7 +181,7 @@ const mapFinancialRow = (row: Record<string, unknown>): FinancialRow => ({
   buyer_premium_pct: Number(row.buyer_premium_pct),
   buyer_premium_overridden: Boolean(Number(row.buyer_premium_overridden ?? 0)),
   tax_rate: (row.tax_rate as number | null) ?? null,
-  tax_amount: (row.tax_amount as number | null) ?? null,
+  tax: (row.tax as number | null) ?? null,
   transport_cost_actual: (row.transport_cost_actual as number | null) ?? null,
   transport_cost_estimated: (row.transport_cost_estimated as number | null) ?? null,
   repair_cost: (row.repair_cost as number | null) ?? null,
@@ -226,7 +226,7 @@ const computeAndPersistFinancials = (dealId: string): void => {
         f.buyer_premium_pct,
         f.buyer_premium_overridden,
         f.tax_rate,
-        f.tax_amount,
+        f.tax,
         f.transport_cost_actual,
         f.transport_cost_estimated,
         f.repair_cost,
@@ -272,7 +272,7 @@ const computeAndPersistFinancials = (dealId: string): void => {
       buyer_premium_pct: Number(joined.buyer_premium_pct),
       buyer_premium_overridden: Boolean(Number(joined.buyer_premium_overridden ?? 0)),
       tax_rate: (joined.tax_rate as number | null) ?? null,
-      tax_amount: (joined.tax_amount as number | null) ?? null,
+      tax: (joined.tax as number | null) ?? null,
       transport_cost_actual: (joined.transport_cost_actual as number | null) ?? null,
       transport_cost_estimated: (joined.transport_cost_estimated as number | null) ?? null,
       repair_cost: (joined.repair_cost as number | null) ?? null,
@@ -280,7 +280,7 @@ const computeAndPersistFinancials = (dealId: string): void => {
       estimated_market_value: Number(joined.estimated_market_value),
       sale_price_actual: (joined.sale_price_actual as number | null) ?? null,
       projected_profit: 0,
-      realized_profit: 0,
+      realized_profit: null,
     },
     metadata: {
       deal_id: String(joined.deal_id),
@@ -293,14 +293,14 @@ const computeAndPersistFinancials = (dealId: string): void => {
 
   db.prepare(
     `UPDATE financials
-     SET buyer_premium_pct = ?, buyer_premium_overridden = ?, tax_rate = ?, tax_amount = ?,
+     SET buyer_premium_pct = ?, buyer_premium_overridden = ?, tax_rate = ?, tax = ?,
          projected_profit = ?, realized_profit = ?
      WHERE deal_id = ?`
   ).run(
     enriched.financials.buyer_premium_pct,
     enriched.financials.buyer_premium_overridden ? 1 : 0,
     enriched.financials.tax_rate,
-    enriched.financials.tax_amount,
+    enriched.financials.tax,
     enriched.financials.projected_profit,
     enriched.financials.realized_profit ?? 0,
     dealId
@@ -361,7 +361,7 @@ const getDealViewById = (dealId: string): DealView | null => {
         f.buyer_premium_pct,
         f.buyer_premium_overridden,
         f.tax_rate,
-        f.tax_amount,
+        f.tax,
         f.transport_cost_actual,
         f.transport_cost_estimated,
         f.repair_cost,
@@ -393,7 +393,7 @@ const getDealViewById = (dealId: string): DealView | null => {
     buyer_premium_pct: joinedRows.buyer_premium_pct,
     buyer_premium_overridden: joinedRows.buyer_premium_overridden,
     tax_rate: joinedRows.tax_rate,
-    tax_amount: joinedRows.tax_amount,
+    tax: joinedRows.tax,
     transport_cost_actual: joinedRows.transport_cost_actual,
     transport_cost_estimated: joinedRows.transport_cost_estimated,
     repair_cost: joinedRows.repair_cost,
@@ -457,11 +457,11 @@ export const createDeal = (input: CreateDealInput): DealView => {
 
     db.prepare(
       `INSERT INTO financials (
-        deal_id, acquisition_cost, buyer_premium_pct, buyer_premium_overridden, tax_rate, tax_amount,
+        deal_id, acquisition_cost, buyer_premium_pct, buyer_premium_overridden, tax_rate, tax,
         transport_cost_actual,
         transport_cost_estimated, repair_cost, prep_cost, estimated_market_value, sale_price_actual,
         projected_profit, realized_profit
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)`
     ).run(
       id,
       input.financials.acquisition_cost,
@@ -470,7 +470,7 @@ export const createDeal = (input: CreateDealInput): DealView => {
         ? 1
         : 0,
       input.financials.tax_rate ?? null,
-      input.financials.tax_amount ?? null,
+      null,
       input.financials.transport_cost_actual ?? null,
       input.financials.transport_cost_estimated ?? null,
       input.financials.repair_cost ?? null,
@@ -576,7 +576,7 @@ export const getDashboard = (): DashboardView => {
   );
 
   const agingAlerts = deals
-    .filter((item) => item.calculations.stage_alert)
+    .filter((item) => item.calculations.stage_alert !== "OK")
     .map((item) => ({
       id: item.deal.id,
       label: item.deal.label,

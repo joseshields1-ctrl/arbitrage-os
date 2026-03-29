@@ -1,4 +1,4 @@
-import type { ConditionGrade, DealCategory } from "../../models/dealV32";
+import type { ConditionGrade, DealCategory, DealStatus } from "../../models/dealV32";
 import {
   CONDITION_MULTIPLIER,
   DEFECTIVE_REVIEW_BIAS,
@@ -6,12 +6,21 @@ import {
   DEMAND_WEIGHT_BY_CATEGORY,
 } from "../../config/scoringConfig";
 
-export type DealClassification = "STRONG" | "MODERATE" | "WEAK";
+export type DealClassification =
+  | "LIKELY WIN"
+  | "WORTH REVIEW"
+  | "MARGINAL"
+  | "PASS"
+  | "BEST WIN"
+  | "ACCEPTABLE WIN"
+  | "BAD DEAL";
 
 export interface ScoringInput {
   category: DealCategory;
   condition_grade: ConditionGrade;
   projected_profit: number;
+  realized_profit?: number | null;
+  status?: DealStatus;
   total_cost_basis: number;
   watchers_count?: number | null;
   bids_count?: number | null;
@@ -43,23 +52,35 @@ const toCount = (value: number | null | undefined): number => {
 
 const classify = (acquisitionScore: number, exitScore: number): DealClassification => {
   const avg = (acquisitionScore + exitScore) / 2;
-  if (avg >= 75) {
-    return "STRONG";
+  if (avg >= 75) return "LIKELY WIN";
+  if (avg >= 55) return "WORTH REVIEW";
+  if (avg >= 40) return "MARGINAL";
+  return "PASS";
+};
+
+const classifyHistorical = (
+  realizedProfit: number | null | undefined,
+  totalCostBasis: number
+): DealClassification => {
+  if (realizedProfit === null || realizedProfit === undefined) {
+    return "MARGINAL";
   }
-  if (avg >= 50) {
-    return "MODERATE";
-  }
-  return "WEAK";
+  const roi = totalCostBasis > 0 ? realizedProfit / totalCostBasis : 0;
+  if (roi >= 0.2) return "BEST WIN";
+  if (roi >= 0.05) return "ACCEPTABLE WIN";
+  if (roi >= 0) return "MARGINAL";
+  return "BAD DEAL";
 };
 
 export const computeScoring = (input: ScoringInput): ScoringResult => {
   if (input.force_liquidation) {
     const acquisitionScore = 0;
     const exitScore = 0;
+    const classification = input.status === "completed" ? "BAD DEAL" : "PASS";
     return {
       acquisition_score: roundScore(acquisitionScore),
       exit_score: roundScore(exitScore),
-      classification: classify(acquisitionScore, exitScore),
+      classification,
       defective_review_bias: 0,
     };
   }
@@ -100,10 +121,16 @@ export const computeScoring = (input: ScoringInput): ScoringResult => {
     100
   );
 
+  const baseClassification = classify(acquisitionScore, exitScore);
+  const classification =
+    input.status === "completed"
+      ? classifyHistorical(input.realized_profit ?? null, input.total_cost_basis)
+      : baseClassification;
+
   return {
     acquisition_score: roundScore(acquisitionScore),
     exit_score: roundScore(exitScore),
-    classification: classify(acquisitionScore, exitScore),
+    classification,
     defective_review_bias: roundScore(defectiveReviewBias),
   };
 };

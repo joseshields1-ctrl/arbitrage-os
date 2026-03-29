@@ -36,7 +36,7 @@ export const initializeDatabase = (): void => {
       buyer_premium_pct REAL,
       buyer_premium_overridden INTEGER NOT NULL DEFAULT 0,
       tax_rate REAL,
-      tax_amount REAL,
+      tax REAL,
       transport_cost_actual REAL,
       transport_cost_estimated REAL,
       repair_cost REAL,
@@ -96,8 +96,8 @@ export const initializeDatabase = (): void => {
   if (!hasTaxRate) {
     db.exec(`ALTER TABLE financials ADD COLUMN tax_rate REAL;`);
   }
-  const hasTaxAmount = financialColumns.some((column) => column.name === "tax_amount");
-  if (!hasTaxAmount) {
-    db.exec(`ALTER TABLE financials ADD COLUMN tax_amount REAL;`);
+  const hasTax = financialColumns.some((column) => column.name === "tax");
+  if (!hasTax) {
+    db.exec(`ALTER TABLE financials ADD COLUMN tax REAL;`);
   }
 };

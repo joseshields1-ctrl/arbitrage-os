@@ -5,7 +5,7 @@ const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
 export interface AgingResult {
   days_in_current_stage: number;
-  stage_alert: boolean;
+  stage_alert: "OK" | "WARNING" | "CRITICAL";
 }
 
 export const computeDaysInCurrentStage = (stageUpdatedAt: string): number => {
@@ -21,10 +21,16 @@ export const computeAging = (
 ): AgingResult => {
   const days = computeDaysInCurrentStage(stageUpdatedAt);
   const threshold = STAGE_ALERT_DAYS[status];
+  const warningThreshold = Number.isFinite(threshold) ? threshold : Number.POSITIVE_INFINITY;
+  const criticalThreshold =
+    Number.isFinite(threshold) && threshold > 0 ? threshold * 2 : Number.POSITIVE_INFINITY;
+
+  const stageAlert: AgingResult["stage_alert"] =
+    days >= criticalThreshold ? "CRITICAL" : days >= warningThreshold ? "WARNING" : "OK";
 
   return {
     days_in_current_stage: days,
-    stage_alert: days >= threshold,
+    stage_alert: stageAlert,
   };
 };
 

@@ -44,7 +44,7 @@ testEnrichRouter.get("/", (_req, res) => {
     buyer_premium_pct: 0.1,
     buyer_premium_overridden: false,
     tax_rate: null,
-    tax_amount: null,
+    tax: null,
     transport_cost_actual: null,
     transport_cost_estimated: 120,
     repair_cost: 20,

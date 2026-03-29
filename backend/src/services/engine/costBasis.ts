@@ -8,13 +8,11 @@ export interface CostBasisInput {
   buyer_premium_pct?: number | null;
   buyer_premium_overridden?: boolean;
   tax_rate?: number | null;
-  tax_amount?: number | null;
   transport_type: TransportType;
   transport_cost_actual?: number | null;
   transport_cost_estimated?: number | null;
   repair_cost?: number | null;
   prep_cost?: number | null;
-  tax?: number | null;
   category: DealCategory;
 }
 
@@ -35,7 +33,7 @@ export interface CostBasisResult {
   buyer_premium_pct: number;
   buyer_premium_overridden: boolean;
   tax_rate: number | null;
-  tax_amount: number;
+  tax: number;
 }
 
 const VEHICLE_MECHANICAL_CONTINGENCY_PCT: Record<
@@ -75,6 +73,19 @@ const computeTransportCost = (
   return 0;
 };
 
+const computeTax = (
+  acquisitionCost: number,
+  taxRate: number | null,
+  estimatedInputs: string[]
+): number => {
+  if (taxRate === null) {
+    estimatedInputs.push("tax_rate");
+    estimatedInputs.push("tax_estimated");
+    return 0;
+  }
+  return roundCurrency(acquisitionCost * taxRate);
+};
+
 const computeVehicleMechanicalContingency = (
   category: DealCategory,
   acquisitionCost: number
@@ -94,11 +105,7 @@ export const computeCostBasis = (input: CostBasisInput): CostBasisResult => {
   const acquisitionCost = toAmount(input.acquisition_cost);
   const hasTaxRate = input.tax_rate !== null && input.tax_rate !== undefined;
   const taxRate = hasTaxRate ? toAmount(input.tax_rate) : null;
-  const tax = hasTaxRate ? roundCurrency(acquisitionCost * toAmount(input.tax_rate)) : 0;
-  if (!hasTaxRate) {
-    estimatedInputs.push("tax_rate");
-    estimatedInputs.push("tax_amount");
-  }
+  const tax = computeTax(acquisitionCost, taxRate, estimatedInputs);
   const repairCost = toAmount(input.repair_cost);
   const prepCost = toAmount(input.prep_cost);
 
@@ -146,7 +153,7 @@ export const computeCostBasis = (input: CostBasisInput): CostBasisResult => {
     buyer_premium_pct: premiumResolution.buyer_premium_pct,
     buyer_premium_overridden: premiumResolution.buyer_premium_overridden,
     tax_rate: taxRate,
-    tax_amount: roundCurrency(tax),
+    tax: roundCurrency(tax),
   };
 };
 

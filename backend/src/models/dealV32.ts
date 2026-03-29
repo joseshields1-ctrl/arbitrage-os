@@ -64,7 +64,6 @@ export interface FinancialInput {
   buyer_premium_pct?: number;
   buyer_premium_overridden?: boolean;
   tax_rate?: number | null;
-  tax_amount?: number | null;
   transport_cost_actual?: number | null;
   transport_cost_estimated?: number | null;
   repair_cost?: number | null;
@@ -79,7 +78,7 @@ export interface FinancialRow {
   buyer_premium_pct: number;
   buyer_premium_overridden: boolean;
   tax_rate: number | null;
-  tax_amount: number | null;
+  tax: number | null;
   transport_cost_actual: number | null;
   transport_cost_estimated: number | null;
   repair_cost: number | null;
@@ -111,7 +110,7 @@ export interface DealComputedMetrics {
   realized_profit: number | null;
   days_in_stage: number;
   days_in_current_stage: number;
-  stage_alert: boolean;
+  stage_alert: "OK" | "WARNING" | "CRITICAL";
   data_confidence: number;
   efficiency_score: number | null;
   efficiency_rating: "GOOD" | "WARNING" | "BAD" | null;

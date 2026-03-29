@@ -5,7 +5,7 @@ export interface LiquidationResult {
   warning: boolean;
   trigger: boolean;
   force_liquidation: boolean;
-  recommended_action: string | null;
+  recommended_action: "pass" | "review_only" | "do_not_acquire" | "reduce_price" | "liquidate_now";
 }
 
 export const computeLiquidation = (
@@ -18,7 +18,7 @@ export const computeLiquidation = (
       warning: false,
       trigger: false,
       force_liquidation: false,
-      recommended_action: null,
+      recommended_action: "review_only",
     };
   }
 
@@ -29,7 +29,7 @@ export const computeLiquidation = (
     warning,
     trigger,
     force_liquidation: trigger,
-    recommended_action: trigger ? "FORCE_LIQUIDATION" : warning ? rule.recommended_action : null,
+    recommended_action: trigger ? "liquidate_now" : warning ? "reduce_price" : "review_only",
   };
 };
 
