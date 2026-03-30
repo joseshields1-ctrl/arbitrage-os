@@ -33,6 +33,13 @@
 
 .kpi-card.primary {
   border-color: #93c5fd;
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.08);
+}
+
+.kpi-card.primary strong {
+  font-size: 1.55rem;
+  letter-spacing: 0.01em;
+  color: #166534;
 }
 
 .kpi-card.alerts {
@@ -131,14 +138,28 @@
 
 .panel {
   border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 16px;
+  border-radius: 12px;
+  padding: 18px;
   background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
 }
 
 .panel h2 {
   margin: 0 0 12px;
   font-size: 1.2rem;
+}
+
+.page-title {
+  margin: 0 0 6px;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.section-subtitle {
+  margin: 0 0 14px;
+  color: #6b7280;
+  font-size: 0.92rem;
 }
 
 .panel label {
@@ -185,6 +206,118 @@
   cursor: not-allowed;
 }
 
+.modern-entry-form {
+  display: grid;
+  gap: 14px;
+}
+
+.form-section-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.05);
+  padding: 14px;
+}
+
+.form-section-card h3 {
+  margin: 0 0 10px;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #111827;
+}
+
+.form-grid-two {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.form-grid-two label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.form-grid-two .span-two {
+  grid-column: 1 / -1;
+}
+
+.form-grid-two input,
+.form-grid-two select,
+.form-grid-two textarea {
+  font: inherit;
+  font-size: 0.92rem;
+  color: #111827;
+  min-height: 40px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 10px 12px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.form-grid-two textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.form-grid-two input:focus,
+.form-grid-two select:focus,
+.form-grid-two textarea:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+.advanced-toggle-row {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.intake-primary-actions {
+  margin-top: 2px;
+}
+
+.primary-button,
+.secondary-button,
+.ghost-button {
+  font: inherit;
+  border-radius: 10px;
+  min-height: 40px;
+  padding: 0 14px;
+  cursor: pointer;
+}
+
+.primary-button {
+  border: 1px solid #1d4ed8;
+  background: #1d4ed8;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.secondary-button {
+  border: 1px solid #374151;
+  background: #ffffff;
+  color: #111827;
+  font-weight: 600;
+}
+
+.ghost-button {
+  border: 1px solid #d1d5db;
+  background: #f8fafc;
+  color: #334155;
+}
+
+.primary-button:disabled,
+.secondary-button:disabled,
+.ghost-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -193,20 +326,29 @@
 
 .dashboard-grid article {
   border: 1px solid #e5e7eb;
-  border-radius: 8px;
+  border-radius: 12px;
   padding: 12px;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.05);
 }
 
 .dashboard-grid h3 {
   margin: 0;
-  font-size: 0.9rem;
+  font-size: 0.82rem;
   color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .dashboard-grid p {
-  margin: 8px 0 0;
-  font-size: 1.2rem;
+  margin: 6px 0 0;
+  font-size: 1.28rem;
   font-weight: 700;
+}
+
+.dashboard-stat-card:first-child p {
+  font-size: 1.5rem;
+  color: #166534;
 }
 
 .burn-list {
@@ -262,9 +404,10 @@
 
 .deal-card {
   border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 12px;
+  border-radius: 12px;
+  padding: 14px;
   margin-bottom: 10px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
 }
 
 .deal-card-head {
@@ -276,6 +419,8 @@
 
 .deal-card-head h4 {
   margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
 }
 
 .deal-card-meta {
@@ -319,10 +464,12 @@
 }
 
 .status-badge {
-  border: 1px solid #d1d5db;
+  border: 1px solid #cbd5e1;
   border-radius: 999px;
-  padding: 2px 8px;
-  font-size: 0.8rem;
+  padding: 3px 9px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
 }
 
@@ -332,7 +479,13 @@
 .status-listed,
 .status-sold,
 .status-completed {
-  background: #f9fafb;
+  background: #f8fafc;
+}
+
+.status-completed {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #166534;
 }
 
 .score-strip {
@@ -383,6 +536,12 @@
 .pipeline-filter-row button.active {
   border-color: #2563eb;
   background: #dbeafe;
+}
+
+.alerts-reference-note {
+  margin: 0 0 8px;
+  color: #64748b;
+  font-size: 0.9rem;
 }
 
 .unit-breakdown {
@@ -599,6 +758,10 @@
   }
 
   .deal-form {
+    grid-template-columns: 1fr;
+  }
+
+  .form-grid-two {
     grid-template-columns: 1fr;
   }
 
