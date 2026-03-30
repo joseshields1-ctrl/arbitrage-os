@@ -55,11 +55,22 @@ const buildRecommendationExplanation = (
   suggestedAction: string
 ): string => {
   const alerts = context.warnings.length > 0 ? context.warnings.join(", ") : "none";
+  const tax = context.engine.cost_basis.cost_basis_breakdown.tax;
+  const transport = context.engine.cost_basis.cost_basis_breakdown.transport;
+  const totalCostBasis = context.calculations.total_cost_basis;
+  const marginDragPct =
+    totalCostBasis > 0 ? Math.round(((tax + transport) / totalCostBasis) * 100) : 0;
+  const bidCapHint =
+    suggestedAction === "pass"
+      ? "Bid cap guidance: only continue if acquisition terms improve."
+      : "Bid cap guidance: keep bid limits conservative until risks are reduced.";
   return [
     `Recommendation: ${suggestedAction}.`,
     `Projected profit is ${context.calculations.projected_profit.toFixed(2)}.`,
+    `Tax and transport impact is ${marginDragPct}% of current cost basis.`,
     `Data confidence is ${context.calculations.data_confidence}.`,
     `Active alerts: ${alerts}.`,
+    bidCapHint,
   ].join(" ");
 };
 

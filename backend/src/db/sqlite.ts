@@ -57,6 +57,8 @@ export const initializeDatabase = (): void => {
       condition_notes TEXT NOT NULL,
       transport_type TEXT NOT NULL,
       presentation_quality TEXT NOT NULL,
+      removal_deadline TEXT,
+      title_status TEXT NOT NULL DEFAULT 'unknown',
       FOREIGN KEY (deal_id) REFERENCES deals(id) ON DELETE CASCADE
     );
   `);
@@ -116,5 +118,17 @@ export const initializeDatabase = (): void => {
   const hasTax = financialColumns.some((column) => column.name === "tax");
   if (!hasTax) {
     db.exec(`ALTER TABLE financials ADD COLUMN tax REAL;`);
+  }
+
+  const metadataColumns = db.prepare(`PRAGMA table_info(metadata)`).all() as Array<{
+    name: string;
+  }>;
+  const hasRemovalDeadline = metadataColumns.some((column) => column.name === "removal_deadline");
+  if (!hasRemovalDeadline) {
+    db.exec(`ALTER TABLE metadata ADD COLUMN removal_deadline TEXT;`);
+  }
+  const hasTitleStatus = metadataColumns.some((column) => column.name === "title_status");
+  if (!hasTitleStatus) {
+    db.exec(`ALTER TABLE metadata ADD COLUMN title_status TEXT NOT NULL DEFAULT 'unknown';`);
   }
 };

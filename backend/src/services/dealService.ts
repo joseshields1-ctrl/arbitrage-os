@@ -12,6 +12,7 @@ import {
   MetadataRow,
   PrepMetrics,
   SourcePlatform,
+  TitleStatus,
   UnitBreakdown,
 } from "../models/dealV32";
 import { db } from "../db/sqlite";
@@ -55,6 +56,13 @@ export interface DashboardView {
   completed_deals: number;
   realized_profit_total: number;
   projected_profit_total: number;
+  burn_list: Array<{
+    id: string;
+    label: string;
+    days_in_stage: number;
+    projected_profit: number;
+    recommended_action: ReturnType<typeof enrichDeal>["engine"]["recommended_action"];
+  }>;
   aging_alerts: Array<{
     id: string;
     label: string;
@@ -119,6 +127,7 @@ const validTransportTypes = new Set<MetadataRow["transport_type"]>([
   "local_pickup",
   "none",
 ]);
+const validTitleStatuses = new Set<TitleStatus>(["on_site", "delayed", "unknown"]);
 
 const ensureNonEmptyString = (value: unknown, fieldName: string): string => {
   if (typeof value !== "string" || value.trim().length === 0) {
@@ -197,6 +206,12 @@ const validateCreateOrPreviewInput = (input: CreateDealInput): void => {
   ) {
     throw new Error("metadata.transport_type is invalid");
   }
+  if (
+    input.metadata.title_status !== undefined &&
+    !validTitleStatuses.has(input.metadata.title_status)
+  ) {
+    throw new Error("metadata.title_status is invalid");
+  }
 
   ensureNonEmptyString(input.label, "label");
   ensureNonEmptyString(input.acquisition_state, "acquisition_state");
@@ -231,6 +246,7 @@ const validateCreateOrPreviewInput = (input: CreateDealInput): void => {
   validateOptionalIsoDate(input.listing_date, "listing_date");
   validateOptionalIsoDate(input.sale_date, "sale_date");
   validateOptionalIsoDate(input.completion_date, "completion_date");
+  validateOptionalIsoDate(input.metadata.removal_deadline, "metadata.removal_deadline");
 
   const status: DealStatus = input.status ?? "sourced";
   if (!stageSequence.includes(status)) {
@@ -401,6 +417,8 @@ const mapMetadataRow = (row: Record<string, unknown>): MetadataRow => ({
   transport_type: row.transport_type as MetadataRow["transport_type"],
   presentation_quality: row.presentation_quality as MetadataRow["presentation_quality"],
   seller_type: (row.seller_type as MetadataRow["seller_type"]) ?? "unknown",
+  removal_deadline: (row.removal_deadline as string | null) ?? null,
+  title_status: (row.title_status as TitleStatus) ?? "unknown",
 });
 
 const parseAiRecommendationSnapshot = (value: unknown): AiRecommendation => {
@@ -496,7 +514,9 @@ const computeAndPersistFinancials = (dealId: string): void => {
         m.condition_grade,
         m.condition_notes,
         m.transport_type,
-        m.presentation_quality
+        m.presentation_quality,
+        m.removal_deadline,
+        m.title_status
        FROM deals d
        JOIN financials f ON f.deal_id = d.id
        JOIN metadata m ON m.deal_id = d.id
@@ -550,6 +570,8 @@ const computeAndPersistFinancials = (dealId: string): void => {
       transport_type: joined.transport_type as MetadataRow["transport_type"],
       presentation_quality: String(joined.presentation_quality ?? "standard"),
       seller_type: (joined.seller_type as MetadataRow["seller_type"]) ?? "unknown",
+      removal_deadline: (joined.removal_deadline as string | null) ?? null,
+      title_status: (joined.title_status as TitleStatus) ?? "unknown",
     },
   });
 
@@ -657,6 +679,8 @@ const buildPreparedDealRows = (input: CreateDealInput, id: string): PreparedDeal
       transport_type: resolvedTransportType,
       presentation_quality: input.metadata.presentation_quality,
       seller_type: sellerType,
+      removal_deadline: normalizeNullableDate(input.metadata.removal_deadline),
+      title_status: input.metadata.title_status ?? "unknown",
     },
   };
 };
@@ -699,7 +723,9 @@ const getDealViewById = (dealId: string): DealView | null => {
         m.condition_grade,
         m.condition_notes,
         m.transport_type,
-        m.presentation_quality
+        m.presentation_quality,
+        m.removal_deadline,
+        m.title_status
        FROM deals d
        JOIN financials f ON f.deal_id = d.id
        JOIN metadata m ON m.deal_id = d.id
@@ -735,6 +761,8 @@ const getDealViewById = (dealId: string): DealView | null => {
     transport_type: joinedRows.transport_type,
     presentation_quality: joinedRows.presentation_quality,
     seller_type: joinedRows.seller_type,
+    removal_deadline: joinedRows.removal_deadline,
+    title_status: joinedRows.title_status,
   });
   return buildEnrichedDealView(deal, financials, metadata);
 };
@@ -793,14 +821,17 @@ export const createDeal = (input: CreateDealInput): DealView => {
 
     db.prepare(
       `INSERT INTO metadata (
-        deal_id, condition_grade, condition_notes, transport_type, presentation_quality
-      ) VALUES (?, ?, ?, ?, ?)`
+        deal_id, condition_grade, condition_notes, transport_type, presentation_quality,
+        removal_deadline, title_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).run(
       prepared.metadata.deal_id,
       prepared.metadata.condition_grade,
       prepared.metadata.condition_notes,
       prepared.metadata.transport_type,
-      prepared.metadata.presentation_quality
+      prepared.metadata.presentation_quality,
+      prepared.metadata.removal_deadline,
+      prepared.metadata.title_status
     );
   });
 
@@ -955,11 +986,37 @@ export const getDashboard = (): DashboardView => {
       days_in_stage: item.calculations.days_in_stage,
     }));
 
+  const burnList = activeDeals
+    .filter((item) => {
+      const isVehicleCategory =
+        item.deal.category === "vehicle_suv" ||
+        item.deal.category === "vehicle_police_fleet" ||
+        item.deal.category === "powersports";
+      const isElectronicsCategory =
+        item.deal.category === "electronics_bulk" || item.deal.category === "electronics_individual";
+      if (isVehicleCategory) {
+        return item.calculations.days_in_current_stage > 14;
+      }
+      if (isElectronicsCategory) {
+        return item.calculations.days_in_current_stage > 7;
+      }
+      return false;
+    })
+    .map((item) => ({
+      id: item.deal.id,
+      label: item.deal.label,
+      days_in_stage: item.calculations.days_in_current_stage,
+      projected_profit: item.calculations.projected_profit,
+      recommended_action: item.engine.recommended_action,
+    }))
+    .sort((a, b) => b.days_in_stage - a.days_in_stage);
+
   return {
     active_deals: activeDeals.length,
     completed_deals: completedDeals.length,
     realized_profit_total: realizedProfitTotal,
     projected_profit_total: projectedProfitTotal,
+    burn_list: burnList,
     aging_alerts: agingAlerts,
   };
 };

@@ -26,6 +26,8 @@ testDecisionLoopRouter.get("/", (_req, res) => {
           condition_notes: "Runs and drives, light cosmetic wear.",
           transport_type: "auto_transport",
           presentation_quality: "standard",
+          removal_deadline: null,
+          title_status: "on_site",
         },
       });
     }

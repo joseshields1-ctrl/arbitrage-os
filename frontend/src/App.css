@@ -209,6 +209,24 @@
   font-weight: 700;
 }
 
+.burn-list {
+  margin-top: 14px;
+  border: 1px solid #fca5a5;
+  border-radius: 8px;
+  background: #fef2f2;
+  padding: 10px 12px;
+}
+
+.burn-list h3 {
+  margin: 0 0 8px;
+  color: #991b1b;
+}
+
+.burn-list ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
 .alerts h3 {
   margin: 14px 0 8px;
 }
@@ -333,6 +351,27 @@
   gap: 12px;
 }
 
+.pipeline-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.pipeline-filter-row button {
+  font: inherit;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  cursor: pointer;
+}
+
+.pipeline-filter-row button.active {
+  border-color: #2563eb;
+  background: #dbeafe;
+}
+
 .unit-breakdown {
   margin-top: 8px;
   border: 1px solid #e5e7eb;
@@ -367,12 +406,28 @@
   background: #f9fafb;
 }
 
+.preview-box.preview-pending {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.preview-banner {
+  margin: 0 0 8px;
+  color: #92400e;
+  font-weight: 700;
+}
+
 .decision-section {
   margin-top: 12px;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   padding: 10px 12px;
   background: #f9fafb;
+}
+
+.risk-summary {
+  border-color: #fde68a;
+  background: #fffbeb;
 }
 
 .ai-primary {
@@ -441,6 +496,39 @@
 
 .detail-panel h4 {
   margin: 0 0 8px;
+}
+
+.pipeline-risk-flags {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.risk-chip {
+  display: inline-block;
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.78rem;
+  background: #f9fafb;
+  color: #374151;
+}
+
+.risk-chip.warning {
+  border-color: #f59e0b;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.link-button {
+  font: inherit;
+  color: #1d4ed8;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
 }
 
 .detail-panel-grid {

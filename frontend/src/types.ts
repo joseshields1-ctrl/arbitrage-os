@@ -25,6 +25,7 @@ export type TransportType =
   | "parcel"
   | "local_pickup"
   | "none";
+export type TitleStatus = "on_site" | "delayed" | "unknown";
 
 export type ConditionGrade =
   | "excellent"
@@ -91,6 +92,8 @@ export interface MetadataRecord {
   condition_notes: string;
   transport_type: TransportType;
   presentation_quality: string;
+  removal_deadline: string | null;
+  title_status: TitleStatus;
 }
 
 export interface AiRecommendation {
@@ -118,6 +121,7 @@ export interface DealView {
       | "FORCE_LIQUIDATION"
       | "STAGE_CRITICAL"
       | "TITLE_DELAY"
+      | "TRANSPORT_ESTIMATED"
       | "PROFIT_DRIFT_HIGH"
       | "COST_OVERRUN"
       | "ESTIMATION_FAILURE"
@@ -264,6 +268,8 @@ export interface CreateDealRequest {
     condition_notes: string;
     transport_type: TransportType;
     presentation_quality: string;
+    removal_deadline?: string | null;
+    title_status?: TitleStatus;
   };
   unit_breakdown?: {
     units_total: number;
@@ -289,6 +295,13 @@ export interface DashboardSummary {
   completed_deals: number;
   realized_profit_total: number;
   projected_profit_total: number;
+  burn_list: Array<{
+    id: string;
+    label: string;
+    days_in_stage: number;
+    projected_profit: number;
+    recommended_action: "pass" | "review_only" | "do_not_acquire" | "reduce_price" | "liquidate_now" | null;
+  }>;
   aging_alerts: Array<{
     id: string;
     label: string;

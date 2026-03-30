@@ -10,6 +10,7 @@ export type DealCategory = DealCategoryType;
 export type ConditionGrade = ConditionGradeType;
 export type TransportType = TransportTypeType;
 export type SellerType = "government" | "commercial" | "unknown";
+export type TitleStatus = "on_site" | "delayed" | "unknown";
 
 export const DEAL_LIFECYCLE_STAGES = [
   "sourced",
@@ -97,6 +98,8 @@ export interface MetadataInput {
   transport_type: TransportType;
   presentation_quality: string;
   seller_type?: SellerType;
+  removal_deadline?: string | null;
+  title_status?: TitleStatus;
 }
 
 export interface MetadataRow {
@@ -106,6 +109,8 @@ export interface MetadataRow {
   transport_type: TransportType;
   presentation_quality: string;
   seller_type: SellerType;
+  removal_deadline: string | null;
+  title_status: TitleStatus;
 }
 
 export interface DealComputedMetrics {

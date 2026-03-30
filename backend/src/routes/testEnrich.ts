@@ -52,6 +52,8 @@ testEnrichRouter.get("/", (_req, res) => {
       condition_notes: "Mixed batch quality.",
       transport_type: "parcel",
       presentation_quality: "standard",
+      title_status: "unknown",
+      removal_deadline: null,
     },
   });
 

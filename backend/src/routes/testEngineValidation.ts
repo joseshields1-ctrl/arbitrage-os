@@ -68,6 +68,8 @@ const scenarios: ValidationScenario[] = [
       transport_type: "auto_transport",
       presentation_quality: "standard",
       seller_type: "government",
+      removal_deadline: daysAgoIso(-5),
+      title_status: "delayed",
     },
   },
   {
@@ -119,6 +121,8 @@ const scenarios: ValidationScenario[] = [
       transport_type: "local_pickup",
       presentation_quality: "high",
       seller_type: "commercial",
+      removal_deadline: null,
+      title_status: "on_site",
     },
   },
   {
@@ -170,6 +174,8 @@ const scenarios: ValidationScenario[] = [
       transport_type: "auto_transport",
       presentation_quality: "standard",
       seller_type: "commercial",
+      removal_deadline: null,
+      title_status: "unknown",
     },
   },
   {
@@ -234,6 +240,8 @@ const scenarios: ValidationScenario[] = [
       transport_type: "freight",
       presentation_quality: "standard",
       seller_type: "unknown",
+      removal_deadline: daysAgoIso(-3),
+      title_status: "unknown",
     },
   },
 ];

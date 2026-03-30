@@ -17,9 +17,25 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
   const [decisionSubmitting, setDecisionSubmitting] = useState(false);
   const [decisionError, setDecisionError] = useState<string | null>(null);
   const [decisionConfirmation, setDecisionConfirmation] = useState<string | null>(null);
+  const [showPreviousDecisions, setShowPreviousDecisions] = useState(false);
   const qualityFlag = deal.calculations.source_quality_flag;
   const latestDecision = deal.operator_decision_history[0] ?? null;
   const previousDecisions = deal.operator_decision_history.slice(1);
+  const keyWarnings = Array.from(
+    new Set(
+      (deal.warnings ?? []).filter((warning) =>
+        [
+          "TITLE_DELAY",
+          "LOW_DATA_CONFIDENCE",
+          "TRANSPORT_ESTIMATED",
+          "REVIEW_MARGIN",
+          "UNKNOWN_SELLER_TYPE",
+          "FORCE_LIQUIDATION",
+          "STAGE_CRITICAL",
+        ].includes(warning)
+      )
+    )
+  );
   const efficiencyClass =
     deal.calculations.efficiency_rating === "GOOD"
       ? "efficiency-good"
@@ -64,6 +80,22 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
       <p className="deal-card-meta">
         {deal.deal.category} · {deal.deal.source_platform} · {deal.deal.acquisition_state}
       </p>
+      <div className="decision-section risk-summary">
+        <h4>Risk Summary</h4>
+        <p>
+          <strong>Seller Type:</strong> {deal.deal.seller_type}
+        </p>
+        <p>
+          <strong>Data Confidence:</strong> {deal.calculations.data_confidence}
+        </p>
+        <p>
+          <strong>Stage Alert:</strong> {deal.calculations.stage_alert}
+        </p>
+        <p>
+          <strong>Key Warnings:</strong>{" "}
+          {keyWarnings.length > 0 ? keyWarnings.join(", ") : "none"}
+        </p>
+      </div>
       {unitBreakdown ? (
         <div className="unit-breakdown">
           <div>
@@ -126,6 +158,21 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
           Potential mismatch: electronics_bulk usually fits local_pickup or freight.
         </p>
       ) : null}
+      {deal.warnings?.includes("TRANSPORT_ESTIMATED") ? (
+        <p className="warning-text">Estimated Transport — transport value is not actual.</p>
+      ) : null}
+      <div className="decision-section">
+        <h4>Intake / Ops Fields</h4>
+        <p>
+          <strong>Title Status:</strong> {deal.metadata.title_status}
+        </p>
+        <p>
+          <strong>Removal Deadline:</strong>{" "}
+          {deal.metadata.removal_deadline
+            ? new Date(deal.metadata.removal_deadline).toLocaleString()
+            : "Not provided"}
+        </p>
+      </div>
       {deal.alerts && deal.alerts.length > 0 ? (
         <div className="decision-section">
           <h4>Alerts</h4>
@@ -181,18 +228,24 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
         ) : null}
         {previousDecisions.length > 0 ? (
           <div className="preview-box">
-            <p>
-              <strong>Previous Decisions</strong>
-            </p>
-            <ul>
-              {previousDecisions.map((decision) => (
-                <li key={decision.id}>
-                  {new Date(decision.decided_at).toLocaleString()} - {decision.decision}:{" "}
-                  {decision.reason} (AI: {decision.ai_recommendation_snapshot.suggested_action}/
-                  {decision.ai_recommendation_snapshot.confidence})
-                </li>
-              ))}
-            </ul>
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => setShowPreviousDecisions((value) => !value)}
+            >
+              {showPreviousDecisions ? "Hide previous decisions" : `View previous decisions (${previousDecisions.length})`}
+            </button>
+            {showPreviousDecisions ? (
+              <ul>
+                {previousDecisions.map((decision) => (
+                  <li key={decision.id}>
+                    {new Date(decision.decided_at).toLocaleString()} - {decision.decision}:{" "}
+                    {decision.reason} (AI: {decision.ai_recommendation_snapshot.suggested_action}/
+                    {decision.ai_recommendation_snapshot.confidence})
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </div>
         ) : null}
         <label>

@@ -21,6 +21,12 @@ function DealCard({
   onSelect,
 }: DealCardProps) {
   const { calculations } = deal;
+  const sellerTypeIcon =
+    deal.deal.seller_type === "government"
+      ? "🏛️"
+      : deal.deal.seller_type === "commercial"
+        ? "⚠️"
+        : "❓";
   const profitLabel = deal.deal.status === "completed" ? "Realized Profit" : "Projected Profit (est.)";
   const profitValue =
     deal.deal.status === "completed"
@@ -29,12 +35,16 @@ function DealCard({
   const alertCount = deal.alerts?.length ?? 0;
   const criticalAlertCount =
     deal.alerts?.filter((alert) => alert.severity === "critical").length ?? 0;
+  const hasTitleDelay = (deal.warnings ?? []).includes("TITLE_DELAY");
+  const hasLowConfidence = (deal.warnings ?? []).includes("LOW_DATA_CONFIDENCE");
+  const hasTransportEstimated = (deal.warnings ?? []).includes("TRANSPORT_ESTIMATED");
 
   return (
     <article className={`deal-card pipeline-card${selected ? " selected" : ""}`} key={deal.deal.id}>
       <div className="deal-card-head">
         <h4>
-          {deal.deal.label} <span className="deal-card-category">({deal.deal.category})</span>
+          {sellerTypeIcon} {deal.deal.label}{" "}
+          <span className="deal-card-category">({deal.deal.category})</span>
         </h4>
         <strong className={`status-badge status-${deal.deal.status}`}>{deal.deal.status}</strong>
       </div>
@@ -60,6 +70,11 @@ function DealCard({
             {alertCount}
           </div>
         </div>
+      </div>
+      <div className="pipeline-risk-flags">
+        {hasTitleDelay ? <span className="risk-chip warning">TITLE_DELAY</span> : null}
+        {hasLowConfidence ? <span className="risk-chip warning">LOW_DATA_CONFIDENCE</span> : null}
+        {hasTransportEstimated ? <span className="risk-chip">Estimated Transport</span> : null}
       </div>
       <div className="deal-card-actions">
         <button type="button" onClick={onSelect}>
