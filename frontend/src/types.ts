@@ -41,6 +41,7 @@ export interface DealRecord {
   category: DealCategory;
   source_platform: SourcePlatform;
   acquisition_state: string;
+  seller_type: "government" | "commercial" | "unknown";
   status: DealStatus;
   stage_updated_at: string;
   discovered_date: string | null;
@@ -241,6 +242,7 @@ export interface CreateDealRequest {
   category: DealCategory;
   source_platform: SourcePlatform;
   acquisition_state: string;
+  seller_type?: "government" | "commercial" | "unknown";
   status?: DealStatus;
   stage_updated_at?: string;
   discovered_date?: string | null;

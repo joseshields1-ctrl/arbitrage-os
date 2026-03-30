@@ -16,8 +16,10 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
   const [decisionReason, setDecisionReason] = useState("");
   const [decisionSubmitting, setDecisionSubmitting] = useState(false);
   const [decisionError, setDecisionError] = useState<string | null>(null);
+  const [decisionConfirmation, setDecisionConfirmation] = useState<string | null>(null);
   const qualityFlag = deal.calculations.source_quality_flag;
   const latestDecision = deal.operator_decision_history[0] ?? null;
+  const previousDecisions = deal.operator_decision_history.slice(1);
   const efficiencyClass =
     deal.calculations.efficiency_rating === "GOOD"
       ? "efficiency-good"
@@ -31,10 +33,12 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
     const trimmedReason = decisionReason.trim();
     if (!trimmedReason) {
       setDecisionError("Reason is required.");
+      setDecisionConfirmation(null);
       return;
     }
     setDecisionSubmitting(true);
     setDecisionError(null);
+    setDecisionConfirmation(null);
     try {
       const response = await submitDealDecision(deal.deal.id, {
         decision,
@@ -42,6 +46,11 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
       });
       onDecisionRecorded(response.deal);
       setDecisionReason("");
+      setDecisionConfirmation(
+        `Saved decision: ${response.stored_decision.decision} at ${new Date(
+          response.stored_decision.decided_at
+        ).toLocaleString()}`
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to save decision";
       setDecisionError(message);
@@ -117,13 +126,30 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
           Potential mismatch: electronics_bulk usually fits local_pickup or freight.
         </p>
       ) : null}
+      {deal.alerts && deal.alerts.length > 0 ? (
+        <div className="decision-section">
+          <h4>Alerts</h4>
+          <ul>
+            {deal.alerts.map((alert) => (
+              <li key={`${alert.code}-${alert.message}`}>
+                <strong className={alert.severity === "critical" ? "alert-critical" : ""}>
+                  [{alert.severity.toUpperCase()}]
+                </strong>{" "}
+                {alert.code}: {alert.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <div className="decision-section">
         <h4>AI Recommendation</h4>
-        <p>
-          <strong>Suggested Action:</strong> {deal.ai_recommendation.suggested_action}
+        <p className="ai-primary">
+          <strong>Suggested Action:</strong>{" "}
+          <span className="ai-action-pill">{deal.ai_recommendation.suggested_action}</span>
         </p>
         <p>
-          <strong>Confidence:</strong> {deal.ai_recommendation.confidence}
+          <strong>Confidence:</strong>{" "}
+          <span className="confidence-badge">{deal.ai_recommendation.confidence}</span>
         </p>
         <p>
           <strong>Reasoning:</strong> {deal.ai_recommendation.reasoning}
@@ -153,6 +179,22 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
             </p>
           </div>
         ) : null}
+        {previousDecisions.length > 0 ? (
+          <div className="preview-box">
+            <p>
+              <strong>Previous Decisions</strong>
+            </p>
+            <ul>
+              {previousDecisions.map((decision) => (
+                <li key={decision.id}>
+                  {new Date(decision.decided_at).toLocaleString()} - {decision.decision}:{" "}
+                  {decision.reason} (AI: {decision.ai_recommendation_snapshot.suggested_action}/
+                  {decision.ai_recommendation_snapshot.confidence})
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         <label>
           Why? (required)
           <textarea
@@ -179,6 +221,9 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
           </button>
         </div>
         {decisionError ? <p className="warning-text">{decisionError}</p> : null}
+        {decisionConfirmation ? (
+          <p className="decision-confirmation">{decisionConfirmation}</p>
+        ) : null}
       </div>
     </div>
   );

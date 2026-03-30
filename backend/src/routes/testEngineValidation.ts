@@ -31,6 +31,7 @@ const scenarios: ValidationScenario[] = [
       label: "2018 Tahoe PPV Fleet Unit",
       category: "vehicle_police_fleet",
       source_platform: "govdeals",
+      seller_type: "government",
       acquisition_state: "TX",
       status: "acquired",
       stage_updated_at: daysAgoIso(12),
@@ -66,6 +67,7 @@ const scenarios: ValidationScenario[] = [
         "Fleet service history present. Idle hours elevated. Interior wear and push-bar removal needed.",
       transport_type: "auto_transport",
       presentation_quality: "standard",
+      seller_type: "government",
     },
   },
   {
@@ -80,6 +82,7 @@ const scenarios: ValidationScenario[] = [
       label: "2019 Retail SUV Clean Title",
       category: "vehicle_suv",
       source_platform: "facebook",
+      seller_type: "commercial",
       acquisition_state: "FL",
       status: "completed",
       stage_updated_at: daysAgoIso(2),
@@ -115,6 +118,7 @@ const scenarios: ValidationScenario[] = [
         "Clean title, no warning lights, minor bumper scuffs, full interior detail completed.",
       transport_type: "local_pickup",
       presentation_quality: "high",
+      seller_type: "commercial",
     },
   },
   {
@@ -129,6 +133,7 @@ const scenarios: ValidationScenario[] = [
       label: "2018 Retail SUV Drift Stress",
       category: "vehicle_suv",
       source_platform: "facebook",
+      seller_type: "commercial",
       acquisition_state: "GA",
       status: "completed",
       stage_updated_at: daysAgoIso(1),
@@ -164,6 +169,7 @@ const scenarios: ValidationScenario[] = [
         "Completed deal with transport escalation and weaker than expected buyer demand.",
       transport_type: "auto_transport",
       presentation_quality: "standard",
+      seller_type: "commercial",
     },
   },
   {
@@ -177,6 +183,7 @@ const scenarios: ValidationScenario[] = [
       label: "53x iPad Mixed Grade Lot",
       category: "electronics_bulk",
       source_platform: "ebay",
+      seller_type: "unknown",
       acquisition_state: "CA",
       status: "sourced",
       stage_updated_at: daysAgoIso(45),
@@ -226,6 +233,7 @@ const scenarios: ValidationScenario[] = [
         "Mixed lot with cosmetic wear and MDM/lock risk. Functional variance across batch.",
       transport_type: "freight",
       presentation_quality: "standard",
+      seller_type: "unknown",
     },
   },
 ];

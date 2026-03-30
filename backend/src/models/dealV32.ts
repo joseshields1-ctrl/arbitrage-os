@@ -9,6 +9,7 @@ export type SourcePlatform = SourcePlatformType;
 export type DealCategory = DealCategoryType;
 export type ConditionGrade = ConditionGradeType;
 export type TransportType = TransportTypeType;
+export type SellerType = "government" | "commercial" | "unknown";
 
 export const DEAL_LIFECYCLE_STAGES = [
   "sourced",
@@ -45,6 +46,7 @@ export interface DealRow {
   label: string;
   category: DealCategory;
   source_platform: SourcePlatform;
+  seller_type: SellerType;
   acquisition_state: string;
   status: DealStatus;
   stage_updated_at: string;
@@ -94,6 +96,7 @@ export interface MetadataInput {
   condition_notes: string;
   transport_type: TransportType;
   presentation_quality: string;
+  seller_type?: SellerType;
 }
 
 export interface MetadataRow {
@@ -102,6 +105,7 @@ export interface MetadataRow {
   condition_notes: string;
   transport_type: TransportType;
   presentation_quality: string;
+  seller_type: SellerType;
 }
 
 export interface DealComputedMetrics {

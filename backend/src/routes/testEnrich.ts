@@ -9,6 +9,7 @@ testEnrichRouter.get("/", (_req, res) => {
     label: "Enrich Test Deal",
     category: "electronics_bulk",
     source_platform: "ebay",
+    seller_type: "commercial",
     acquisition_state: "TX",
     status: "prep",
     stage_updated_at: now,

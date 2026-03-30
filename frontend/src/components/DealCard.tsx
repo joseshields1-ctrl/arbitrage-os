@@ -2,9 +2,11 @@ import type { DealStage, DealView } from "../types";
 
 interface DealCardProps {
   deal: DealView;
+  selected: boolean;
   nextStage: DealStage | null;
   disabled: boolean;
   onAdvance: () => void;
+  onSelect: () => void;
 }
 
 const formatCurrency = (value: number | null): string =>
@@ -12,65 +14,57 @@ const formatCurrency = (value: number | null): string =>
 
 function DealCard({
   deal,
+  selected,
   nextStage,
   disabled,
   onAdvance,
+  onSelect,
 }: DealCardProps) {
   const { calculations } = deal;
-  const unitBreakdown = deal.deal.unit_breakdown;
+  const profitLabel = deal.deal.status === "completed" ? "Realized Profit" : "Projected Profit (est.)";
+  const profitValue =
+    deal.deal.status === "completed"
+      ? calculations.realized_profit
+      : calculations.projected_profit;
+  const alertCount = deal.alerts?.length ?? 0;
+  const criticalAlertCount =
+    deal.alerts?.filter((alert) => alert.severity === "critical").length ?? 0;
 
   return (
-    <article className="deal-card" key={deal.deal.id}>
+    <article className={`deal-card pipeline-card${selected ? " selected" : ""}`} key={deal.deal.id}>
       <div className="deal-card-head">
-        <h4>{deal.deal.label}</h4>
-        <strong>{deal.deal.status}</strong>
+        <h4>
+          {deal.deal.label} <span className="deal-card-category">({deal.deal.category})</span>
+        </h4>
+        <strong className={`status-badge status-${deal.deal.status}`}>{deal.deal.status}</strong>
       </div>
-      <p className="deal-card-meta">
-        {deal.deal.category} · {deal.deal.source_platform} · {deal.deal.acquisition_state}
-      </p>
       <div className="deal-card-metrics">
         <div>
           <div className="card-title">Cost Basis</div>
           <div>{formatCurrency(calculations.total_cost_basis)}</div>
         </div>
         <div>
-          <div className="card-title">Projected</div>
-          <div>{formatCurrency(calculations.projected_profit)}</div>
+          <div className="card-title">{profitLabel}</div>
+          <div>{formatCurrency(profitValue)}</div>
         </div>
         <div>
-          <div className="card-title">Realized</div>
-          <div>{formatCurrency(calculations.realized_profit)}</div>
+          <div className="card-title">Scores</div>
+          <div className="score-strip">
+            ACQ {deal.engine.scoring.acquisition_score} / EXIT {deal.engine.scoring.exit_score} /
+            CONF {deal.calculations.data_confidence}
+          </div>
         </div>
         <div>
-          <div className="card-title">Days In Stage</div>
-          <div>{calculations.days_in_stage}</div>
+          <div className="card-title">Alerts</div>
+          <div className={criticalAlertCount > 0 ? "alert-badge critical" : "alert-badge"}>
+            {alertCount}
+          </div>
         </div>
       </div>
-
-      {unitBreakdown ? (
-        <div className="unit-breakdown">
-          <div className="card-title">Units</div>
-          <div>Total: {unitBreakdown.units_total}</div>
-          <div>
-            Working: {unitBreakdown.units_working} · Minor:{" "}
-            {unitBreakdown.units_minor_issue}
-          </div>
-          <div>
-            Defective: {unitBreakdown.units_defective} · Locked:{" "}
-            {unitBreakdown.units_locked}
-          </div>
-        </div>
-      ) : null}
-
-      {(deal.warnings?.length ?? 0) > 0 ? (
-        <ul className="warning-flags">
-          {deal.warnings?.map((warning: string) => (
-            <li key={warning}>{warning}</li>
-          ))}
-        </ul>
-      ) : null}
-
       <div className="deal-card-actions">
+        <button type="button" onClick={onSelect}>
+          Open
+        </button>
         <button
           disabled={!nextStage || disabled}
           onClick={onAdvance}

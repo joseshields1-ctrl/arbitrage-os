@@ -23,6 +23,7 @@ export interface CreateDealInput {
   category: DealCategory;
   source_platform: SourcePlatform;
   acquisition_state: string;
+  seller_type?: "government" | "commercial" | "unknown";
   status?: DealStatus;
   stage_updated_at?: string;
   discovered_date?: string | null;
@@ -101,6 +102,7 @@ const validSourcePlatforms = new Set<SourcePlatform>([
   "facebook",
   "other",
 ]);
+const validSellerTypes = new Set<DealRow["seller_type"]>(["government", "commercial", "unknown"]);
 const validConditionGrades = new Set<MetadataRow["condition_grade"]>([
   "excellent",
   "used_good",
@@ -182,6 +184,9 @@ const validateCreateOrPreviewInput = (input: CreateDealInput): void => {
   }
   if (!validSourcePlatforms.has(input.source_platform)) {
     throw new Error("source_platform is invalid");
+  }
+  if (input.seller_type !== undefined && !validSellerTypes.has(input.seller_type)) {
+    throw new Error("seller_type is invalid");
   }
   if (!validConditionGrades.has(input.metadata.condition_grade)) {
     throw new Error("metadata.condition_grade is invalid");
@@ -363,6 +368,7 @@ const mapDealRow = (row: Record<string, unknown>): DealRow => ({
   listing_date: (row.listing_date as string | null) ?? null,
   sale_date: (row.sale_date as string | null) ?? null,
   completion_date: (row.completion_date as string | null) ?? null,
+  seller_type: (row.seller_type as DealRow["seller_type"]) ?? "unknown",
   unit_count: normalizeOptionalCount(row.unit_count as number | null | undefined),
   unit_breakdown: parseUnitBreakdown(row.unit_breakdown),
   prep_metrics: parsePrepMetrics(row.prep_metrics),
@@ -394,6 +400,7 @@ const mapMetadataRow = (row: Record<string, unknown>): MetadataRow => ({
   condition_notes: String(row.condition_notes),
   transport_type: row.transport_type as MetadataRow["transport_type"],
   presentation_quality: row.presentation_quality as MetadataRow["presentation_quality"],
+  seller_type: (row.seller_type as MetadataRow["seller_type"]) ?? "unknown",
 });
 
 const parseAiRecommendationSnapshot = (value: unknown): AiRecommendation => {
@@ -471,6 +478,7 @@ const computeAndPersistFinancials = (dealId: string): void => {
         d.listing_date,
         d.sale_date,
         d.completion_date,
+        d.seller_type,
         d.unit_count,
         d.unit_breakdown,
         d.prep_metrics,
@@ -514,6 +522,7 @@ const computeAndPersistFinancials = (dealId: string): void => {
       listing_date: (joined.listing_date as string | null) ?? null,
       sale_date: (joined.sale_date as string | null) ?? null,
       completion_date: (joined.completion_date as string | null) ?? null,
+      seller_type: (joined.seller_type as DealRow["seller_type"]) ?? "unknown",
       unit_count: normalizeOptionalCount(joined.unit_count as number | null | undefined),
       unit_breakdown: parseUnitBreakdown(joined.unit_breakdown),
       prep_metrics: parsePrepMetrics(joined.prep_metrics),
@@ -540,6 +549,7 @@ const computeAndPersistFinancials = (dealId: string): void => {
       condition_notes: String(joined.condition_notes ?? ""),
       transport_type: joined.transport_type as MetadataRow["transport_type"],
       presentation_quality: String(joined.presentation_quality ?? "standard"),
+      seller_type: (joined.seller_type as MetadataRow["seller_type"]) ?? "unknown",
     },
   });
 
@@ -596,6 +606,12 @@ const buildPreparedDealRows = (input: CreateDealInput, id: string): PreparedDeal
   const defaultTransportType = categoryProfiles[input.category].default_transport_type;
   const resolvedTransportType =
     input.metadata.transport_type ?? (defaultTransportType as MetadataRow["transport_type"]);
+  const inferredSellerType: DealRow["seller_type"] =
+    input.source_platform === "govdeals" || input.source_platform === "publicsurplus"
+      ? "government"
+      : "unknown";
+  const sellerType: DealRow["seller_type"] =
+    input.seller_type ?? input.metadata.seller_type ?? inferredSellerType;
 
   return {
     deal: {
@@ -611,6 +627,7 @@ const buildPreparedDealRows = (input: CreateDealInput, id: string): PreparedDeal
       listing_date: listingDate,
       sale_date: saleDate,
       completion_date: completionDate,
+      seller_type: sellerType,
       unit_count: resolvedUnitCount,
       unit_breakdown: input.unit_breakdown ?? null,
       prep_metrics: prepMetrics,
@@ -639,6 +656,7 @@ const buildPreparedDealRows = (input: CreateDealInput, id: string): PreparedDeal
       condition_notes: input.metadata.condition_notes,
       transport_type: resolvedTransportType,
       presentation_quality: input.metadata.presentation_quality,
+      seller_type: sellerType,
     },
   };
 };
@@ -659,6 +677,7 @@ const getDealViewById = (dealId: string): DealView | null => {
         d.listing_date,
         d.sale_date,
         d.completion_date,
+        d.seller_type,
         d.unit_count,
         d.unit_breakdown,
         d.prep_metrics,
@@ -715,6 +734,7 @@ const getDealViewById = (dealId: string): DealView | null => {
     condition_notes: joinedRows.condition_notes,
     transport_type: joinedRows.transport_type,
     presentation_quality: joinedRows.presentation_quality,
+    seller_type: joinedRows.seller_type,
   });
   return buildEnrichedDealView(deal, financials, metadata);
 };
@@ -727,9 +747,9 @@ export const createDeal = (input: CreateDealInput): DealView => {
     db.prepare(
       `INSERT INTO deals (
         id, label, category, source_platform, acquisition_state, status, stage_updated_at,
-        discovered_date, purchase_date, listing_date, sale_date, completion_date, unit_count,
+        discovered_date, purchase_date, listing_date, sale_date, completion_date, seller_type, unit_count,
         unit_breakdown, prep_metrics
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       prepared.deal.id,
       prepared.deal.label,
@@ -743,6 +763,7 @@ export const createDeal = (input: CreateDealInput): DealView => {
       prepared.deal.listing_date,
       prepared.deal.sale_date,
       prepared.deal.completion_date,
+      prepared.deal.seller_type,
       prepared.deal.unit_count,
       prepared.deal.unit_breakdown ? JSON.stringify(prepared.deal.unit_breakdown) : null,
       prepared.deal.prep_metrics ? JSON.stringify(prepared.deal.prep_metrics) : null

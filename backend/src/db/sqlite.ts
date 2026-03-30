@@ -16,6 +16,7 @@ export const initializeDatabase = (): void => {
       id TEXT PRIMARY KEY,
       label TEXT NOT NULL,
       category TEXT NOT NULL,
+      seller_type TEXT NOT NULL DEFAULT 'unknown',
       source_platform TEXT NOT NULL,
       acquisition_state TEXT NOT NULL,
       status TEXT NOT NULL,
@@ -89,6 +90,10 @@ export const initializeDatabase = (): void => {
   const hasUnitCount = dealColumns.some((column) => column.name === "unit_count");
   if (!hasUnitCount) {
     db.exec(`ALTER TABLE deals ADD COLUMN unit_count INTEGER;`);
+  }
+  const hasSellerType = dealColumns.some((column) => column.name === "seller_type");
+  if (!hasSellerType) {
+    db.exec(`ALTER TABLE deals ADD COLUMN seller_type TEXT NOT NULL DEFAULT 'unknown';`);
   }
 
   const financialColumns = db.prepare(`PRAGMA table_info(financials)`).all() as Array<{

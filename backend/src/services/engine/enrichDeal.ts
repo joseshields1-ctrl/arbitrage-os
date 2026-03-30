@@ -201,9 +201,16 @@ const buildWarnings = (
   category: DealCategory,
   transportType: MetadataRow["transport_type"],
   sourceQualityFlag: "LOW_QUALITY_SOURCE" | null,
-  alerts: OperatorAlert[]
+  alerts: OperatorAlert[],
+  sellerType: DealRow["seller_type"]
 ): string[] => {
   const warnings: string[] = [];
+  if (sellerType === "unknown") {
+    warnings.push("UNKNOWN_SELLER_TYPE");
+  }
+  if (sellerType === "commercial") {
+    warnings.push("REVIEW_MARGIN");
+  }
   if (category === "electronics_bulk" && transportType === "parcel") {
     warnings.push(
       "Potential transport mismatch: electronics_bulk usually fits local_pickup or freight."
@@ -429,7 +436,8 @@ export const enrichDeal = ({
     deal.category,
     metadata.transport_type,
     execution.source_quality_flag,
-    alerts
+    alerts,
+    deal.seller_type
   );
   const operatorRecommendation = buildOperatorRecommendationSummary({
     status: deal.status,
