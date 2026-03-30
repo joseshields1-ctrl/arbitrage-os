@@ -122,6 +122,7 @@ export interface DealView {
       | "STAGE_CRITICAL"
       | "TITLE_DELAY"
       | "TRANSPORT_ESTIMATED"
+      | "REMOVAL_URGENT"
       | "PROFIT_DRIFT_HIGH"
       | "COST_OVERRUN"
       | "ESTIMATION_FAILURE"

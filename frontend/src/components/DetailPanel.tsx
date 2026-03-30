@@ -28,6 +28,7 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
           "TITLE_DELAY",
           "LOW_DATA_CONFIDENCE",
           "TRANSPORT_ESTIMATED",
+          "REMOVAL_URGENT",
           "REVIEW_MARGIN",
           "UNKNOWN_SELLER_TYPE",
           "FORCE_LIQUIDATION",
@@ -159,19 +160,22 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
         </p>
       ) : null}
       {deal.warnings?.includes("TRANSPORT_ESTIMATED") ? (
-        <p className="warning-text">Estimated Transport — transport value is not actual.</p>
+        <p className="warning-text">Estimated Transport (Estimated) — transport value is not actual.</p>
       ) : null}
       <div className="decision-section">
         <h4>Intake / Ops Fields</h4>
         <p>
           <strong>Title Status:</strong> {deal.metadata.title_status}
         </p>
-        <p>
+        <p className={deal.warnings?.includes("REMOVAL_URGENT") ? "warning-text" : undefined}>
           <strong>Removal Deadline:</strong>{" "}
           {deal.metadata.removal_deadline
             ? new Date(deal.metadata.removal_deadline).toLocaleString()
             : "Not provided"}
         </p>
+        {deal.warnings?.includes("REMOVAL_URGENT") ? (
+          <p className="warning-text">REMOVAL_URGENT — deadline is near, prioritize execution.</p>
+        ) : null}
       </div>
       {deal.alerts && deal.alerts.length > 0 ? (
         <div className="decision-section">
@@ -226,14 +230,16 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
             </p>
           </div>
         ) : null}
-        {previousDecisions.length > 0 ? (
+        {deal.operator_decision_history.length > 1 ? (
           <div className="preview-box">
             <button
               type="button"
               className="link-button"
               onClick={() => setShowPreviousDecisions((value) => !value)}
             >
-              {showPreviousDecisions ? "Hide previous decisions" : `View previous decisions (${previousDecisions.length})`}
+              {showPreviousDecisions
+                ? `Hide history (${previousDecisions.length})`
+                : `Show history (${previousDecisions.length})`}
             </button>
             {showPreviousDecisions ? (
               <ul>

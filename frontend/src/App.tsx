@@ -504,7 +504,7 @@ function App() {
                 </article>
               </div>
               <div className="burn-list">
-                <h3>Burn List</h3>
+                <h3>Burn List <span className="action-required">Action Required</span></h3>
                 {(dashboard?.burn_list?.length ?? 0) === 0 ? (
                   <p>No stuck deals right now.</p>
                 ) : (
@@ -731,6 +731,9 @@ function App() {
                       ? new Date(intakePreviewDeal.metadata.removal_deadline).toLocaleString()
                       : "not provided"}
                   </p>
+                  {(intakePreviewDeal.warnings ?? []).includes("REMOVAL_URGENT") ? (
+                    <p className="warning-text">REMOVAL_URGENT — deadline is near.</p>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -763,6 +766,20 @@ function App() {
           {activePage === "alerts" ? (
             <section className="panel">
               <h2>Alerts</h2>
+              <p className="alerts-reference-note">
+                Reference only. Action queue is in Dashboard Burn List.
+              </p>
+              <div className="entry-actions">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActivePage("dashboard");
+                    setRightPanelMode("detail");
+                  }}
+                >
+                  Go to Burn List
+                </button>
+              </div>
               {deals.filter((item) => (item.alerts?.length ?? 0) > 0).length === 0 ? (
                 <p>No alerts.</p>
               ) : (

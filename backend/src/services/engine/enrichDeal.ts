@@ -93,6 +93,7 @@ export interface EnrichedDeal {
 
 const LOW_DATA_CONFIDENCE_THRESHOLD = 60;
 const TITLE_DELAY_DAYS = 14;
+const REMOVAL_URGENT_HOURS = 72;
 const TITLE_DELAY_CATEGORIES: ReadonlySet<DealCategory> = new Set([
   "vehicle_suv",
   "vehicle_police_fleet",
@@ -222,6 +223,7 @@ const buildWarnings = (
   category: DealCategory,
   transportType: MetadataRow["transport_type"],
   titleStatus: MetadataRow["title_status"],
+  removalDeadline: MetadataRow["removal_deadline"],
   estimatedInputs: string[],
   sourceQualityFlag: "LOW_QUALITY_SOURCE" | null,
   alerts: OperatorAlert[],
@@ -244,6 +246,15 @@ const buildWarnings = (
   }
   if (titleStatus !== "on_site") {
     warnings.push("TITLE_DELAY");
+  }
+  if (removalDeadline) {
+    const removalTimestamp = Date.parse(removalDeadline);
+    if (Number.isFinite(removalTimestamp)) {
+      const hoursUntilRemoval = (removalTimestamp - Date.now()) / (1000 * 60 * 60);
+      if (hoursUntilRemoval <= REMOVAL_URGENT_HOURS) {
+        warnings.push("REMOVAL_URGENT");
+      }
+    }
   }
   if (sourceQualityFlag) {
     warnings.push(sourceQualityFlag);
@@ -358,9 +369,13 @@ const buildAiRecommendation = (input: {
       [
         ...input.alerts.map((alert) => alert.code),
         ...input.warnings.filter((warning) =>
-          ["TITLE_DELAY", "LOW_DATA_CONFIDENCE", "TRANSPORT_ESTIMATED", "REVIEW_MARGIN"].includes(
-            warning
-          )
+          [
+            "TITLE_DELAY",
+            "LOW_DATA_CONFIDENCE",
+            "TRANSPORT_ESTIMATED",
+            "REVIEW_MARGIN",
+            "REMOVAL_URGENT",
+          ].includes(warning)
         ),
       ].slice(0, 4)
     )
@@ -370,11 +385,11 @@ const buildAiRecommendation = (input: {
     input.total_cost_basis > 0 ? Math.round((marginDrag / input.total_cost_basis) * 100) : 0;
   const bidCapHint =
     suggestedAction === "pass"
-      ? "Bid cap guidance: only proceed if acquisition terms improve materially."
-      : "Bid cap guidance: keep bids conservative until key risks are resolved.";
+      ? "Bidding aggressively increases loss risk; only continue if acquisition terms improve."
+      : "Keep bids conservative until these risk flags are resolved.";
   const reasoning = `Projected profit is ${input.projected_profit.toFixed(
     2
-  )}. Tax and transport currently absorb about ${marginDragPct}% of cost basis. Key risks: ${
+  )}. Tax and transport absorb about ${marginDragPct}% of cost basis. Risk flags: ${
     riskTokens.length > 0 ? riskTokens.join(", ") : "none flagged"
   }. ${bidCapHint}`;
 
@@ -492,6 +507,7 @@ export const enrichDeal = ({
     deal.category,
     metadata.transport_type,
     metadata.title_status,
+    metadata.removal_deadline,
     costBasis.estimated_inputs,
     execution.source_quality_flag,
     alerts,
