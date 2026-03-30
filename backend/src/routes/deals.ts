@@ -1,5 +1,11 @@
 import { Router } from "express";
-import { createDeal, listDeals, previewDeal, updateDealStage } from "../services/dealService";
+import {
+  createDeal,
+  listDeals,
+  previewDeal,
+  recordDealDecision,
+  updateDealStage,
+} from "../services/dealService";
 import { DealStatus } from "../models/dealV32";
 
 const dealsRouter = Router();
@@ -52,6 +58,18 @@ dealsRouter.patch("/:id/stage", (req, res) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to update stage";
     res.status(400).json({ error: message });
+  }
+});
+
+dealsRouter.post("/:id/decision", (req, res) => {
+  try {
+    const id = req.params.id;
+    const result = recordDealDecision(id, req.body);
+    res.status(201).json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to record decision";
+    const status = message === "Deal not found" ? 404 : 400;
+    res.status(status).json({ error: message });
   }
 });
 

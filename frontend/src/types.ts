@@ -25,6 +25,7 @@ export type TransportType =
   | "parcel"
   | "local_pickup"
   | "none";
+export type TitleStatus = "on_site" | "delayed" | "unknown";
 
 export type ConditionGrade =
   | "excellent"
@@ -41,6 +42,7 @@ export interface DealRecord {
   category: DealCategory;
   source_platform: SourcePlatform;
   acquisition_state: string;
+  seller_type: "government" | "commercial" | "unknown";
   status: DealStatus;
   stage_updated_at: string;
   discovered_date: string | null;
@@ -90,6 +92,24 @@ export interface MetadataRecord {
   condition_notes: string;
   transport_type: TransportType;
   presentation_quality: string;
+  removal_deadline: string | null;
+  title_status: TitleStatus;
+}
+
+export interface AiRecommendation {
+  suggested_action: "buy" | "pass" | "investigate";
+  confidence: number;
+  reasoning: string;
+  key_factors: string[];
+}
+
+export interface OperatorDecisionRecord {
+  id: string;
+  deal_id: string;
+  decision: "approved" | "rejected";
+  reason: string;
+  decided_at: string;
+  ai_recommendation_snapshot: AiRecommendation;
 }
 
 export interface DealView {
@@ -101,6 +121,8 @@ export interface DealView {
       | "FORCE_LIQUIDATION"
       | "STAGE_CRITICAL"
       | "TITLE_DELAY"
+      | "TRANSPORT_ESTIMATED"
+      | "REMOVAL_URGENT"
       | "PROFIT_DRIFT_HIGH"
       | "COST_OVERRUN"
       | "ESTIMATION_FAILURE"
@@ -110,6 +132,8 @@ export interface DealView {
     message: string;
   }>;
   operator_recommendation?: string;
+  ai_recommendation: AiRecommendation;
+  operator_decision_history: OperatorDecisionRecord[];
   warnings?: string[];
   engine: {
     cost_basis: {
@@ -199,6 +223,8 @@ export interface DealView {
     warnings: string[];
     postmortem: DealView["engine"]["postmortem"];
     recommendation_summary: string;
+    ai_recommendation: AiRecommendation;
+    operator_decision_history: OperatorDecisionRecord[];
   };
   calculations: {
     total_cost_basis: number;
@@ -221,6 +247,7 @@ export interface CreateDealRequest {
   category: DealCategory;
   source_platform: SourcePlatform;
   acquisition_state: string;
+  seller_type?: "government" | "commercial" | "unknown";
   status?: DealStatus;
   stage_updated_at?: string;
   discovered_date?: string | null;
@@ -242,6 +269,8 @@ export interface CreateDealRequest {
     condition_notes: string;
     transport_type: TransportType;
     presentation_quality: string;
+    removal_deadline?: string | null;
+    title_status?: TitleStatus;
   };
   unit_breakdown?: {
     units_total: number;
@@ -267,6 +296,13 @@ export interface DashboardSummary {
   completed_deals: number;
   realized_profit_total: number;
   projected_profit_total: number;
+  burn_list: Array<{
+    id: string;
+    label: string;
+    days_in_stage: number;
+    projected_profit: number;
+    recommended_action: "pass" | "review_only" | "do_not_acquire" | "reduce_price" | "liquidate_now" | null;
+  }>;
   aging_alerts: Array<{
     id: string;
     label: string;
@@ -288,6 +324,16 @@ export interface AssistantQueryResponse {
   key_points: string[];
   risk_level: "low" | "medium" | "high";
   suggested_action: string;
+}
+
+export interface DealDecisionRequest {
+  decision: "approved" | "rejected";
+  reason: string;
+}
+
+export interface DealDecisionResponse {
+  deal: DealView;
+  stored_decision: OperatorDecisionRecord;
 }
 
 export const CATEGORY_OPTIONS: DealCategory[] = [

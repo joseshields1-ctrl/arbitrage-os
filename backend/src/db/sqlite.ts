@@ -16,6 +16,7 @@ export const initializeDatabase = (): void => {
       id TEXT PRIMARY KEY,
       label TEXT NOT NULL,
       category TEXT NOT NULL,
+      seller_type TEXT NOT NULL DEFAULT 'unknown',
       source_platform TEXT NOT NULL,
       acquisition_state TEXT NOT NULL,
       status TEXT NOT NULL,
@@ -56,6 +57,20 @@ export const initializeDatabase = (): void => {
       condition_notes TEXT NOT NULL,
       transport_type TEXT NOT NULL,
       presentation_quality TEXT NOT NULL,
+      removal_deadline TEXT,
+      title_status TEXT NOT NULL DEFAULT 'unknown',
+      FOREIGN KEY (deal_id) REFERENCES deals(id) ON DELETE CASCADE
+    );
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS operator_decisions (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL,
+      decision TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      decided_at TEXT NOT NULL,
+      ai_recommendation_snapshot TEXT NOT NULL,
       FOREIGN KEY (deal_id) REFERENCES deals(id) ON DELETE CASCADE
     );
   `);
@@ -78,6 +93,10 @@ export const initializeDatabase = (): void => {
   if (!hasUnitCount) {
     db.exec(`ALTER TABLE deals ADD COLUMN unit_count INTEGER;`);
   }
+  const hasSellerType = dealColumns.some((column) => column.name === "seller_type");
+  if (!hasSellerType) {
+    db.exec(`ALTER TABLE deals ADD COLUMN seller_type TEXT NOT NULL DEFAULT 'unknown';`);
+  }
 
   const financialColumns = db.prepare(`PRAGMA table_info(financials)`).all() as Array<{
     name: string;
@@ -99,5 +118,17 @@ export const initializeDatabase = (): void => {
   const hasTax = financialColumns.some((column) => column.name === "tax");
   if (!hasTax) {
     db.exec(`ALTER TABLE financials ADD COLUMN tax REAL;`);
+  }
+
+  const metadataColumns = db.prepare(`PRAGMA table_info(metadata)`).all() as Array<{
+    name: string;
+  }>;
+  const hasRemovalDeadline = metadataColumns.some((column) => column.name === "removal_deadline");
+  if (!hasRemovalDeadline) {
+    db.exec(`ALTER TABLE metadata ADD COLUMN removal_deadline TEXT;`);
+  }
+  const hasTitleStatus = metadataColumns.some((column) => column.name === "title_status");
+  if (!hasTitleStatus) {
+    db.exec(`ALTER TABLE metadata ADD COLUMN title_status TEXT NOT NULL DEFAULT 'unknown';`);
   }
 };

@@ -1,9 +1,11 @@
 import type {
+  AiRecommendation,
   DealCategory,
   DealRow,
   DealStatus,
   FinancialRow,
   MetadataRow,
+  OperatorDecisionRecord,
   PrepMetrics,
 } from "../../models/dealV32";
 import { computeCostBasis } from "./costBasis";
@@ -27,6 +29,7 @@ export type OperatorAlertCode =
   | "FORCE_LIQUIDATION"
   | "STAGE_CRITICAL"
   | "TITLE_DELAY"
+  | "TRANSPORT_ESTIMATED"
   | "PROFIT_DRIFT_HIGH"
   | "COST_OVERRUN"
   | "ESTIMATION_FAILURE"
@@ -67,6 +70,8 @@ export interface EnrichedDeal {
     postmortem: ReturnType<typeof computePostmortem>;
     recommended_action: EngineRecommendedAction;
   };
+  ai_recommendation: AiRecommendation;
+  operator_decision_history: OperatorDecisionRecord[];
   alerts: OperatorAlert[];
   warnings: string[];
   operator_recommendation: string;
@@ -81,11 +86,14 @@ export interface EnrichedDeal {
     warnings: string[];
     postmortem: ReturnType<typeof computePostmortem>;
     recommendation_summary: string;
+    ai_recommendation: AiRecommendation;
+    operator_decision_history: OperatorDecisionRecord[];
   };
 }
 
 const LOW_DATA_CONFIDENCE_THRESHOLD = 60;
 const TITLE_DELAY_DAYS = 14;
+const REMOVAL_URGENT_HOURS = 72;
 const TITLE_DELAY_CATEGORIES: ReadonlySet<DealCategory> = new Set([
   "vehicle_suv",
   "vehicle_police_fleet",
@@ -109,6 +117,7 @@ const normalizePrepMetrics = (value: PrepMetrics | null | undefined): PrepMetric
 
 const buildAlerts = (input: {
   deal: DealRow;
+  metadata: MetadataRow;
   stage_alert: "OK" | "WARNING" | "CRITICAL";
   liquidation: ReturnType<typeof computeLiquidation>;
   postmortem: ReturnType<typeof computePostmortem>;
@@ -116,19 +125,31 @@ const buildAlerts = (input: {
   data_confidence: number;
 }): OperatorAlert[] => {
   const alerts: OperatorAlert[] = [];
+  const pushUnique = (alert: OperatorAlert): void => {
+    if (!alerts.some((existing) => existing.code === alert.code)) {
+      alerts.push(alert);
+    }
+  };
 
   if (input.liquidation.force_liquidation) {
-    alerts.push({
+    pushUnique({
       code: "FORCE_LIQUIDATION",
       severity: "critical",
       message: "Liquidation trigger is active for this deal.",
     });
   }
   if (input.stage_alert === "CRITICAL") {
-    alerts.push({
+    pushUnique({
       code: "STAGE_CRITICAL",
       severity: "critical",
       message: "Deal is in a critical stage-aging state.",
+    });
+  }
+  if (input.metadata.title_status !== "on_site") {
+    pushUnique({
+      code: "TITLE_DELAY",
+      severity: "warning",
+      message: `Title status is ${input.metadata.title_status}; verify paperwork timing before commit.`,
     });
   }
   if (
@@ -140,7 +161,7 @@ const buildAlerts = (input: {
     if (Number.isFinite(purchaseTs)) {
       const daysSincePurchase = (Date.now() - purchaseTs) / (1000 * 60 * 60 * 24);
       if (daysSincePurchase > TITLE_DELAY_DAYS) {
-        alerts.push({
+        pushUnique({
           code: "TITLE_DELAY",
           severity: "warning",
           message: "Deal may be delayed by title/registration timeline.",
@@ -148,15 +169,22 @@ const buildAlerts = (input: {
       }
     }
   }
+  if (input.estimated_inputs.includes("transport_cost_estimated")) {
+    pushUnique({
+      code: "TRANSPORT_ESTIMATED",
+      severity: "warning",
+      message: "Transport cost is estimated and may reduce margin confidence.",
+    });
+  }
   if (input.postmortem.profit_drift_flag === "HIGH_NEGATIVE") {
-    alerts.push({
+    pushUnique({
       code: "PROFIT_DRIFT_HIGH",
       severity: "critical",
       message: "Postmortem shows high negative profit drift.",
     });
   }
   if (input.postmortem.cost_overrun_flag) {
-    alerts.push({
+    pushUnique({
       code: "COST_OVERRUN",
       severity: "warning",
       message: "Actual cost basis materially exceeded projected baseline.",
@@ -167,21 +195,21 @@ const buildAlerts = (input: {
       input.postmortem.profit_drift_flag === "NEGATIVE") &&
     input.estimated_inputs.length >= 2
   ) {
-    alerts.push({
+    pushUnique({
       code: "ESTIMATION_FAILURE",
       severity: "warning",
       message: "Multiple estimated inputs likely contributed to drift.",
     });
   }
   if (input.deal.status === "completed" && input.postmortem.postmortem_incomplete) {
-    alerts.push({
+    pushUnique({
       code: "POSTMORTEM_INCOMPLETE",
       severity: "warning",
       message: "Completed deal is missing required data for full postmortem.",
     });
   }
   if (input.data_confidence <= LOW_DATA_CONFIDENCE_THRESHOLD) {
-    alerts.push({
+    pushUnique({
       code: "LOW_DATA_CONFIDENCE",
       severity: "warning",
       message: "Data confidence is below the operator threshold.",
@@ -194,14 +222,39 @@ const buildAlerts = (input: {
 const buildWarnings = (
   category: DealCategory,
   transportType: MetadataRow["transport_type"],
+  titleStatus: MetadataRow["title_status"],
+  removalDeadline: MetadataRow["removal_deadline"],
+  estimatedInputs: string[],
   sourceQualityFlag: "LOW_QUALITY_SOURCE" | null,
-  alerts: OperatorAlert[]
+  alerts: OperatorAlert[],
+  sellerType: DealRow["seller_type"]
 ): string[] => {
   const warnings: string[] = [];
+  if (sellerType === "unknown") {
+    warnings.push("UNKNOWN_SELLER_TYPE");
+  }
+  if (sellerType === "commercial") {
+    warnings.push("REVIEW_MARGIN");
+  }
   if (category === "electronics_bulk" && transportType === "parcel") {
     warnings.push(
       "Potential transport mismatch: electronics_bulk usually fits local_pickup or freight."
     );
+  }
+  if (estimatedInputs.includes("transport_cost_estimated")) {
+    warnings.push("TRANSPORT_ESTIMATED");
+  }
+  if (titleStatus !== "on_site") {
+    warnings.push("TITLE_DELAY");
+  }
+  if (removalDeadline) {
+    const removalTimestamp = Date.parse(removalDeadline);
+    if (Number.isFinite(removalTimestamp)) {
+      const hoursUntilRemoval = (removalTimestamp - Date.now()) / (1000 * 60 * 60);
+      if (hoursUntilRemoval <= REMOVAL_URGENT_HOURS) {
+        warnings.push("REMOVAL_URGENT");
+      }
+    }
   }
   if (sourceQualityFlag) {
     warnings.push(sourceQualityFlag);
@@ -255,13 +308,112 @@ const buildOperatorRecommendationSummary = (input: {
   return `Action: ${actionText}. ${reasons.join(" ")}`;
 };
 
+const clampConfidence = (value: number): number => {
+  if (value < 0) {
+    return 0;
+  }
+  if (value > 100) {
+    return 100;
+  }
+  return Math.round(value);
+};
+
+const buildAiRecommendation = (input: {
+  projected_profit: number;
+  data_confidence: number;
+  alerts: OperatorAlert[];
+  warnings: string[];
+  tax: number;
+  transport: number;
+  total_cost_basis: number;
+  recommended_action: EngineRecommendedAction;
+}): AiRecommendation => {
+  let suggestedAction: AiRecommendation["suggested_action"] = "investigate";
+  if (input.recommended_action === "pass") {
+    suggestedAction = "buy";
+  } else if (
+    input.recommended_action === "do_not_acquire" ||
+    input.recommended_action === "liquidate_now" ||
+    input.recommended_action === "reduce_price"
+  ) {
+    suggestedAction = "pass";
+  }
+
+  const criticalAlerts = input.alerts.filter((alert) => alert.severity === "critical").length;
+  const warningAlerts = input.alerts.filter((alert) => alert.severity === "warning").length;
+  let confidence = input.data_confidence;
+  confidence -= criticalAlerts * 20;
+  confidence -= warningAlerts * 8;
+  if (input.projected_profit < 0) {
+    confidence -= 15;
+  } else if (input.projected_profit > 0) {
+    confidence += 5;
+  }
+
+  const keyFactors: string[] = [
+    `Projected profit: ${input.projected_profit.toFixed(2)}`,
+    `Data confidence: ${input.data_confidence}`,
+  ];
+  if (criticalAlerts > 0 || warningAlerts > 0) {
+    keyFactors.push(
+      `Alerts: ${input.alerts.map((alert) => alert.code).join(", ")}`
+    );
+  } else {
+    keyFactors.push("Alerts: none");
+  }
+  keyFactors.push(
+    `Engine action basis: ${input.recommended_action ?? "completed"}`
+  );
+  const riskTokens = Array.from(
+    new Set(
+      [
+        ...input.alerts.map((alert) => alert.code),
+        ...input.warnings.filter((warning) =>
+          [
+            "TITLE_DELAY",
+            "LOW_DATA_CONFIDENCE",
+            "TRANSPORT_ESTIMATED",
+            "REVIEW_MARGIN",
+            "REMOVAL_URGENT",
+          ].includes(warning)
+        ),
+      ].slice(0, 4)
+    )
+  );
+  const marginDrag = input.tax + input.transport;
+  const marginDragPct =
+    input.total_cost_basis > 0 ? Math.round((marginDrag / input.total_cost_basis) * 100) : 0;
+  const bidCapHint =
+    suggestedAction === "pass"
+      ? "Bidding aggressively increases loss risk; only continue if acquisition terms improve."
+      : "Keep bids conservative until these risk flags are resolved.";
+  const reasoning = `Projected profit is ${input.projected_profit.toFixed(
+    2
+  )}. Tax and transport absorb about ${marginDragPct}% of cost basis. Risk flags: ${
+    riskTokens.length > 0 ? riskTokens.join(", ") : "none flagged"
+  }. ${bidCapHint}`;
+
+  return {
+    suggested_action: suggestedAction,
+    confidence: clampConfidence(confidence),
+    reasoning,
+    key_factors: keyFactors,
+  };
+};
+
 export interface EnrichDealInput {
   deal: DealRow;
   financials: FinancialRow;
   metadata: MetadataRow;
+  operator_decision_history?: EnrichedDeal["operator_decision_history"];
 }
 
-export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): EnrichedDeal => {
+export const enrichDeal = ({
+  deal,
+  financials,
+  metadata,
+  operator_decision_history = [],
+}: EnrichDealInput): EnrichedDeal => {
   const normalizedPrepMetrics = normalizePrepMetrics(deal.prep_metrics ?? null);
   const normalizedUnitCount = normalizeOptionalCount(deal.unit_count ?? null);
 
@@ -344,6 +496,7 @@ export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): Enr
     : aging.stage_alert;
   const alerts = buildAlerts({
     deal,
+    metadata,
     stage_alert: stageAlert,
     liquidation,
     postmortem,
@@ -353,8 +506,12 @@ export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): Enr
   const warnings = buildWarnings(
     deal.category,
     metadata.transport_type,
+    metadata.title_status,
+    metadata.removal_deadline,
+    costBasis.estimated_inputs,
     execution.source_quality_flag,
-    alerts
+    alerts,
+    deal.seller_type
   );
   const operatorRecommendation = buildOperatorRecommendationSummary({
     status: deal.status,
@@ -364,6 +521,16 @@ export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): Enr
     liquidation,
     data_confidence: adjustedDataConfidence,
     postmortem,
+  });
+  const aiRecommendation = buildAiRecommendation({
+    projected_profit: profit.projected_profit,
+    data_confidence: adjustedDataConfidence,
+    alerts,
+    warnings,
+    tax: costBasis.cost_basis_breakdown.tax,
+    transport: costBasis.cost_basis_breakdown.transport,
+    total_cost_basis: costBasis.total_cost_basis,
+    recommended_action: recommendedAction,
   });
 
   return {
@@ -406,6 +573,8 @@ export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): Enr
       postmortem,
       recommended_action: recommendedAction,
     },
+    ai_recommendation: aiRecommendation,
+    operator_decision_history,
     alerts,
     warnings,
     operator_recommendation: operatorRecommendation,
@@ -454,6 +623,8 @@ export const enrichDeal = ({ deal, financials, metadata }: EnrichDealInput): Enr
       warnings,
       postmortem,
       recommendation_summary: operatorRecommendation,
+      ai_recommendation: aiRecommendation,
+      operator_decision_history,
     },
   };
 };

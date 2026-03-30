@@ -1,5 +1,7 @@
 import {
+  AiRecommendation,
   DealCategory,
+  OperatorDecisionRecord,
   DealRow,
   DEAL_LIFECYCLE_STAGES,
   DealStatus,
@@ -10,6 +12,7 @@ import {
   MetadataRow,
   PrepMetrics,
   SourcePlatform,
+  TitleStatus,
   UnitBreakdown,
 } from "../models/dealV32";
 import { db } from "../db/sqlite";
@@ -21,6 +24,7 @@ export interface CreateDealInput {
   category: DealCategory;
   source_platform: SourcePlatform;
   acquisition_state: string;
+  seller_type?: "government" | "commercial" | "unknown";
   status?: DealStatus;
   stage_updated_at?: string;
   discovered_date?: string | null;
@@ -40,6 +44,11 @@ export interface CompleteDealInput {
   completion_date?: string;
 }
 
+export interface DealDecisionInput {
+  decision: "approved" | "rejected";
+  reason: string;
+}
+
 export type DealView = ReturnType<typeof enrichDeal>;
 
 export interface DashboardView {
@@ -47,6 +56,13 @@ export interface DashboardView {
   completed_deals: number;
   realized_profit_total: number;
   projected_profit_total: number;
+  burn_list: Array<{
+    id: string;
+    label: string;
+    days_in_stage: number;
+    projected_profit: number;
+    recommended_action: ReturnType<typeof enrichDeal>["engine"]["recommended_action"];
+  }>;
   aging_alerts: Array<{
     id: string;
     label: string;
@@ -94,6 +110,7 @@ const validSourcePlatforms = new Set<SourcePlatform>([
   "facebook",
   "other",
 ]);
+const validSellerTypes = new Set<DealRow["seller_type"]>(["government", "commercial", "unknown"]);
 const validConditionGrades = new Set<MetadataRow["condition_grade"]>([
   "excellent",
   "used_good",
@@ -110,6 +127,7 @@ const validTransportTypes = new Set<MetadataRow["transport_type"]>([
   "local_pickup",
   "none",
 ]);
+const validTitleStatuses = new Set<TitleStatus>(["on_site", "delayed", "unknown"]);
 
 const ensureNonEmptyString = (value: unknown, fieldName: string): string => {
   if (typeof value !== "string" || value.trim().length === 0) {
@@ -137,6 +155,13 @@ const parseNumericInput = (
     throw new Error(`${fieldName} must be >= ${options.min}`);
   }
   return parsed;
+};
+
+const ensureDecision = (value: unknown): "approved" | "rejected" => {
+  if (value === "approved" || value === "rejected") {
+    return value;
+  }
+  throw new Error("decision must be either approved or rejected");
 };
 
 const ensureIsoDate = (value: string, fieldName: string): void => {
@@ -169,6 +194,9 @@ const validateCreateOrPreviewInput = (input: CreateDealInput): void => {
   if (!validSourcePlatforms.has(input.source_platform)) {
     throw new Error("source_platform is invalid");
   }
+  if (input.seller_type !== undefined && !validSellerTypes.has(input.seller_type)) {
+    throw new Error("seller_type is invalid");
+  }
   if (!validConditionGrades.has(input.metadata.condition_grade)) {
     throw new Error("metadata.condition_grade is invalid");
   }
@@ -177,6 +205,12 @@ const validateCreateOrPreviewInput = (input: CreateDealInput): void => {
     !validTransportTypes.has(input.metadata.transport_type)
   ) {
     throw new Error("metadata.transport_type is invalid");
+  }
+  if (
+    input.metadata.title_status !== undefined &&
+    !validTitleStatuses.has(input.metadata.title_status)
+  ) {
+    throw new Error("metadata.title_status is invalid");
   }
 
   ensureNonEmptyString(input.label, "label");
@@ -212,6 +246,7 @@ const validateCreateOrPreviewInput = (input: CreateDealInput): void => {
   validateOptionalIsoDate(input.listing_date, "listing_date");
   validateOptionalIsoDate(input.sale_date, "sale_date");
   validateOptionalIsoDate(input.completion_date, "completion_date");
+  validateOptionalIsoDate(input.metadata.removal_deadline, "metadata.removal_deadline");
 
   const status: DealStatus = input.status ?? "sourced";
   if (!stageSequence.includes(status)) {
@@ -349,6 +384,7 @@ const mapDealRow = (row: Record<string, unknown>): DealRow => ({
   listing_date: (row.listing_date as string | null) ?? null,
   sale_date: (row.sale_date as string | null) ?? null,
   completion_date: (row.completion_date as string | null) ?? null,
+  seller_type: (row.seller_type as DealRow["seller_type"]) ?? "unknown",
   unit_count: normalizeOptionalCount(row.unit_count as number | null | undefined),
   unit_breakdown: parseUnitBreakdown(row.unit_breakdown),
   prep_metrics: parsePrepMetrics(row.prep_metrics),
@@ -380,7 +416,69 @@ const mapMetadataRow = (row: Record<string, unknown>): MetadataRow => ({
   condition_notes: String(row.condition_notes),
   transport_type: row.transport_type as MetadataRow["transport_type"],
   presentation_quality: row.presentation_quality as MetadataRow["presentation_quality"],
+  seller_type: (row.seller_type as MetadataRow["seller_type"]) ?? "unknown",
+  removal_deadline: (row.removal_deadline as string | null) ?? null,
+  title_status: (row.title_status as TitleStatus) ?? "unknown",
 });
+
+const parseAiRecommendationSnapshot = (value: unknown): AiRecommendation => {
+  const fallback: AiRecommendation = {
+    suggested_action: "investigate",
+    confidence: 0,
+    reasoning: "Snapshot unavailable.",
+    key_factors: [],
+  };
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return fallback;
+  }
+  try {
+    const parsed = JSON.parse(value) as Partial<AiRecommendation>;
+    const suggestedAction =
+      parsed.suggested_action === "buy" ||
+      parsed.suggested_action === "pass" ||
+      parsed.suggested_action === "investigate"
+        ? parsed.suggested_action
+        : fallback.suggested_action;
+    const confidence =
+      typeof parsed.confidence === "number" && Number.isFinite(parsed.confidence)
+        ? Math.max(0, Math.min(100, Math.round(parsed.confidence)))
+        : fallback.confidence;
+    const reasoning =
+      typeof parsed.reasoning === "string" && parsed.reasoning.trim().length > 0
+        ? parsed.reasoning
+        : fallback.reasoning;
+    const keyFactors = Array.isArray(parsed.key_factors)
+      ? parsed.key_factors.filter((item): item is string => typeof item === "string")
+      : fallback.key_factors;
+    return {
+      suggested_action: suggestedAction,
+      confidence,
+      reasoning,
+      key_factors: keyFactors,
+    };
+  } catch {
+    return fallback;
+  }
+};
+
+export const listOperatorDecisionsByDealId = (dealId: string): OperatorDecisionRecord[] => {
+  const rows = db
+    .prepare(
+      `SELECT id, deal_id, decision, reason, decided_at, ai_recommendation_snapshot
+       FROM operator_decisions
+       WHERE deal_id = ?
+       ORDER BY datetime(decided_at) DESC`
+    )
+    .all(dealId) as Array<Record<string, unknown>>;
+  return rows.map((row) => ({
+    id: String(row.id),
+    deal_id: String(row.deal_id),
+    decision: row.decision === "approved" ? "approved" : "rejected",
+    reason: String(row.reason ?? ""),
+    decided_at: String(row.decided_at),
+    ai_recommendation_snapshot: parseAiRecommendationSnapshot(row.ai_recommendation_snapshot),
+  }));
+};
 
 const computeAndPersistFinancials = (dealId: string): void => {
   const joined = db
@@ -398,6 +496,7 @@ const computeAndPersistFinancials = (dealId: string): void => {
         d.listing_date,
         d.sale_date,
         d.completion_date,
+        d.seller_type,
         d.unit_count,
         d.unit_breakdown,
         d.prep_metrics,
@@ -415,7 +514,9 @@ const computeAndPersistFinancials = (dealId: string): void => {
         m.condition_grade,
         m.condition_notes,
         m.transport_type,
-        m.presentation_quality
+        m.presentation_quality,
+        m.removal_deadline,
+        m.title_status
        FROM deals d
        JOIN financials f ON f.deal_id = d.id
        JOIN metadata m ON m.deal_id = d.id
@@ -441,6 +542,7 @@ const computeAndPersistFinancials = (dealId: string): void => {
       listing_date: (joined.listing_date as string | null) ?? null,
       sale_date: (joined.sale_date as string | null) ?? null,
       completion_date: (joined.completion_date as string | null) ?? null,
+      seller_type: (joined.seller_type as DealRow["seller_type"]) ?? "unknown",
       unit_count: normalizeOptionalCount(joined.unit_count as number | null | undefined),
       unit_breakdown: parseUnitBreakdown(joined.unit_breakdown),
       prep_metrics: parsePrepMetrics(joined.prep_metrics),
@@ -467,6 +569,9 @@ const computeAndPersistFinancials = (dealId: string): void => {
       condition_notes: String(joined.condition_notes ?? ""),
       transport_type: joined.transport_type as MetadataRow["transport_type"],
       presentation_quality: String(joined.presentation_quality ?? "standard"),
+      seller_type: (joined.seller_type as MetadataRow["seller_type"]) ?? "unknown",
+      removal_deadline: (joined.removal_deadline as string | null) ?? null,
+      title_status: (joined.title_status as TitleStatus) ?? "unknown",
     },
   });
 
@@ -491,7 +596,13 @@ const buildEnrichedDealView = (
   financials: FinancialRow,
   metadata: MetadataRow
 ): DealView => {
-  return enrichDeal({ deal, financials, metadata });
+  const operatorDecisionHistory = listOperatorDecisionsByDealId(deal.id);
+  return enrichDeal({
+    deal,
+    financials,
+    metadata,
+    operator_decision_history: operatorDecisionHistory,
+  });
 };
 
 interface PreparedDealRows {
@@ -517,6 +628,12 @@ const buildPreparedDealRows = (input: CreateDealInput, id: string): PreparedDeal
   const defaultTransportType = categoryProfiles[input.category].default_transport_type;
   const resolvedTransportType =
     input.metadata.transport_type ?? (defaultTransportType as MetadataRow["transport_type"]);
+  const inferredSellerType: DealRow["seller_type"] =
+    input.source_platform === "govdeals" || input.source_platform === "publicsurplus"
+      ? "government"
+      : "unknown";
+  const sellerType: DealRow["seller_type"] =
+    input.seller_type ?? input.metadata.seller_type ?? inferredSellerType;
 
   return {
     deal: {
@@ -532,6 +649,7 @@ const buildPreparedDealRows = (input: CreateDealInput, id: string): PreparedDeal
       listing_date: listingDate,
       sale_date: saleDate,
       completion_date: completionDate,
+      seller_type: sellerType,
       unit_count: resolvedUnitCount,
       unit_breakdown: input.unit_breakdown ?? null,
       prep_metrics: prepMetrics,
@@ -560,6 +678,9 @@ const buildPreparedDealRows = (input: CreateDealInput, id: string): PreparedDeal
       condition_notes: input.metadata.condition_notes,
       transport_type: resolvedTransportType,
       presentation_quality: input.metadata.presentation_quality,
+      seller_type: sellerType,
+      removal_deadline: normalizeNullableDate(input.metadata.removal_deadline),
+      title_status: input.metadata.title_status ?? "unknown",
     },
   };
 };
@@ -580,6 +701,7 @@ const getDealViewById = (dealId: string): DealView | null => {
         d.listing_date,
         d.sale_date,
         d.completion_date,
+        d.seller_type,
         d.unit_count,
         d.unit_breakdown,
         d.prep_metrics,
@@ -601,7 +723,9 @@ const getDealViewById = (dealId: string): DealView | null => {
         m.condition_grade,
         m.condition_notes,
         m.transport_type,
-        m.presentation_quality
+        m.presentation_quality,
+        m.removal_deadline,
+        m.title_status
        FROM deals d
        JOIN financials f ON f.deal_id = d.id
        JOIN metadata m ON m.deal_id = d.id
@@ -636,6 +760,9 @@ const getDealViewById = (dealId: string): DealView | null => {
     condition_notes: joinedRows.condition_notes,
     transport_type: joinedRows.transport_type,
     presentation_quality: joinedRows.presentation_quality,
+    seller_type: joinedRows.seller_type,
+    removal_deadline: joinedRows.removal_deadline,
+    title_status: joinedRows.title_status,
   });
   return buildEnrichedDealView(deal, financials, metadata);
 };
@@ -648,9 +775,9 @@ export const createDeal = (input: CreateDealInput): DealView => {
     db.prepare(
       `INSERT INTO deals (
         id, label, category, source_platform, acquisition_state, status, stage_updated_at,
-        discovered_date, purchase_date, listing_date, sale_date, completion_date, unit_count,
+        discovered_date, purchase_date, listing_date, sale_date, completion_date, seller_type, unit_count,
         unit_breakdown, prep_metrics
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       prepared.deal.id,
       prepared.deal.label,
@@ -664,6 +791,7 @@ export const createDeal = (input: CreateDealInput): DealView => {
       prepared.deal.listing_date,
       prepared.deal.sale_date,
       prepared.deal.completion_date,
+      prepared.deal.seller_type,
       prepared.deal.unit_count,
       prepared.deal.unit_breakdown ? JSON.stringify(prepared.deal.unit_breakdown) : null,
       prepared.deal.prep_metrics ? JSON.stringify(prepared.deal.prep_metrics) : null
@@ -693,14 +821,17 @@ export const createDeal = (input: CreateDealInput): DealView => {
 
     db.prepare(
       `INSERT INTO metadata (
-        deal_id, condition_grade, condition_notes, transport_type, presentation_quality
-      ) VALUES (?, ?, ?, ?, ?)`
+        deal_id, condition_grade, condition_notes, transport_type, presentation_quality,
+        removal_deadline, title_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).run(
       prepared.metadata.deal_id,
       prepared.metadata.condition_grade,
       prepared.metadata.condition_notes,
       prepared.metadata.transport_type,
-      prepared.metadata.presentation_quality
+      prepared.metadata.presentation_quality,
+      prepared.metadata.removal_deadline,
+      prepared.metadata.title_status
     );
   });
 
@@ -855,11 +986,37 @@ export const getDashboard = (): DashboardView => {
       days_in_stage: item.calculations.days_in_stage,
     }));
 
+  const burnList = activeDeals
+    .filter((item) => {
+      const isVehicleCategory =
+        item.deal.category === "vehicle_suv" ||
+        item.deal.category === "vehicle_police_fleet" ||
+        item.deal.category === "powersports";
+      const isElectronicsCategory =
+        item.deal.category === "electronics_bulk" || item.deal.category === "electronics_individual";
+      if (isVehicleCategory) {
+        return item.calculations.days_in_current_stage > 14;
+      }
+      if (isElectronicsCategory) {
+        return item.calculations.days_in_current_stage > 7;
+      }
+      return false;
+    })
+    .map((item) => ({
+      id: item.deal.id,
+      label: item.deal.label,
+      days_in_stage: item.calculations.days_in_current_stage,
+      projected_profit: item.calculations.projected_profit,
+      recommended_action: item.engine.recommended_action,
+    }))
+    .sort((a, b) => b.days_in_stage - a.days_in_stage);
+
   return {
     active_deals: activeDeals.length,
     completed_deals: completedDeals.length,
     realized_profit_total: realizedProfitTotal,
     projected_profit_total: projectedProfitTotal,
+    burn_list: burnList,
     aging_alerts: agingAlerts,
   };
 };
@@ -967,4 +1124,54 @@ export const getDealById = (dealId: string): DealView | null => {
   }
   computeAndPersistFinancials(dealId);
   return getDealViewById(dealId);
+};
+
+export const recordDealDecision = (
+  dealId: string,
+  rawInput: unknown
+): { deal: DealView; stored_decision: OperatorDecisionRecord } => {
+  const existingDeal = getDealById(dealId);
+  if (!existingDeal) {
+    throw new Error("Deal not found");
+  }
+  if (!rawInput || typeof rawInput !== "object") {
+    throw new Error("Invalid decision payload");
+  }
+
+  const input = rawInput as Partial<DealDecisionInput>;
+  const decision = ensureDecision(input.decision);
+  const reason = ensureNonEmptyString(input.reason, "reason");
+  const decidedAt = nowIso();
+  const decisionId = crypto.randomUUID();
+  const aiRecommendationSnapshot = existingDeal.ai_recommendation;
+
+  db.prepare(
+    `INSERT INTO operator_decisions (
+      id, deal_id, decision, reason, decided_at, ai_recommendation_snapshot
+    ) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(
+    decisionId,
+    dealId,
+    decision,
+    reason,
+    decidedAt,
+    JSON.stringify(aiRecommendationSnapshot)
+  );
+
+  const updatedDeal = getDealById(dealId);
+  if (!updatedDeal) {
+    throw new Error("Deal not found");
+  }
+
+  return {
+    deal: updatedDeal,
+    stored_decision: {
+      id: decisionId,
+      deal_id: dealId,
+      decision,
+      reason,
+      decided_at: decidedAt,
+      ai_recommendation_snapshot: aiRecommendationSnapshot,
+    },
+  };
 };

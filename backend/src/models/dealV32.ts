@@ -9,6 +9,8 @@ export type SourcePlatform = SourcePlatformType;
 export type DealCategory = DealCategoryType;
 export type ConditionGrade = ConditionGradeType;
 export type TransportType = TransportTypeType;
+export type SellerType = "government" | "commercial" | "unknown";
+export type TitleStatus = "on_site" | "delayed" | "unknown";
 
 export const DEAL_LIFECYCLE_STAGES = [
   "sourced",
@@ -45,6 +47,7 @@ export interface DealRow {
   label: string;
   category: DealCategory;
   source_platform: SourcePlatform;
+  seller_type: SellerType;
   acquisition_state: string;
   status: DealStatus;
   stage_updated_at: string;
@@ -94,6 +97,9 @@ export interface MetadataInput {
   condition_notes: string;
   transport_type: TransportType;
   presentation_quality: string;
+  seller_type?: SellerType;
+  removal_deadline?: string | null;
+  title_status?: TitleStatus;
 }
 
 export interface MetadataRow {
@@ -102,6 +108,9 @@ export interface MetadataRow {
   condition_notes: string;
   transport_type: TransportType;
   presentation_quality: string;
+  seller_type: SellerType;
+  removal_deadline: string | null;
+  title_status: TitleStatus;
 }
 
 export interface DealComputedMetrics {
@@ -119,11 +128,29 @@ export interface DealComputedMetrics {
   source_quality_flag: "LOW_QUALITY_SOURCE" | null;
 }
 
+export interface AiRecommendation {
+  suggested_action: "buy" | "pass" | "investigate";
+  confidence: number;
+  reasoning: string;
+  key_factors: string[];
+}
+
+export interface OperatorDecisionRecord {
+  id: string;
+  deal_id: string;
+  decision: "approved" | "rejected";
+  reason: string;
+  decided_at: string;
+  ai_recommendation_snapshot: AiRecommendation;
+}
+
 export interface DealView {
   deal: DealRow;
   financials: FinancialRow;
   metadata: MetadataRow;
   calculations: DealComputedMetrics;
+  ai_recommendation: AiRecommendation;
+  operator_decision_history: OperatorDecisionRecord[];
   warnings?: string[];
 }
 
