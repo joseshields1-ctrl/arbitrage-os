@@ -36,6 +36,25 @@ export type ConditionGrade =
   | "defective"
   | "parts_only";
 
+export type IntakeCategory = "vehicle" | "electronics" | "other";
+export type CompSourceType = "facebook" | "craigslist" | "dealer" | "auction" | "other";
+export type CompConfidence = "HIGH" | "MEDIUM" | "LOW" | "MANUAL_REVIEW_REQUIRED";
+
+export interface ManualCompEntry {
+  id: string;
+  price: number;
+  source: CompSourceType;
+  notes: string;
+  date: string;
+}
+
+export interface VehicleMarketIntel {
+  kbb_value: number | null;
+  nada_value: number | null;
+  carfax_status: string | null;
+  manual_comps: ManualCompEntry[];
+}
+
 export interface DealRecord {
   id: string;
   label: string;
@@ -69,6 +88,7 @@ export interface DealRecord {
     locked_units: number;
     total_prep_time_minutes: number;
   } | null;
+  market_intel?: VehicleMarketIntel | null;
 }
 
 export interface FinancialRecord {
@@ -293,6 +313,7 @@ export interface CreateDealRequest {
     locked_units: number;
     total_prep_time_minutes: number;
   };
+  market_intel?: VehicleMarketIntel | null;
 }
 
 export interface DashboardSummary {

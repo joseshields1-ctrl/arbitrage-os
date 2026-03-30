@@ -923,3 +923,274 @@
     grid-template-columns: 200px minmax(0, 1fr) 360px;
   }
 }
+
+.intake-stepper {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 0 12px;
+}
+
+.intake-stepper span {
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.8rem;
+  background: #f8fafc;
+  color: #475569;
+}
+
+.intake-stepper span.active {
+  border-color: #2563eb;
+  background: #dbeafe;
+  color: #1e3a8a;
+  font-weight: 700;
+}
+
+.intake-category-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.intake-category-card {
+  text-align: left;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px;
+  display: grid;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.intake-category-card.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.capital-panel,
+.decision-queue-card,
+.burn-enhanced-card,
+.risk-flag-card,
+.velocity-kpi-grid,
+.velocity-graph-card,
+.dashboard-alert-sections,
+.market-intel-panel {
+  margin-top: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  padding: 12px;
+}
+
+.capital-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.capital-grid article {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f8fafc;
+  display: grid;
+  gap: 4px;
+}
+
+.capital-grid article span {
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+.capital-grid article strong {
+  font-size: 1.05rem;
+}
+
+.queue-item {
+  margin-bottom: 6px;
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.queue-item.high {
+  border: 1px solid #fca5a5;
+  background: #fef2f2;
+}
+
+.queue-item.medium {
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+}
+
+.queue-item.low {
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+}
+
+.velocity-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.velocity-kpi-grid article {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px;
+  display: grid;
+  gap: 4px;
+  background: #f8fafc;
+}
+
+.velocity-kpi-grid article span {
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+.velocity-bars {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  gap: 8px;
+}
+
+.velocity-month {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+}
+
+.velocity-bar-wrap {
+  height: 140px;
+  width: 100%;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px;
+}
+
+.velocity-bar {
+  width: 18px;
+  border-radius: 4px 4px 0 0;
+}
+
+.velocity-bar.roi {
+  background: #16a34a;
+}
+
+.velocity-bar.roi.negative {
+  background: #dc2626;
+}
+
+.velocity-bar.days {
+  background: #2563eb;
+}
+
+.dashboard-alert-sections {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dashboard-alert-sections article {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f8fafc;
+}
+
+.market-links-row {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.manual-comp-editor h5 {
+  margin: 10px 0 8px;
+}
+
+.manual-comp-list ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.manual-comp-list li {
+  margin-bottom: 6px;
+}
+
+.valuation-summary-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.valuation-summary-grid > div {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 8px;
+  background: #f8fafc;
+  display: grid;
+  gap: 2px;
+}
+
+.valuation-summary-grid span {
+  font-size: 0.78rem;
+  color: #64748b;
+}
+
+.valuation-summary-grid strong {
+  font-size: 0.95rem;
+}
+
+.comp-confidence-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 2px 8px;
+  border: 1px solid #cbd5e1;
+}
+
+.comp-confidence-badge.high {
+  background: #f0fdf4;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.comp-confidence-badge.medium {
+  background: #fffbeb;
+  border-color: #fcd34d;
+  color: #92400e;
+}
+
+.comp-confidence-badge.low {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #9a3412;
+}
+
+.comp-confidence-badge.manual_review_required {
+  background: #fef2f2;
+  border-color: #fca5a5;
+  color: #991b1b;
+}
+
+.bars-four {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+}
+
+.legend-chip.ehr {
+  border-color: #7c3aed;
+  color: #5b21b6;
+  background: #f5f3ff;
+}
+
+.month-column .bar.ehr {
+  background: #7c3aed;
+}

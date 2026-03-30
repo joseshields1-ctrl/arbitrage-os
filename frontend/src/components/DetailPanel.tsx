@@ -1,13 +1,27 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { submitDealDecision } from "../api";
-import type { DealView } from "../types";
+import type { DealView, VehicleMarketIntel } from "../types";
+import {
+  buildMarketLinks,
+  calculateRoiPct,
+  computeBlendedMarketValue,
+  computeDaysToCashBack,
+  getCapitalVelocityLabel,
+  normalizeVehicleIntel,
+} from "../utils/marketIntel";
+import VehicleMarketPanel from "./VehicleMarketPanel";
 
 interface DetailPanelProps {
   deal: DealView;
+  marketIntel: VehicleMarketIntel;
+  onMarketIntelChange: (dealId: string, intel: VehicleMarketIntel) => void;
   onDecisionRecorded: (updatedDeal: DealView) => void;
 }
 
-const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
+const formatCurrency = (value: number | null): string =>
+  value === null ? "N/A" : `$${value.toFixed(2)}`;
+
+const DetailPanel = ({ deal, marketIntel, onMarketIntelChange, onDecisionRecorded }: DetailPanelProps) => {
   const unitBreakdown = deal.deal.unit_breakdown;
   const prepMetrics = deal.deal.prep_metrics;
   const mismatch = (deal.warnings ?? []).some((warning) =>
@@ -18,6 +32,7 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
   const [decisionError, setDecisionError] = useState<string | null>(null);
   const [decisionConfirmation, setDecisionConfirmation] = useState<string | null>(null);
   const [showPreviousDecisions, setShowPreviousDecisions] = useState(false);
+  const normalizedIntel = useMemo(() => normalizeVehicleIntel(marketIntel), [marketIntel]);
   const qualityFlag = deal.calculations.source_quality_flag;
   const latestDecision = deal.operator_decision_history[0] ?? null;
   const previousDecisions = deal.operator_decision_history.slice(1);
@@ -45,6 +60,36 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
         : deal.calculations.efficiency_rating === "BAD"
           ? "efficiency-bad"
           : undefined;
+  const categoryGroup = deal.deal.category.startsWith("vehicle") ? "vehicle" : "other";
+  const blendedMarketValue = computeBlendedMarketValue(
+    normalizedIntel,
+    deal.financials.estimated_market_value
+  );
+  const marketLinks = buildMarketLinks(deal.deal.label);
+  const totalInvestment =
+    deal.calculations.total_cost_basis + (deal.financials.repair_cost ?? 0) + (deal.financials.prep_cost ?? 0);
+  const projectedResale = blendedMarketValue ?? deal.financials.estimated_market_value;
+  const projectedNet = projectedResale - totalInvestment;
+  const projectedRoiPct = calculateRoiPct(projectedNet, totalInvestment);
+  const cycleStart = deal.deal.discovered_date ?? deal.deal.purchase_date ?? deal.deal.stage_updated_at;
+  const cycleEnd = deal.deal.completion_date ?? deal.deal.sale_date ?? deal.deal.stage_updated_at;
+  const daysToSell =
+    deal.deal.sale_date && cycleStart
+      ? Math.max(
+          0,
+          Math.floor((Date.parse(deal.deal.sale_date) - Date.parse(cycleStart)) / (1000 * 60 * 60 * 24))
+        )
+      : null;
+  const totalCycleTime =
+    cycleEnd
+      ? Math.max(
+          0,
+          Math.floor((Date.parse(cycleEnd) - Date.parse(cycleStart)) / (1000 * 60 * 60 * 24))
+        )
+      : null;
+  const daysToCashBack = computeDaysToCashBack(deal);
+  const capitalVelocityLabel = getCapitalVelocityLabel(daysToCashBack);
+  const realizedRoiPct = calculateRoiPct(deal.calculations.realized_profit, deal.calculations.total_cost_basis);
 
   const handleDecision = async (decision: "approved" | "rejected") => {
     const trimmedReason = decisionReason.trim();
@@ -97,6 +142,58 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
           {keyWarnings.length > 0 ? keyWarnings.join(", ") : "none"}
         </p>
       </div>
+      <div className="decision-section">
+        <h4>Upside Snapshot</h4>
+        <p>
+          <strong>Blended Market Value:</strong>{" "}
+          {formatCurrency(blendedMarketValue)}
+        </p>
+        <p>
+          <strong>Acquisition Cost:</strong> {formatCurrency(deal.financials.acquisition_cost)}
+        </p>
+        <p>
+          <strong>Estimated Repairs:</strong>{" "}
+          {formatCurrency((deal.financials.repair_cost ?? 0) + (deal.financials.prep_cost ?? 0))}
+        </p>
+        <p>
+          <strong>Total Investment:</strong> {formatCurrency(totalInvestment)}
+        </p>
+        <p>
+          <strong>Projected Resale:</strong> {formatCurrency(projectedResale)}
+        </p>
+        <p>
+          <strong>Net Profit:</strong> {formatCurrency(projectedNet)}
+        </p>
+        <p>
+          <strong>ROI %:</strong>{" "}
+          {deal.deal.status === "completed" ? realizedRoiPct.toFixed(1) : projectedRoiPct.toFixed(1)}%
+        </p>
+      </div>
+      <div className="decision-section">
+        <h4>Capital Velocity</h4>
+        <p>
+          <strong>ROI %:</strong> {projectedRoiPct.toFixed(1)}%
+        </p>
+        <p>
+          <strong>Days to Sell:</strong> {daysToSell === null ? "N/A" : daysToSell}
+        </p>
+        <p>
+          <strong>Total Cycle Time:</strong> {totalCycleTime === null ? "N/A" : totalCycleTime}
+        </p>
+        <p>
+          <strong>Days to Cash Back:</strong> {daysToCashBack}
+        </p>
+        <p>
+          <strong>Capital Velocity:</strong> {capitalVelocityLabel}
+        </p>
+      </div>
+      {categoryGroup === "vehicle" ? (
+        <VehicleMarketPanel
+          intel={normalizedIntel}
+          marketLinks={marketLinks}
+          onIntelChange={(next) => onMarketIntelChange(deal.deal.id, next)}
+        />
+      ) : null}
       {unitBreakdown ? (
         <div className="unit-breakdown">
           <div>
