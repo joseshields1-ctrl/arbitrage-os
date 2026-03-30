@@ -39,6 +39,17 @@ export type ConditionGrade =
 export type IntakeCategory = "vehicle" | "electronics" | "other";
 export type CompSourceType = "facebook" | "craigslist" | "dealer" | "auction" | "other";
 export type CompConfidence = "HIGH" | "MEDIUM" | "LOW" | "MANUAL_REVIEW_REQUIRED";
+export type ReconStatus = "not_started" | "in_progress" | "completed";
+export type ReconCategory =
+  | "Paint & Body"
+  | "Tires"
+  | "Rims"
+  | "Mechanical Repair"
+  | "Mechanical Maintenance"
+  | "Soft Detail"
+  | "Deep Detail"
+  | "Other";
+export type ReconPaidBy = "buyer" | "seller" | "split";
 
 export interface ManualCompEntry {
   id: string;
@@ -53,6 +64,22 @@ export interface VehicleMarketIntel {
   nada_value: number | null;
   carfax_status: string | null;
   manual_comps: ManualCompEntry[];
+}
+
+export interface ReconditioningEntry {
+  id: string;
+  category: ReconCategory;
+  description: string;
+  cost: number;
+  date: string;
+  paid_by: ReconPaidBy;
+}
+
+export interface ReconditioningRecord {
+  arrival_date: string | null;
+  extension_days: 0 | 14;
+  status: ReconStatus;
+  entries: ReconditioningEntry[];
 }
 
 export interface DealRecord {

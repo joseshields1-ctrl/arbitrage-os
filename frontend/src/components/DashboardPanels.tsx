@@ -1,4 +1,4 @@
-import type { DealView } from "../types";
+import type { DealView, ReconditioningRecord } from "../types";
 import {
   buildMarketLinks,
   calculateRoiPct,
@@ -8,6 +8,11 @@ import {
   computeRiskFlags,
   inferVehicleMarketIntel,
 } from "../utils/marketIntel";
+import {
+  computeReconditioningSummary,
+  computeTimeDiscipline,
+  inferReconditioningForDeal,
+} from "../utils/reconditioning";
 
 interface CapitalPanelData {
   liquid_cash: number;
@@ -49,6 +54,7 @@ interface MonthlyVelocityPoint {
 
 interface DashboardPanelsProps {
   deals: DealView[];
+  reconditioningMap: Record<string, ReconditioningRecord>;
 }
 
 const formatCurrency = (value: number): string => `$${value.toFixed(2)}`;
@@ -248,7 +254,7 @@ const priorityClass = (priority: DecisionQueueItem["priority"]): string => {
   return "queue-item low";
 };
 
-export default function DashboardPanels({ deals }: DashboardPanelsProps) {
+export default function DashboardPanels({ deals, reconditioningMap }: DashboardPanelsProps) {
   const capital = computeCapitalPanel(deals);
   const queue = computeDecisionQueue(deals);
   const burnEnhancements = computeBurnEnhancements(deals);
@@ -276,6 +282,49 @@ export default function DashboardPanels({ deals }: DashboardPanelsProps) {
       computeCompConfidence(intel.manual_comps) === "MANUAL_REVIEW_REQUIRED"
     );
   });
+  const reconDelayDeals = deals.filter((deal) => {
+    if (!deal.deal.category.startsWith("vehicle")) {
+      return false;
+    }
+    const discipline = computeTimeDiscipline(deal, inferReconditioningForDeal(deal, reconditioningMap));
+    return discipline.state === "recon_delay";
+  });
+  const salesDelayDeals = deals.filter((deal) => {
+    if (!deal.deal.category.startsWith("vehicle")) {
+      return false;
+    }
+    const discipline = computeTimeDiscipline(deal, inferReconditioningForDeal(deal, reconditioningMap));
+    return discipline.state === "sales_delay";
+  });
+  const urgentVehicleDeals = deals.filter((deal) => {
+    if (!deal.deal.category.startsWith("vehicle")) {
+      return false;
+    }
+    const discipline = computeTimeDiscipline(deal, inferReconditioningForDeal(deal, reconditioningMap));
+    return discipline.state === "urgent_attention";
+  });
+  const reconNotStartedDeals = deals.filter((deal) => {
+    if (!deal.deal.category.startsWith("vehicle")) {
+      return false;
+    }
+    const record = inferReconditioningForDeal(deal, reconditioningMap);
+    return record.status === "not_started";
+  });
+  const highestReconCostDeals = deals
+    .filter((deal) => deal.deal.category.startsWith("vehicle"))
+    .map((deal) => {
+      const summary = computeReconditioningSummary(
+        deal,
+        inferReconditioningForDeal(deal, reconditioningMap)
+      );
+      return {
+        id: deal.deal.id,
+        label: deal.deal.label,
+        total_recon_cost: summary.total_recon_cost,
+      };
+    })
+    .sort((a, b) => b.total_recon_cost - a.total_recon_cost)
+    .slice(0, 5);
 
   return (
     <>
@@ -462,6 +511,29 @@ export default function DashboardPanels({ deals }: DashboardPanelsProps) {
             <ul>
               {incompleteBlockingDeals.map((deal) => (
                 <li key={`${deal.deal.id}-incomplete`}>{deal.deal.label}</li>
+              ))}
+            </ul>
+          )}
+        </article>
+        <article className="time-discipline-alerts">
+          <h4>Time discipline alerts</h4>
+          <ul>
+            <li>Recon delay: {reconDelayDeals.length}</li>
+            <li>Sales delay: {salesDelayDeals.length}</li>
+            <li>Urgent (&gt;14d / extension): {urgentVehicleDeals.length}</li>
+            <li>Recon not started: {reconNotStartedDeals.length}</li>
+          </ul>
+        </article>
+        <article>
+          <h4>Highest recon cost units</h4>
+          {highestReconCostDeals.length === 0 ? (
+            <p>None.</p>
+          ) : (
+            <ul>
+              {highestReconCostDeals.map((item) => (
+                <li key={`${item.id}-recon-cost`}>
+                  {item.label}: {formatCurrency(item.total_recon_cost)}
+                </li>
               ))}
             </ul>
           )}

@@ -16,6 +16,13 @@ const ensurePipelineSelection = async (page) => {
   }
 };
 
+const ensureAnyDecisionReason = async (page) => {
+  const reasonBox = page.locator("textarea").filter({ hasText: "" }).nth(0);
+  if (await reasonBox.count()) {
+    await reasonBox.fill("Screenshot approval check.");
+  }
+};
+
 const run = async () => {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1680, height: 1080 } });
@@ -60,6 +67,28 @@ const run = async () => {
   await page.waitForSelector("text=Vehicle Market Intelligence", { timeout: 4000 }).catch(() => {});
   await page.screenshot({
     path: `${outDir}/vehicle-market-panel.png`,
+    fullPage: true,
+  });
+
+  await ensureAnyDecisionReason(page);
+  const approveButton = page.locator("button", { hasText: "Approve" }).first();
+  if (await approveButton.count()) {
+    await approveButton.click();
+    await page.waitForTimeout(500);
+    await page.screenshot({
+      path: `${outDir}/prebid-sanity-modal.png`,
+      fullPage: true,
+    });
+    const closeModalButton = page.locator(".prebid-modal .ghost-button", { hasText: "Cancel" }).first();
+    if (await closeModalButton.count()) {
+      await closeModalButton.click();
+      await page.waitForTimeout(300);
+    }
+  }
+
+  await clickNav(page, "Dashboard");
+  await page.screenshot({
+    path: `${outDir}/time-discipline-alerts.png`,
     fullPage: true,
   });
 

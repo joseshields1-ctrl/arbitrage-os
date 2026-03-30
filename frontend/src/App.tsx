@@ -5,11 +5,13 @@ import {
   fetchDeals,
   previewDeal,
   queryAssistant,
+  submitDealDecision,
   updateDealStage,
 } from "./api";
 import DashboardPanels from "./components/DashboardPanels";
 import DealCard from "./components/DealCard";
 import DetailPanel from "./components/DetailPanel";
+import PreBidSanityModal from "./components/PreBidSanityModal";
 import {
   CONDITION_GRADE_OPTIONS,
   DEAL_STAGES,
@@ -24,6 +26,7 @@ import type {
   DealStage,
   DealView,
   IntakeCategory,
+  ReconditioningRecord,
   TitleStatus,
   VehicleMarketIntel,
 } from "./types";
@@ -34,6 +37,12 @@ import {
   loadMarketIntelMap,
   saveMarketIntelMap,
 } from "./utils/marketIntel";
+import {
+  createEmptyReconditioningRecord,
+  inferReconditioningForDeal,
+  loadReconditioningMap,
+  saveReconditioningMap,
+} from "./utils/reconditioning";
 import "./App.css";
 
 const INTAKE_QUEUE_STORAGE_KEY = "arbitrage_os_intake_queue_v1";
@@ -247,6 +256,8 @@ function App() {
   const [savedForLaterIntake, setSavedForLaterIntake] = useState<IntakeQueueEntry[]>([]);
   const [intakeForm, setIntakeForm] = useState<IntakeFormState>(DEFAULT_INTAKE_FORM);
   const [marketIntelMap, setMarketIntelMap] = useState<Record<string, VehicleMarketIntel>>({});
+  const [reconditioningMap, setReconditioningMap] = useState<Record<string, ReconditioningRecord>>({});
+  const [pendingApprovalDealId, setPendingApprovalDealId] = useState<string | null>(null);
 
   const isElectronicsCategory = intakeCategory === "electronics";
   const isVehicleCategory = intakeCategory === "vehicle";
@@ -278,11 +289,16 @@ function App() {
 
   useEffect(() => {
     setMarketIntelMap(loadMarketIntelMap());
+    setReconditioningMap(loadReconditioningMap());
   }, []);
 
   useEffect(() => {
     saveMarketIntelMap(marketIntelMap);
   }, [marketIntelMap]);
+
+  useEffect(() => {
+    saveReconditioningMap(reconditioningMap);
+  }, [reconditioningMap]);
 
   useEffect(() => {
     try {
@@ -324,6 +340,15 @@ function App() {
   const selectedDealMarketIntel = selectedDeal
     ? inferVehicleMarketIntel(selectedDeal, marketIntelMap)
     : createEmptyVehicleIntel();
+
+  const selectedDealReconditioning = selectedDeal
+    ? inferReconditioningForDeal(selectedDeal, reconditioningMap)
+    : createEmptyReconditioningRecord();
+
+  const pendingApprovalDeal = deals.find((item) => item.deal.id === pendingApprovalDealId) ?? null;
+  const pendingApprovalReconditioning = pendingApprovalDeal
+    ? inferReconditioningForDeal(pendingApprovalDeal, reconditioningMap)
+    : createEmptyReconditioningRecord();
 
   const activeDealsCount =
     dashboard?.active_deals ?? deals.filter((item) => item.deal.status !== "completed").length;
@@ -732,6 +757,37 @@ function App() {
     setSavedForLaterIntake((prev) => prev.filter((entry) => entry.id !== id));
   };
 
+  const handleRequestApproveDecision = (dealId: string): void => {
+    setPendingApprovalDealId(dealId);
+  };
+
+  const handleApproveWithSanityCheck = async (dealId: string): Promise<void> => {
+    const targetDeal = deals.find((item) => item.deal.id === dealId);
+    if (!targetDeal) {
+      setError("Deal not found for approval.");
+      return;
+    }
+    try {
+      await submitDealDecision(dealId, {
+        decision: "approved",
+        reason: "Approved after pre-bid sanity check acknowledgement.",
+      });
+      await loadData();
+      setPendingApprovalDealId(null);
+    } catch (approvalError) {
+      const message =
+        approvalError instanceof Error ? approvalError.message : "Failed to approve after sanity check";
+      setError(message);
+    }
+  };
+
+  const handleReconditioningChange = (dealId: string, record: ReconditioningRecord): void => {
+    setReconditioningMap((prev) => ({
+      ...prev,
+      [dealId]: record,
+    }));
+  };
+
   const handleStageAdvance = async (deal: DealView) => {
     const stage = nextStage(deal.deal.status);
     if (!stage) {
@@ -900,7 +956,7 @@ function App() {
                 </article>
               </div>
 
-              <DashboardPanels deals={deals} />
+              <DashboardPanels deals={deals} reconditioningMap={reconditioningMap} />
 
               <div className="dashboard-chart-card">
                 <h3>Monthly Revenue + Net + EHR</h3>
@@ -1719,15 +1775,10 @@ function App() {
                 <DetailPanel
                   deal={selectedDeal}
                   marketIntel={selectedDealMarketIntel}
+                  reconditioning={selectedDealReconditioning}
                   onMarketIntelChange={handleMarketIntelChange}
-                  onDecisionRecorded={(updatedDeal) => {
-                    setDeals((prev) =>
-                      prev.map((current) => (current.deal.id === updatedDeal.deal.id ? updatedDeal : current))
-                    );
-                    if (intakePreviewDeal && intakePreviewDeal.deal.id === updatedDeal.deal.id) {
-                      setIntakePreviewDeal(updatedDeal);
-                    }
-                  }}
+                  onReconditioningChange={handleReconditioningChange}
+                  onRequestApproveDecision={handleRequestApproveDecision}
                 />
               </>
             ) : (
@@ -1798,6 +1849,15 @@ function App() {
           )}
         </aside>
       </div>
+      <PreBidSanityModal
+        deal={pendingApprovalDeal}
+        reconditioning={pendingApprovalReconditioning}
+        isOpen={Boolean(pendingApprovalDeal)}
+        onClose={() => setPendingApprovalDealId(null)}
+        onAcknowledgeAndApprove={() =>
+          pendingApprovalDeal ? void handleApproveWithSanityCheck(pendingApprovalDeal.deal.id) : undefined
+        }
+      />
     </main>
   );
 }

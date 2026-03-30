@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { submitDealDecision } from "../api";
-import type { DealView, VehicleMarketIntel } from "../types";
+import type { DealView, ReconditioningRecord, VehicleMarketIntel } from "../types";
 import {
   buildMarketLinks,
   calculateRoiPct,
@@ -10,18 +10,28 @@ import {
   normalizeVehicleIntel,
 } from "../utils/marketIntel";
 import VehicleMarketPanel from "./VehicleMarketPanel";
+import ReconditioningPanel from "./ReconditioningPanel";
 
 interface DetailPanelProps {
   deal: DealView;
   marketIntel: VehicleMarketIntel;
+  reconditioning: ReconditioningRecord;
   onMarketIntelChange: (dealId: string, intel: VehicleMarketIntel) => void;
-  onDecisionRecorded: (updatedDeal: DealView) => void;
+  onReconditioningChange: (dealId: string, next: ReconditioningRecord) => void;
+  onRequestApproveDecision: (dealId: string) => void;
 }
 
 const formatCurrency = (value: number | null): string =>
   value === null ? "N/A" : `$${value.toFixed(2)}`;
 
-const DetailPanel = ({ deal, marketIntel, onMarketIntelChange, onDecisionRecorded }: DetailPanelProps) => {
+const DetailPanel = ({
+  deal,
+  marketIntel,
+  reconditioning,
+  onMarketIntelChange,
+  onReconditioningChange,
+  onRequestApproveDecision,
+}: DetailPanelProps) => {
   const unitBreakdown = deal.deal.unit_breakdown;
   const prepMetrics = deal.deal.prep_metrics;
   const mismatch = (deal.warnings ?? []).some((warning) =>
@@ -30,7 +40,6 @@ const DetailPanel = ({ deal, marketIntel, onMarketIntelChange, onDecisionRecorde
   const [decisionReason, setDecisionReason] = useState("");
   const [decisionSubmitting, setDecisionSubmitting] = useState(false);
   const [decisionError, setDecisionError] = useState<string | null>(null);
-  const [decisionConfirmation, setDecisionConfirmation] = useState<string | null>(null);
   const [showPreviousDecisions, setShowPreviousDecisions] = useState(false);
   const normalizedIntel = useMemo(() => normalizeVehicleIntel(marketIntel), [marketIntel]);
   const qualityFlag = deal.calculations.source_quality_flag;
@@ -71,6 +80,8 @@ const DetailPanel = ({ deal, marketIntel, onMarketIntelChange, onDecisionRecorde
   const projectedResale = blendedMarketValue ?? deal.financials.estimated_market_value;
   const projectedNet = projectedResale - totalInvestment;
   const projectedRoiPct = calculateRoiPct(projectedNet, totalInvestment);
+  const reconTotal = reconditioning.entries.reduce((sum, entry) => sum + entry.cost, 0);
+  const projectedAfterRecon = projectedNet - reconTotal;
   const cycleStart = deal.deal.discovered_date ?? deal.deal.purchase_date ?? deal.deal.stage_updated_at;
   const cycleEnd = deal.deal.completion_date ?? deal.deal.sale_date ?? deal.deal.stage_updated_at;
   const daysToSell =
@@ -91,28 +102,20 @@ const DetailPanel = ({ deal, marketIntel, onMarketIntelChange, onDecisionRecorde
   const capitalVelocityLabel = getCapitalVelocityLabel(daysToCashBack);
   const realizedRoiPct = calculateRoiPct(deal.calculations.realized_profit, deal.calculations.total_cost_basis);
 
-  const handleDecision = async (decision: "approved" | "rejected") => {
+  const handleRejectDecision = async () => {
     const trimmedReason = decisionReason.trim();
     if (!trimmedReason) {
       setDecisionError("Reason is required.");
-      setDecisionConfirmation(null);
       return;
     }
     setDecisionSubmitting(true);
     setDecisionError(null);
-    setDecisionConfirmation(null);
     try {
-      const response = await submitDealDecision(deal.deal.id, {
-        decision,
+      await submitDealDecision(deal.deal.id, {
+        decision: "rejected",
         reason: trimmedReason,
       });
-      onDecisionRecorded(response.deal);
       setDecisionReason("");
-      setDecisionConfirmation(
-        `Saved decision: ${response.stored_decision.decision} at ${new Date(
-          response.stored_decision.decided_at
-        ).toLocaleString()}`
-      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to save decision";
       setDecisionError(message);
@@ -194,6 +197,24 @@ const DetailPanel = ({ deal, marketIntel, onMarketIntelChange, onDecisionRecorde
           onIntelChange={(next) => onMarketIntelChange(deal.deal.id, next)}
         />
       ) : null}
+      {categoryGroup === "vehicle" ? (
+        <ReconditioningPanel
+          deal={deal}
+          value={reconditioning}
+          onChange={onReconditioningChange}
+        />
+      ) : null}
+      {categoryGroup === "vehicle" ? (
+        <div className="decision-section">
+          <h4>Recon Impact</h4>
+          <p>
+            <strong>Total Recon Cost:</strong> {formatCurrency(reconTotal)}
+          </p>
+          <p>
+            <strong>Profit After Recon:</strong> {formatCurrency(projectedAfterRecon)}
+          </p>
+        </div>
+      ) : null}
       {unitBreakdown ? (
         <div className="unit-breakdown">
           <div>
@@ -258,6 +279,30 @@ const DetailPanel = ({ deal, marketIntel, onMarketIntelChange, onDecisionRecorde
       ) : null}
       {deal.warnings?.includes("TRANSPORT_ESTIMATED") ? (
         <p className="warning-text">Estimated Transport (Estimated) — transport value is not actual.</p>
+      ) : null}
+      {categoryGroup === "vehicle" ? (
+        <div className="decision-section">
+          <h4>Transport Cost Realism</h4>
+          <p>
+            Standard transport usually ranges from <strong>$0.60-$0.80/mile</strong>.
+            Urgent moves can run up to <strong>$1.00/mile</strong>.
+          </p>
+          <p>
+            <strong>Actual Transport:</strong>{" "}
+            {deal.financials.transport_cost_actual === null
+              ? "Not entered"
+              : formatCurrency(deal.financials.transport_cost_actual)}
+          </p>
+          <p>
+            <strong>Estimated Transport:</strong>{" "}
+            {deal.financials.transport_cost_estimated === null
+              ? "Not entered"
+              : `${formatCurrency(deal.financials.transport_cost_estimated)} (Estimated Transport)`}
+          </p>
+          {deal.warnings?.includes("TRANSPORT_ESTIMATED") ? (
+            <p className="warning-text">TRANSPORT_ESTIMATED</p>
+          ) : null}
+        </div>
       ) : null}
       <div className="decision-section">
         <h4>Intake / Ops Fields</h4>
@@ -371,22 +416,19 @@ const DetailPanel = ({ deal, marketIntel, onMarketIntelChange, onDecisionRecorde
           <button
             type="button"
             disabled={decisionSubmitting}
-            onClick={() => void handleDecision("approved")}
+            onClick={() => onRequestApproveDecision(deal.deal.id)}
           >
             Approve
           </button>
           <button
             type="button"
             disabled={decisionSubmitting}
-            onClick={() => void handleDecision("rejected")}
+            onClick={() => void handleRejectDecision()}
           >
             Reject
           </button>
         </div>
         {decisionError ? <p className="warning-text">{decisionError}</p> : null}
-        {decisionConfirmation ? (
-          <p className="decision-confirmation">{decisionConfirmation}</p>
-        ) : null}
       </div>
     </div>
   );
