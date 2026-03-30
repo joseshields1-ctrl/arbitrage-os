@@ -32,6 +32,8 @@ export interface CreateDealInput {
   listing_date?: string | null;
   sale_date?: string | null;
   completion_date?: string | null;
+  quantity_purchased?: number | null;
+  quantity_broken?: number | null;
   unit_count?: number | null;
   unit_breakdown?: UnitBreakdown | null;
   prep_metrics?: PrepMetrics | null;
@@ -239,6 +241,8 @@ const validateCreateOrPreviewInput = (input: CreateDealInput): void => {
   parseNumericInput(input.financials.prep_cost, "financials.prep_cost", { min: 0 });
   parseNumericInput(input.financials.tax_rate, "financials.tax_rate", { min: 0 });
   parseNumericInput(input.financials.sale_price_actual, "financials.sale_price_actual", { min: 0 });
+  parseNumericInput(input.quantity_purchased, "quantity_purchased", { min: 0 });
+  parseNumericInput(input.quantity_broken, "quantity_broken", { min: 0 });
 
   validateOptionalIsoDate(input.stage_updated_at, "stage_updated_at");
   validateOptionalIsoDate(input.discovered_date, "discovered_date");
@@ -291,6 +295,12 @@ const normalizeOptionalCount = (value?: number | null): number | null => {
   }
   const normalized = Math.max(0, Math.floor(Number(value)));
   return normalized > 0 ? normalized : null;
+};
+const normalizeOptionalQuantity = (value?: number | null): number | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  return Math.max(0, Math.floor(Number(value)));
 };
 const normalizePrepMetricsInput = (value?: PrepMetrics | null): PrepMetrics | null => {
   if (!value) {
@@ -385,6 +395,8 @@ const mapDealRow = (row: Record<string, unknown>): DealRow => ({
   sale_date: (row.sale_date as string | null) ?? null,
   completion_date: (row.completion_date as string | null) ?? null,
   seller_type: (row.seller_type as DealRow["seller_type"]) ?? "unknown",
+  quantity_purchased: normalizeOptionalQuantity(row.quantity_purchased as number | null | undefined),
+  quantity_broken: normalizeOptionalQuantity(row.quantity_broken as number | null | undefined),
   unit_count: normalizeOptionalCount(row.unit_count as number | null | undefined),
   unit_breakdown: parseUnitBreakdown(row.unit_breakdown),
   prep_metrics: parsePrepMetrics(row.prep_metrics),
@@ -497,6 +509,8 @@ const computeAndPersistFinancials = (dealId: string): void => {
         d.sale_date,
         d.completion_date,
         d.seller_type,
+        d.quantity_purchased,
+        d.quantity_broken,
         d.unit_count,
         d.unit_breakdown,
         d.prep_metrics,
@@ -543,6 +557,10 @@ const computeAndPersistFinancials = (dealId: string): void => {
       sale_date: (joined.sale_date as string | null) ?? null,
       completion_date: (joined.completion_date as string | null) ?? null,
       seller_type: (joined.seller_type as DealRow["seller_type"]) ?? "unknown",
+      quantity_purchased: normalizeOptionalQuantity(
+        joined.quantity_purchased as number | null | undefined
+      ),
+      quantity_broken: normalizeOptionalQuantity(joined.quantity_broken as number | null | undefined),
       unit_count: normalizeOptionalCount(joined.unit_count as number | null | undefined),
       unit_breakdown: parseUnitBreakdown(joined.unit_breakdown),
       prep_metrics: parsePrepMetrics(joined.prep_metrics),
@@ -621,6 +639,8 @@ const buildPreparedDealRows = (input: CreateDealInput, id: string): PreparedDeal
   const listingDate = normalizeNullableDate(input.listing_date);
   const saleDate = normalizeNullableDate(input.sale_date);
   const completionDate = normalizeNullableDate(input.completion_date);
+  const quantityPurchased = normalizeOptionalQuantity(input.quantity_purchased);
+  const quantityBroken = normalizeOptionalQuantity(input.quantity_broken);
   const normalizedUnitCount = normalizeOptionalCount(input.unit_count);
   const prepMetrics = normalizePrepMetricsInput(input.prep_metrics);
   // V3.3 unit rule: prep_metrics presence takes priority and unit_count is ignored.
@@ -650,6 +670,8 @@ const buildPreparedDealRows = (input: CreateDealInput, id: string): PreparedDeal
       sale_date: saleDate,
       completion_date: completionDate,
       seller_type: sellerType,
+      quantity_purchased: quantityPurchased,
+      quantity_broken: quantityBroken,
       unit_count: resolvedUnitCount,
       unit_breakdown: input.unit_breakdown ?? null,
       prep_metrics: prepMetrics,
@@ -702,6 +724,8 @@ const getDealViewById = (dealId: string): DealView | null => {
         d.sale_date,
         d.completion_date,
         d.seller_type,
+        d.quantity_purchased,
+        d.quantity_broken,
         d.unit_count,
         d.unit_breakdown,
         d.prep_metrics,
@@ -775,9 +799,9 @@ export const createDeal = (input: CreateDealInput): DealView => {
     db.prepare(
       `INSERT INTO deals (
         id, label, category, source_platform, acquisition_state, status, stage_updated_at,
-        discovered_date, purchase_date, listing_date, sale_date, completion_date, seller_type, unit_count,
-        unit_breakdown, prep_metrics
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        discovered_date, purchase_date, listing_date, sale_date, completion_date, seller_type,
+        quantity_purchased, quantity_broken, unit_count, unit_breakdown, prep_metrics
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       prepared.deal.id,
       prepared.deal.label,
@@ -792,6 +816,8 @@ export const createDeal = (input: CreateDealInput): DealView => {
       prepared.deal.sale_date,
       prepared.deal.completion_date,
       prepared.deal.seller_type,
+      prepared.deal.quantity_purchased,
+      prepared.deal.quantity_broken,
       prepared.deal.unit_count,
       prepared.deal.unit_breakdown ? JSON.stringify(prepared.deal.unit_breakdown) : null,
       prepared.deal.prep_metrics ? JSON.stringify(prepared.deal.prep_metrics) : null

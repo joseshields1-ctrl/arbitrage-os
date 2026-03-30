@@ -226,6 +226,15 @@
   color: #111827;
 }
 
+.prioritized-electronics-section {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.prioritized-electronics-section h3 {
+  color: #92400e;
+}
+
 .form-grid-two {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -346,6 +355,136 @@
   font-weight: 700;
 }
 
+.dashboard-chart-card {
+  margin-top: 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.05);
+  padding: 12px;
+}
+
+.dashboard-chart-card h3 {
+  margin: 0 0 6px;
+}
+
+.chart-subtitle {
+  margin: 0 0 10px;
+  font-size: 0.86rem;
+  color: #64748b;
+}
+
+.chart-legend {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.legend-chip {
+  display: inline-block;
+  border-radius: 999px;
+  border: 1px solid #d1d5db;
+  padding: 2px 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.legend-chip.revenue {
+  border-color: #2563eb;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.legend-chip.realized {
+  border-color: #16a34a;
+  color: #166534;
+  background: #f0fdf4;
+}
+
+.legend-chip.projected {
+  border-color: #d97706;
+  color: #92400e;
+  background: #fffbeb;
+}
+
+.legend-chip.negative {
+  border-color: #64748b;
+  color: #334155;
+  background: #f8fafc;
+}
+
+.monthly-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 8px;
+}
+
+.month-column {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+}
+
+.month-column .bars {
+  min-height: 160px;
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+  position: relative;
+}
+
+.month-column .bars::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  top: 50%;
+  border-top: 1px dashed #cbd5e1;
+}
+
+.bar-slot {
+  position: relative;
+}
+
+.month-column .bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  width: 100%;
+  border-radius: 4px 4px 0 0;
+  min-height: 4px;
+}
+
+.month-column .bar.negative {
+  opacity: 0.65;
+  border: 1px dashed rgba(51, 65, 85, 0.6);
+}
+
+.month-column .bar.revenue {
+  background: #2563eb;
+}
+
+.month-column .bar.realized {
+  background: #16a34a;
+}
+
+.month-column .bar.projected {
+  background: #d97706;
+}
+
+.month-label {
+  font-size: 0.78rem;
+  color: #475569;
+  text-align: center;
+}
+
 .dashboard-stat-card:first-child p {
   font-size: 1.5rem;
   color: #166534;
@@ -365,7 +504,8 @@
   color: #991b1b;
 }
 
-.burn-list .action-required-label {
+.burn-list .action-required-label,
+.burn-list .action-required {
   display: inline-block;
   margin: 0 0 8px;
   border: 1px solid #dc2626;
@@ -755,6 +895,10 @@
 
   .dashboard-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .monthly-chart-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .deal-form {

@@ -167,6 +167,13 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
         <p>
           <strong>Title Status:</strong> {deal.metadata.title_status}
         </p>
+        {(deal.deal.quantity_purchased !== null && deal.deal.quantity_purchased !== undefined) ||
+        (deal.deal.quantity_broken !== null && deal.deal.quantity_broken !== undefined) ? (
+          <p>
+            <strong>Quantity Purchased:</strong> {deal.deal.quantity_purchased ?? "N/A"} ·{" "}
+            <strong>Quantity Broken:</strong> {deal.deal.quantity_broken ?? "N/A"}
+          </p>
+        ) : null}
         <p className={deal.warnings?.includes("REMOVAL_URGENT") ? "warning-text" : undefined}>
           <strong>Removal Deadline:</strong>{" "}
           {deal.metadata.removal_deadline

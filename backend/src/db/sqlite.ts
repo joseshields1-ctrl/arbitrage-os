@@ -2,7 +2,10 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 
-const dbPath = path.resolve(process.cwd(), "data", "arbitrage-os.db");
+const configuredDbPath = process.env.SQLITE_DB_PATH?.trim();
+const dbPath = configuredDbPath
+  ? path.resolve(configuredDbPath)
+  : path.resolve(process.cwd(), "data", "arbitrage-os.db");
 const dbDir = path.dirname(dbPath);
 if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
@@ -26,6 +29,8 @@ export const initializeDatabase = (): void => {
       listing_date TEXT,
       sale_date TEXT,
       completion_date TEXT,
+      quantity_purchased INTEGER,
+      quantity_broken INTEGER,
       unit_count INTEGER
     );
   `);
@@ -92,6 +97,14 @@ export const initializeDatabase = (): void => {
   const hasUnitCount = dealColumns.some((column) => column.name === "unit_count");
   if (!hasUnitCount) {
     db.exec(`ALTER TABLE deals ADD COLUMN unit_count INTEGER;`);
+  }
+  const hasQuantityPurchased = dealColumns.some((column) => column.name === "quantity_purchased");
+  if (!hasQuantityPurchased) {
+    db.exec(`ALTER TABLE deals ADD COLUMN quantity_purchased INTEGER;`);
+  }
+  const hasQuantityBroken = dealColumns.some((column) => column.name === "quantity_broken");
+  if (!hasQuantityBroken) {
+    db.exec(`ALTER TABLE deals ADD COLUMN quantity_broken INTEGER;`);
   }
   const hasSellerType = dealColumns.some((column) => column.name === "seller_type");
   if (!hasSellerType) {

@@ -50,6 +50,8 @@ export interface DealRecord {
   listing_date: string | null;
   sale_date: string | null;
   completion_date: string | null;
+  quantity_purchased?: number | null;
+  quantity_broken?: number | null;
   unit_count?: number | null;
   unit_breakdown?: {
     units_total: number;
@@ -255,6 +257,8 @@ export interface CreateDealRequest {
   listing_date?: string | null;
   sale_date?: string | null;
   completion_date?: string | null;
+  quantity_purchased?: number | null;
+  quantity_broken?: number | null;
   financials: {
     acquisition_cost: number;
     buyer_premium_pct?: number;

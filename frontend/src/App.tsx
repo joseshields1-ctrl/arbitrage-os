@@ -32,6 +32,14 @@ const INTAKE_QUEUE_STORAGE_KEY = "arbitrage_os_intake_queue_v1";
 type ActivePage = "dashboard" | "pipeline" | "intake" | "alerts" | "archive";
 type PipelineAlertFilter = "all" | "critical" | "warning" | "none";
 
+interface MonthlyPerformancePoint {
+  month_key: string;
+  month_label: string;
+  revenue_confirmed: number;
+  realized_net_confirmed: number;
+  projected_net_estimated: number;
+}
+
 interface IntakeFormState {
   listing_url: string;
   title: string;
@@ -53,6 +61,8 @@ interface IntakeFormState {
   condition_notes: string;
   title_status: TitleStatus;
   removal_deadline: string;
+  quantity_purchased: string;
+  quantity_broken: string;
   unit_count: string;
   units_total: string;
   units_working: string;
@@ -105,6 +115,8 @@ const DEFAULT_INTAKE_FORM: IntakeFormState = {
   condition_notes: "",
   title_status: "unknown",
   removal_deadline: "",
+  quantity_purchased: "",
+  quantity_broken: "",
   unit_count: "",
   units_total: "",
   units_working: "",
@@ -184,6 +196,8 @@ function App() {
   const [intakePreviewDeal, setIntakePreviewDeal] = useState<DealView | null>(null);
   const [savedForLaterIntake, setSavedForLaterIntake] = useState<IntakeQueueEntry[]>([]);
   const [intakeForm, setIntakeForm] = useState<IntakeFormState>(DEFAULT_INTAKE_FORM);
+
+  const isElectronicsBulk = intakeForm.category === "electronics_bulk";
 
   const loadData = async () => {
     setLoading(true);
@@ -278,6 +292,71 @@ function App() {
     return deals.filter((deal) => (deal.alerts?.length ?? 0) === 0);
   }, [deals, pipelineAlertFilter]);
 
+  const monthlyPerformance = useMemo<MonthlyPerformancePoint[]>(() => {
+    const monthFormatter = new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      year: "numeric",
+    });
+
+    const monthBuckets = new Map<string, MonthlyPerformancePoint>();
+    const upsertMonth = (iso: string): MonthlyPerformancePoint | null => {
+      const timestamp = Date.parse(iso);
+      if (!Number.isFinite(timestamp)) {
+        return null;
+      }
+      const date = new Date(timestamp);
+      const monthKey = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+      const monthStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+      if (!monthBuckets.has(monthKey)) {
+        monthBuckets.set(monthKey, {
+          month_key: monthKey,
+          month_label: monthFormatter.format(monthStart),
+          revenue_confirmed: 0,
+          realized_net_confirmed: 0,
+          projected_net_estimated: 0,
+        });
+      }
+      return monthBuckets.get(monthKey) ?? null;
+    };
+
+    deals.forEach((item) => {
+      if (item.deal.status === "completed") {
+        const completedAt =
+          item.deal.completion_date ?? item.deal.sale_date ?? item.deal.stage_updated_at;
+        const bucket = upsertMonth(completedAt);
+        if (!bucket) {
+          return;
+        }
+        bucket.revenue_confirmed += Math.max(0, item.financials.sale_price_actual ?? 0);
+        bucket.realized_net_confirmed += item.calculations.realized_profit ?? 0;
+        return;
+      }
+
+      const bucket = upsertMonth(item.deal.stage_updated_at);
+      if (!bucket) {
+        return;
+      }
+      bucket.projected_net_estimated += item.calculations.projected_profit;
+    });
+
+    const sorted = Array.from(monthBuckets.values()).sort((a, b) =>
+      a.month_key.localeCompare(b.month_key)
+    );
+    return sorted.slice(-8);
+  }, [deals]);
+
+  const monthlyChartScale = useMemo(() => {
+    const maxAbsValue = monthlyPerformance.reduce((max, item) => {
+      const localMaxAbs = Math.max(
+        Math.abs(item.revenue_confirmed),
+        Math.abs(item.realized_net_confirmed),
+        Math.abs(item.projected_net_estimated)
+      );
+      return Math.max(max, localMaxAbs);
+    }, 0);
+    return maxAbsValue > 0 ? maxAbsValue : 1;
+  }, [monthlyPerformance]);
+
   const buildIntakePayload = (): CreateDealRequest => {
     const currentBid = toOptionalNumber(intakeForm.current_bid) ?? 0;
     const acquisitionCost = toOptionalNumber(intakeForm.acquisition_cost) ?? currentBid;
@@ -317,6 +396,8 @@ function App() {
       seller_type: intakeForm.seller_type,
       acquisition_state: intakeForm.acquisition_state.trim().toUpperCase(),
       discovered_date: toIsoOrNull(intakeForm.auction_end),
+      quantity_purchased: toOptionalInteger(intakeForm.quantity_purchased),
+      quantity_broken: toOptionalInteger(intakeForm.quantity_broken),
       financials: {
         acquisition_cost: acquisitionCost,
         buyer_premium_pct: toOptionalNumber(intakeForm.buyer_premium_pct) ?? 0.1,
@@ -475,6 +556,14 @@ function App() {
         condition_notes: entry.payload.metadata.condition_notes,
         title_status: entry.payload.metadata.title_status ?? "unknown",
         removal_deadline: toDateTimeLocalInput(entry.payload.metadata.removal_deadline),
+        quantity_purchased:
+          entry.payload.quantity_purchased !== null && entry.payload.quantity_purchased !== undefined
+            ? String(entry.payload.quantity_purchased)
+            : "",
+        quantity_broken:
+          entry.payload.quantity_broken !== null && entry.payload.quantity_broken !== undefined
+            ? String(entry.payload.quantity_broken)
+            : "",
         unit_count:
           entry.payload.unit_count !== null && entry.payload.unit_count !== undefined
             ? String(entry.payload.unit_count)
@@ -498,7 +587,14 @@ function App() {
           ? String(entry.payload.prep_metrics.total_prep_time_minutes)
           : "",
       }));
-      setShowAdvancedFields(Boolean(entry.payload.prep_metrics || entry.payload.unit_breakdown || entry.payload.unit_count));
+      setShowAdvancedFields(
+        Boolean(
+          entry.payload.prep_metrics ||
+            entry.payload.unit_breakdown ||
+            entry.payload.unit_count ||
+            entry.payload.category === "electronics_bulk"
+        )
+      );
     } catch (queueError) {
       const message = queueError instanceof Error ? queueError.message : "Failed to load queue item";
       setError(message);
@@ -637,6 +733,85 @@ function App() {
                   </ul>
                 )}
               </div>
+              <div className="dashboard-chart-card">
+                <h3>Monthly Revenue + Net</h3>
+                <p className="chart-subtitle">
+                  Revenue and net are confirmed from completed deals. Projected net is estimated
+                  from active deals.
+                </p>
+                {monthlyPerformance.length === 0 ? (
+                  <p>No monthly data yet.</p>
+                ) : (
+                  <>
+                    <div className="chart-legend">
+                      <span className="legend-chip revenue">Revenue (confirmed)</span>
+                      <span className="legend-chip realized">Realized Net (confirmed)</span>
+                      <span className="legend-chip projected">Projected Net (estimated)</span>
+                      <span className="legend-chip negative">Negative month values</span>
+                    </div>
+                    <div className="monthly-chart-grid">
+                      {monthlyPerformance.map((point) => {
+                        const revenueHeight = Math.max(
+                          4,
+                          Math.round((Math.abs(point.revenue_confirmed) / monthlyChartScale) * 64)
+                        );
+                        const realizedHeight = Math.max(
+                          4,
+                          Math.round(
+                            (Math.abs(point.realized_net_confirmed) / monthlyChartScale) * 64
+                          )
+                        );
+                        const projectedHeight = Math.max(
+                          4,
+                          Math.round(
+                            (Math.abs(point.projected_net_estimated) / monthlyChartScale) * 64
+                          )
+                        );
+                        return (
+                          <div className="month-column" key={point.month_key}>
+                            <div className="bars">
+                              <div className="bar-slot">
+                                <div
+                                  className="bar revenue"
+                                  style={{ height: `${revenueHeight}px`, bottom: "50%" }}
+                                  title={`Revenue (confirmed): $${point.revenue_confirmed.toFixed(2)}`}
+                                />
+                              </div>
+                              <div className="bar-slot">
+                                <div
+                                  className={`bar realized ${
+                                    point.realized_net_confirmed < 0 ? "negative" : ""
+                                  }`}
+                                  style={
+                                    point.realized_net_confirmed >= 0
+                                      ? { height: `${realizedHeight}px`, bottom: "50%" }
+                                      : { height: `${realizedHeight}px`, top: "50%" }
+                                  }
+                                  title={`Realized Net (confirmed): $${point.realized_net_confirmed.toFixed(2)}`}
+                                />
+                              </div>
+                              <div className="bar-slot">
+                                <div
+                                  className={`bar projected ${
+                                    point.projected_net_estimated < 0 ? "negative" : ""
+                                  }`}
+                                  style={
+                                    point.projected_net_estimated >= 0
+                                      ? { height: `${projectedHeight}px`, bottom: "50%" }
+                                      : { height: `${projectedHeight}px`, top: "50%" }
+                                  }
+                                  title={`Projected Net (estimated): $${point.projected_net_estimated.toFixed(2)}`}
+                                />
+                              </div>
+                            </div>
+                            <span className="month-label">{point.month_label}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
             </section>
           ) : null}
 
@@ -687,6 +862,104 @@ function App() {
                   void handleIntakePreview();
                 }}
               >
+                {isElectronicsBulk ? (
+                  <section className="form-section-card prioritized-electronics-section">
+                    <h3>Electronics Quantity (Required for Bulk Ops)</h3>
+                    <div className="form-grid-two">
+                      <label>
+                        Quantity Purchased
+                        <input
+                          type="number"
+                          step="1"
+                          min="0"
+                          value={intakeForm.quantity_purchased}
+                          onChange={(event) =>
+                            setIntakeForm((prev) => ({
+                              ...prev,
+                              quantity_purchased: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        Quantity Broken
+                        <input
+                          type="number"
+                          step="1"
+                          min="0"
+                          value={intakeForm.quantity_broken}
+                          onChange={(event) =>
+                            setIntakeForm((prev) => ({
+                              ...prev,
+                              quantity_broken: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        Unit Count (Fallback)
+                        <input
+                          type="number"
+                          step="1"
+                          min="0"
+                          value={intakeForm.unit_count}
+                          onChange={(event) =>
+                            setIntakeForm((prev) => ({
+                              ...prev,
+                              unit_count: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        Units Total
+                        <input
+                          type="number"
+                          step="1"
+                          min="0"
+                          value={intakeForm.units_total}
+                          onChange={(event) =>
+                            setIntakeForm((prev) => ({
+                              ...prev,
+                              units_total: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        Units Defective
+                        <input
+                          type="number"
+                          step="1"
+                          min="0"
+                          value={intakeForm.units_defective}
+                          onChange={(event) =>
+                            setIntakeForm((prev) => ({
+                              ...prev,
+                              units_defective: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        Units Locked
+                        <input
+                          type="number"
+                          step="1"
+                          min="0"
+                          value={intakeForm.units_locked}
+                          onChange={(event) =>
+                            setIntakeForm((prev) => ({
+                              ...prev,
+                              units_locked: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                    </div>
+                  </section>
+                ) : null}
+
                 <section className="form-section-card">
                   <h3>Basic Info</h3>
                   <div className="form-grid-two">
@@ -733,6 +1006,40 @@ function App() {
                     <label>Condition Grade<select value={intakeForm.condition_grade} onChange={(event) => setIntakeForm((prev) => ({ ...prev, condition_grade: event.target.value as CreateDealRequest["metadata"]["condition_grade"] }))}>{CONDITION_GRADE_OPTIONS.map((grade) => <option key={grade} value={grade}>{grade}</option>)}</select></label>
                     <label>Title Status<select value={intakeForm.title_status} onChange={(event) => setIntakeForm((prev) => ({ ...prev, title_status: event.target.value as TitleStatus }))}><option value="on_site">on_site</option><option value="delayed">delayed</option><option value="unknown">unknown</option></select></label>
                     <label>Removal Deadline<input type="datetime-local" value={intakeForm.removal_deadline} onChange={(event) => setIntakeForm((prev) => ({ ...prev, removal_deadline: event.target.value }))} /></label>
+                    {!isElectronicsBulk ? (
+                      <>
+                        <label>
+                          Quantity Purchased
+                          <input
+                            type="number"
+                            step="1"
+                            min="0"
+                            value={intakeForm.quantity_purchased}
+                            onChange={(event) =>
+                              setIntakeForm((prev) => ({
+                                ...prev,
+                                quantity_purchased: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                        <label>
+                          Quantity Broken
+                          <input
+                            type="number"
+                            step="1"
+                            min="0"
+                            value={intakeForm.quantity_broken}
+                            onChange={(event) =>
+                              setIntakeForm((prev) => ({
+                                ...prev,
+                                quantity_broken: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                      </>
+                    ) : null}
                     <label className="span-two">Condition Notes<textarea rows={3} value={intakeForm.condition_notes} onChange={(event) => setIntakeForm((prev) => ({ ...prev, condition_notes: event.target.value }))} /></label>
                   </div>
                 </section>
@@ -747,12 +1054,16 @@ function App() {
                   <section className="form-section-card">
                     <h3>Advanced Fields</h3>
                     <div className="form-grid-two">
-                      <label>Unit Count<input type="number" step="1" value={intakeForm.unit_count} onChange={(event) => setIntakeForm((prev) => ({ ...prev, unit_count: event.target.value }))} /></label>
-                      <label>Units Total<input type="number" step="1" value={intakeForm.units_total} onChange={(event) => setIntakeForm((prev) => ({ ...prev, units_total: event.target.value }))} /></label>
-                      <label>Units Working<input type="number" step="1" value={intakeForm.units_working} onChange={(event) => setIntakeForm((prev) => ({ ...prev, units_working: event.target.value }))} /></label>
-                      <label>Units Minor Issue<input type="number" step="1" value={intakeForm.units_minor_issue} onChange={(event) => setIntakeForm((prev) => ({ ...prev, units_minor_issue: event.target.value }))} /></label>
-                      <label>Units Defective<input type="number" step="1" value={intakeForm.units_defective} onChange={(event) => setIntakeForm((prev) => ({ ...prev, units_defective: event.target.value }))} /></label>
-                      <label>Units Locked<input type="number" step="1" value={intakeForm.units_locked} onChange={(event) => setIntakeForm((prev) => ({ ...prev, units_locked: event.target.value }))} /></label>
+                      {!isElectronicsBulk ? (
+                        <>
+                          <label>Unit Count<input type="number" step="1" value={intakeForm.unit_count} onChange={(event) => setIntakeForm((prev) => ({ ...prev, unit_count: event.target.value }))} /></label>
+                          <label>Units Total<input type="number" step="1" value={intakeForm.units_total} onChange={(event) => setIntakeForm((prev) => ({ ...prev, units_total: event.target.value }))} /></label>
+                          <label>Units Working<input type="number" step="1" value={intakeForm.units_working} onChange={(event) => setIntakeForm((prev) => ({ ...prev, units_working: event.target.value }))} /></label>
+                          <label>Units Minor Issue<input type="number" step="1" value={intakeForm.units_minor_issue} onChange={(event) => setIntakeForm((prev) => ({ ...prev, units_minor_issue: event.target.value }))} /></label>
+                          <label>Units Defective<input type="number" step="1" value={intakeForm.units_defective} onChange={(event) => setIntakeForm((prev) => ({ ...prev, units_defective: event.target.value }))} /></label>
+                          <label>Units Locked<input type="number" step="1" value={intakeForm.units_locked} onChange={(event) => setIntakeForm((prev) => ({ ...prev, units_locked: event.target.value }))} /></label>
+                        </>
+                      ) : null}
                       <label>Prep Total Units<input type="number" step="1" value={intakeForm.prep_total_units} onChange={(event) => setIntakeForm((prev) => ({ ...prev, prep_total_units: event.target.value }))} /></label>
                       <label>Prep Working Units<input type="number" step="1" value={intakeForm.prep_working_units} onChange={(event) => setIntakeForm((prev) => ({ ...prev, prep_working_units: event.target.value }))} /></label>
                       <label>Prep Cosmetic Units<input type="number" step="1" value={intakeForm.prep_cosmetic_units} onChange={(event) => setIntakeForm((prev) => ({ ...prev, prep_cosmetic_units: event.target.value }))} /></label>
@@ -797,6 +1108,15 @@ function App() {
                       ? new Date(intakePreviewDeal.metadata.removal_deadline).toLocaleString()
                       : "not provided"}
                   </p>
+                  {(intakePreviewDeal.deal.quantity_purchased !== null &&
+                    intakePreviewDeal.deal.quantity_purchased !== undefined) ||
+                  (intakePreviewDeal.deal.quantity_broken !== null &&
+                    intakePreviewDeal.deal.quantity_broken !== undefined) ? (
+                    <p>
+                      Quantity Purchased: {intakePreviewDeal.deal.quantity_purchased ?? "N/A"} · Quantity Broken:{" "}
+                      {intakePreviewDeal.deal.quantity_broken ?? "N/A"}
+                    </p>
+                  ) : null}
                   {(intakePreviewDeal.warnings ?? []).includes("REMOVAL_URGENT") ? (
                     <p className="warning-text">REMOVAL_URGENT — deadline is near.</p>
                   ) : null}

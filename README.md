@@ -1,6 +1,67 @@
 # arbitrage-os
 cross-industry arbitrage engine for vehicles, electronics, and auction-based resale.
 
+## Production connectivity (backend + frontend)
+
+Production frontend and backend are deployed as separate services. Frontend must use an explicit backend base URL; do not rely on same-origin `/api` unless backend is hosted on the same origin.
+
+### Recommended backend host
+
+Use **Render Web Service** (Docker) with a **persistent disk** for SQLite.
+
+Why this path:
+
+- It runs the current Node + Express backend without code redesign.
+- It supports long-running web services and environment configuration cleanly.
+- It supports persisted storage for SQLite via disk mount.
+
+### SQLite deployment limitation and safe workaround
+
+Limitation:
+
+- SQLite is a local file database. On serverless/stateless platforms (or services without persisted writable volume), the DB file is ephemeral and can reset between deployments or restarts.
+
+Safe workaround now:
+
+- Use a persistent disk and set `SQLITE_DB_PATH` to a path on that disk (for example `/var/data/arbitrage-os.db`).
+
+### Files added for deployment
+
+- `backend/Dockerfile`
+- `backend/.dockerignore`
+- `render.yaml` (Render Blueprint)
+- `backend/.env.example`
+- `backend/README.md`
+- `frontend/.env.production.example`
+
+### Backend deployment steps (Render)
+
+1. Push this branch.
+2. In Render, create Blueprint from repo root (`render.yaml`) or create a Docker web service manually from `backend/`.
+3. Ensure env vars:
+   - `PORT=3000`
+   - `NODE_ENV=production`
+   - `SQLITE_DB_PATH=/var/data/arbitrage-os.db`
+   - `CORS_ALLOWED_ORIGINS=https://<your-frontend-domain>`
+   - `OPENAI_API_KEY=<optional>`
+4. Deploy and note backend URL (example: `https://<service>.onrender.com`).
+5. Verify backend:
+   - `GET <backend-url>/health`
+   - `GET <backend-url>/api/dashboard`
+   - `POST <backend-url>/api/deals/preview`
+   - `GET <backend-url>/api/dashboard/operator-summary`
+   - `POST <backend-url>/api/assistant/query`
+
+### Frontend production env
+
+Set:
+
+- `VITE_API_BASE_URL=https://<backend-url>`
+
+Important:
+
+- `frontend/src/api.ts` now throws an explicit runtime error in production if `VITE_API_BASE_URL` is missing to avoid silent same-origin `/api` 404 behavior.
+
 ## Backend deal validation and completion flow (Phase 1.2)
 
 ### Preview a raw deal payload (no persistence)
