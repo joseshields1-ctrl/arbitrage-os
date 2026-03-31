@@ -46,11 +46,13 @@ import {
 } from "./utils/reconditioning";
 import {
   buildCreateDealRequestFromOpportunity,
+  buildCreateDealRequestFromWonIntake,
   buildKeywordOpportunities,
   buildManualOpportunity,
   buildOpportunityFromUrl,
   DEFAULT_OPPORTUNITY_SORT_MODE,
   DEFAULT_SCANNER_FILTERS,
+  setOpportunityInterest,
   setOpportunityStatus,
   toPreviewSnapshot,
   upsertOpportunities,
@@ -61,6 +63,7 @@ import type {
   OpportunityFilters,
   OpportunityPreviewSnapshot,
   OpportunitySortMode,
+  WonDealIntakeInput,
 } from "./utils/govDealsScanner";
 import "./App.css";
 
@@ -1055,6 +1058,46 @@ function App() {
     }
   };
 
+  const handleScannerSetInterest = (
+    opportunityId: string,
+    interest: "interested" | "not_interested" | "undecided"
+  ): void => {
+    clearScannerMessages();
+    setGovDealsOpportunities((prev) => setOpportunityInterest(prev, opportunityId, interest));
+    setScannerStatusMessage(
+      interest === "interested"
+        ? "Marked as interested for pattern tracking."
+        : interest === "not_interested"
+          ? "Marked as not interested for pattern tracking."
+          : "Interest reset to undecided."
+    );
+  };
+
+  const handleScannerCreateFromWonDeal = async (
+    opportunity: GovDealsOpportunity,
+    intake: WonDealIntakeInput
+  ): Promise<void> => {
+    setScannerBusyOpportunityId(opportunity.id);
+    clearScannerMessages();
+    try {
+      const payload = buildCreateDealRequestFromWonIntake(opportunity, intake, operatorBaseState);
+      const created = await createDeal(payload);
+      setSelectedDealId(created.deal.id);
+      setIntakePreviewDeal(null);
+      setActivePage("pipeline");
+      setRightPanelMode("detail");
+      setGovDealsOpportunities((prev) => setOpportunityStatus(prev, opportunity.id, "watch"));
+      await loadData();
+      setScannerStatusMessage("Won deal imported and calculated using final numbers.");
+    } catch (createError) {
+      const message =
+        createError instanceof Error ? createError.message : "Failed to import won deal details";
+      setScannerErrorMessage(message);
+    } finally {
+      setScannerBusyOpportunityId(null);
+    }
+  };
+
   const step2Ready =
     intakeForm.title.trim().length > 0 &&
     intakeForm.acquisition_state.trim().length > 0 &&
@@ -1272,6 +1315,8 @@ function App() {
               onWatch={handleScannerWatch}
               onCreateDeal={handleScannerCreateDeal}
               onPass={handleScannerPass}
+              onSetInterest={handleScannerSetInterest}
+              onCreateFromWonDeal={handleScannerCreateFromWonDeal}
             />
           ) : null}
 

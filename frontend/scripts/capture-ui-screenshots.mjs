@@ -42,6 +42,16 @@ const run = async () => {
     .fill("tahoe");
   await page.locator("button", { hasText: "Search" }).first().click();
   await page.waitForTimeout(600);
+  const interestedButton = page.locator(".interest-controls button", { hasText: "Interested" }).first();
+  if (await interestedButton.count()) {
+    await interestedButton.click();
+    await page.waitForTimeout(200);
+  }
+  const wonToggle = page.locator("button", { hasText: "I Won This — Add Final Numbers" }).first();
+  if (await wonToggle.count()) {
+    await wonToggle.click();
+    await page.waitForTimeout(250);
+  }
   await page.screenshot({
     path: `${outDir}/govdeals-opportunity-scanner.png`,
     fullPage: true,

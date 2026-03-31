@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { TitleStatus } from "../types";
 import type {
   GovDealsOpportunity,
@@ -7,6 +7,7 @@ import type {
   OpportunityFilters,
   OpportunityPreviewSnapshot,
   OpportunitySortMode,
+  WonDealIntakeInput,
 } from "../utils/govDealsScanner";
 import {
   OPPORTUNITY_SORT_OPTIONS,
@@ -33,6 +34,14 @@ interface GovDealsScannerPanelProps {
   onWatch: (opportunityId: string) => void;
   onCreateDeal: (opportunity: GovDealsOpportunity) => Promise<void>;
   onPass: (opportunityId: string) => void;
+  onSetInterest: (
+    opportunityId: string,
+    interest: "interested" | "not_interested" | "undecided"
+  ) => void;
+  onCreateFromWonDeal: (
+    opportunity: GovDealsOpportunity,
+    intake: WonDealIntakeInput
+  ) => Promise<void>;
 }
 
 const formatCurrency = (value: number | null): string =>
@@ -48,6 +57,26 @@ const toNumberOrNull = (value: string): number | null => {
   }
   const parsed = Number(trimmed);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const toDateTimeLocalInput = (value: string | null | undefined): string => {
+  if (!value) {
+    return "";
+  }
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    return "";
+  }
+  return new Date(timestamp).toISOString().slice(0, 16);
+};
+
+const toIsoOrNull = (value: string): string | null => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const timestamp = Date.parse(trimmed);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
 };
 
 const createDefaultManualInput = (): ManualOpportunityInput => ({
@@ -70,6 +99,23 @@ const createDefaultManualInput = (): ManualOpportunityInput => ({
   quantity_broken: null,
 });
 
+const createWonIntakeFromOpportunity = (opportunity: GovDealsOpportunity): WonDealIntakeInput => ({
+  label: opportunity.title,
+  acquisition_state: "",
+  final_bid: opportunity.current_bid,
+  buyer_premium_pct: opportunity.buyer_premium_pct,
+  transport_cost_actual: null,
+  transport_cost_estimated: null,
+  repair_cost: opportunity.estimated_repair_cost,
+  prep_cost: null,
+  estimated_market_value: opportunity.estimated_resale_value,
+  title_status: opportunity.title_status,
+  removal_deadline: null,
+  condition_notes: opportunity.condition_raw,
+  quantity_purchased: opportunity.quantity_purchased,
+  quantity_broken: opportunity.quantity_broken,
+});
+
 function GovDealsScannerPanel({
   opportunities,
   operatorBaseState,
@@ -89,11 +135,15 @@ function GovDealsScannerPanel({
   onWatch,
   onCreateDeal,
   onPass,
+  onSetInterest,
+  onCreateFromWonDeal,
 }: GovDealsScannerPanelProps) {
   const [urlInput, setUrlInput] = useState("");
   const [urlKeywordHint, setUrlKeywordHint] = useState("");
   const [keywordInput, setKeywordInput] = useState("");
   const [manualInput, setManualInput] = useState<ManualOpportunityInput>(createDefaultManualInput());
+  const [expandedOpportunityId, setExpandedOpportunityId] = useState<string | null>(null);
+  const [wonDealIntakeMap, setWonDealIntakeMap] = useState<Record<string, WonDealIntakeInput>>({});
 
   const ranked = useMemo(
     () =>
@@ -105,6 +155,14 @@ function GovDealsScannerPanel({
         previewsByOpportunityId
       ),
     [opportunities, operatorBaseState, filters, sortMode, previewsByOpportunityId]
+  );
+  const interestedCount = useMemo(
+    () => opportunities.filter((item) => item.interest === "interested").length,
+    [opportunities]
+  );
+  const notInterestedCount = useMemo(
+    () => opportunities.filter((item) => item.interest === "not_interested").length,
+    [opportunities]
   );
 
   const updateManualField = <K extends keyof ManualOpportunityInput>(
@@ -120,6 +178,33 @@ function GovDealsScannerPanel({
   const handleManualImport = () => {
     onManualImport(manualInput);
     setManualInput(createDefaultManualInput());
+  };
+
+  useEffect(() => {
+    setWonDealIntakeMap((prev) => {
+      const next = { ...prev };
+      ranked.forEach(({ opportunity }) => {
+        if (!next[opportunity.id]) {
+          next[opportunity.id] = createWonIntakeFromOpportunity(opportunity);
+        }
+      });
+      return next;
+    });
+  }, [ranked]);
+
+  const updateWonIntakeField = <K extends keyof WonDealIntakeInput>(
+    opportunityId: string,
+    opportunity: GovDealsOpportunity,
+    field: K,
+    value: WonDealIntakeInput[K]
+  ) => {
+    setWonDealIntakeMap((prev) => ({
+      ...prev,
+      [opportunityId]: {
+        ...(prev[opportunityId] ?? createWonIntakeFromOpportunity(opportunity)),
+        [field]: value,
+      },
+    }));
   };
 
   return (
@@ -563,6 +648,28 @@ function GovDealsScannerPanel({
 
       <div className="scanner-results-header">
         <h3>Opportunities ({ranked.length})</h3>
+        <div className="interest-summary">
+          <span className="risk-chip">Interested: {interestedCount}</span>
+          <span className="risk-chip warning">Not Interested: {notInterestedCount}</span>
+        </div>
+      </div>
+
+      <div className="manual-surf-card">
+        <h4>Manual Surf (Live GovDeals)</h4>
+        <p className="muted">
+          Open GovDeals live, watch real closing timers, and import/paste listings you want to evaluate.
+          Use Interested / Not Interested to train your scanner signal patterns.
+        </p>
+        <div className="entry-actions">
+          <a
+            className="secondary-button scanner-live-link"
+            href="https://www.govdeals.com"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Open GovDeals Live
+          </a>
+        </div>
       </div>
 
       {ranked.length === 0 ? (
@@ -578,17 +685,44 @@ function GovDealsScannerPanel({
                 : opportunity.status === "passed"
                   ? "passed"
                   : "new";
+            const wonIntake = wonDealIntakeMap[opportunity.id] ?? createWonIntakeFromOpportunity(opportunity);
+            const isExpanded = expandedOpportunityId === opportunity.id;
+            const interestClass =
+              opportunity.interest === "interested"
+                ? "interested"
+                : opportunity.interest === "not_interested"
+                  ? "not-interested"
+                  : "undecided";
             return (
               <article className="opportunity-card" key={opportunity.id}>
                 <div className="opportunity-head">
                   <h4>{opportunity.title}</h4>
-                  <span className={`status-badge opportunity-status ${statusClass}`}>
-                    {opportunity.status}
-                  </span>
+                  <div className="opportunity-head-badges">
+                    <span className={`status-badge opportunity-status ${statusClass}`}>
+                      {opportunity.status}
+                    </span>
+                    <span className={`status-badge interest-badge ${interestClass}`}>
+                      {opportunity.interest}
+                    </span>
+                  </div>
                 </div>
                 <p className="muted">
                   {opportunity.seller_agency} · {opportunity.location}
                 </p>
+                <div className="entry-actions">
+                  {opportunity.listing_url.trim() ? (
+                    <a
+                      href={opportunity.listing_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="secondary-button scanner-live-link"
+                    >
+                      Open Actual Listing
+                    </a>
+                  ) : (
+                    <span className="muted">No listing URL yet (import/paste URL to enable).</span>
+                  )}
+                </div>
                 <div className="opportunity-grid-fields">
                   <div>
                     <span>Current Bid</span>
@@ -666,6 +800,32 @@ function GovDealsScannerPanel({
                     </p>
                   </div>
                 ) : null}
+                <div className="interest-controls">
+                  <button
+                    type="button"
+                    className={opportunity.interest === "interested" ? "active" : ""}
+                    disabled={isBusy}
+                    onClick={() => onSetInterest(opportunity.id, "interested")}
+                  >
+                    Interested
+                  </button>
+                  <button
+                    type="button"
+                    className={opportunity.interest === "not_interested" ? "active" : ""}
+                    disabled={isBusy}
+                    onClick={() => onSetInterest(opportunity.id, "not_interested")}
+                  >
+                    Not Interested
+                  </button>
+                  <button
+                    type="button"
+                    className={opportunity.interest === "undecided" ? "active" : ""}
+                    disabled={isBusy}
+                    onClick={() => onSetInterest(opportunity.id, "undecided")}
+                  >
+                    Clear
+                  </button>
+                </div>
                 <div className="entry-actions">
                   <button
                     type="button"
@@ -699,6 +859,255 @@ function GovDealsScannerPanel({
                   >
                     Pass
                   </button>
+                </div>
+                <div className="won-intake-panel">
+                  <div className="entry-actions">
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => setExpandedOpportunityId(isExpanded ? null : opportunity.id)}
+                    >
+                      {isExpanded ? "Hide Won Deal Intake" : "I Won This — Add Final Numbers"}
+                    </button>
+                  </div>
+                  {isExpanded ? (
+                    <div className="form-grid-two">
+                      <label>
+                        Deal Label
+                        <input
+                          value={wonIntake.label}
+                          onChange={(event) =>
+                            updateWonIntakeField(opportunity.id, opportunity, "label", event.target.value)
+                          }
+                        />
+                      </label>
+                      <label>
+                        Acquisition State
+                        <input
+                          value={wonIntake.acquisition_state}
+                          maxLength={2}
+                          onChange={(event) =>
+                            updateWonIntakeField(
+                              opportunity.id,
+                              opportunity,
+                              "acquisition_state",
+                              event.target.value.toUpperCase()
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        Final Bid (won)
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={wonIntake.final_bid}
+                          onChange={(event) =>
+                            updateWonIntakeField(
+                              opportunity.id,
+                              opportunity,
+                              "final_bid",
+                              Math.max(0, Number(event.target.value) || 0)
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        Buyer Premium (decimal)
+                        <input
+                          type="number"
+                          step="0.001"
+                          value={wonIntake.buyer_premium_pct}
+                          onChange={(event) =>
+                            updateWonIntakeField(
+                              opportunity.id,
+                              opportunity,
+                              "buyer_premium_pct",
+                              Math.max(0, Number(event.target.value) || 0)
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        Transport Cost (Actual)
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={wonIntake.transport_cost_actual ?? ""}
+                          onChange={(event) =>
+                            updateWonIntakeField(
+                              opportunity.id,
+                              opportunity,
+                              "transport_cost_actual",
+                              toNumberOrNull(event.target.value)
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        Transport Cost (Estimated)
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={wonIntake.transport_cost_estimated ?? ""}
+                          onChange={(event) =>
+                            updateWonIntakeField(
+                              opportunity.id,
+                              opportunity,
+                              "transport_cost_estimated",
+                              toNumberOrNull(event.target.value)
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        Repair Cost
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={wonIntake.repair_cost ?? ""}
+                          onChange={(event) =>
+                            updateWonIntakeField(
+                              opportunity.id,
+                              opportunity,
+                              "repair_cost",
+                              toNumberOrNull(event.target.value)
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        Prep Cost
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={wonIntake.prep_cost ?? ""}
+                          onChange={(event) =>
+                            updateWonIntakeField(
+                              opportunity.id,
+                              opportunity,
+                              "prep_cost",
+                              toNumberOrNull(event.target.value)
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        Estimated Market Value
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={wonIntake.estimated_market_value}
+                          onChange={(event) =>
+                            updateWonIntakeField(
+                              opportunity.id,
+                              opportunity,
+                              "estimated_market_value",
+                              Math.max(0, Number(event.target.value) || 0)
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        Title Status
+                        <select
+                          value={wonIntake.title_status}
+                          onChange={(event) =>
+                            updateWonIntakeField(
+                              opportunity.id,
+                              opportunity,
+                              "title_status",
+                              event.target.value as TitleStatus
+                            )
+                          }
+                        >
+                          <option value="on_site">on_site</option>
+                          <option value="delayed">delayed</option>
+                          <option value="unknown">unknown</option>
+                        </select>
+                      </label>
+                      <label>
+                        Removal Deadline
+                        <input
+                          type="datetime-local"
+                          value={toDateTimeLocalInput(wonIntake.removal_deadline)}
+                          onChange={(event) =>
+                            updateWonIntakeField(
+                              opportunity.id,
+                              opportunity,
+                              "removal_deadline",
+                              toIsoOrNull(event.target.value)
+                            )
+                          }
+                        />
+                      </label>
+                      {opportunity.category === "electronics" ? (
+                        <>
+                          <label>
+                            Quantity Purchased
+                            <input
+                              type="number"
+                              step="1"
+                              min="0"
+                              value={wonIntake.quantity_purchased ?? ""}
+                              onChange={(event) =>
+                                updateWonIntakeField(
+                                  opportunity.id,
+                                  opportunity,
+                                  "quantity_purchased",
+                                  toNumberOrNull(event.target.value)
+                                )
+                              }
+                            />
+                          </label>
+                          <label>
+                            Quantity Broken
+                            <input
+                              type="number"
+                              step="1"
+                              min="0"
+                              value={wonIntake.quantity_broken ?? ""}
+                              onChange={(event) =>
+                                updateWonIntakeField(
+                                  opportunity.id,
+                                  opportunity,
+                                  "quantity_broken",
+                                  toNumberOrNull(event.target.value)
+                                )
+                              }
+                            />
+                          </label>
+                        </>
+                      ) : null}
+                      <label className="span-two">
+                        Condition Notes
+                        <textarea
+                          rows={3}
+                          value={wonIntake.condition_notes}
+                          onChange={(event) =>
+                            updateWonIntakeField(
+                              opportunity.id,
+                              opportunity,
+                              "condition_notes",
+                              event.target.value
+                            )
+                          }
+                        />
+                      </label>
+                    </div>
+                  ) : null}
+                  {isExpanded ? (
+                    <div className="entry-actions">
+                      <button
+                        type="button"
+                        className="primary-button"
+                        disabled={isBusy}
+                        onClick={() => void onCreateFromWonDeal(opportunity, wonIntake)}
+                      >
+                        {isBusy ? "Working..." : "Create Won Deal + Auto Calculate"}
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               </article>
             );

@@ -3,6 +3,7 @@ import type { DealView } from "../types";
 
 export type OpportunityCategory = "vehicle" | "electronics" | "other";
 export type OpportunityStatus = "new" | "watch" | "passed";
+export type OpportunityInterest = "undecided" | "interested" | "not_interested";
 export type OpportunitySortMode =
   | "best_deal"
   | "highest_upside"
@@ -32,6 +33,7 @@ export interface GovDealsOpportunity {
   quantity_purchased: number | null;
   quantity_broken: number | null;
   status: OpportunityStatus;
+  interest: OpportunityInterest;
   created_at: string;
 }
 
@@ -53,6 +55,23 @@ export interface ManualOpportunityInput {
   estimated_repair_cost: number;
   quantity_purchased?: number | null;
   quantity_broken?: number | null;
+}
+
+export interface WonDealIntakeInput {
+  label: string;
+  acquisition_state: string;
+  final_bid: number;
+  buyer_premium_pct: number;
+  transport_cost_actual: number | null;
+  transport_cost_estimated: number | null;
+  repair_cost: number | null;
+  prep_cost: number | null;
+  estimated_market_value: number;
+  title_status: TitleStatus;
+  removal_deadline: string | null;
+  condition_notes: string;
+  quantity_purchased: number | null;
+  quantity_broken: number | null;
 }
 
 export interface OpportunityPreviewSnapshot {
@@ -456,6 +475,50 @@ export const buildCreateDealRequestFromOpportunity = (
   };
 };
 
+export const buildCreateDealRequestFromWonIntake = (
+  opportunity: GovDealsOpportunity,
+  intake: WonDealIntakeInput,
+  operatorBaseState: string
+): CreateDealRequest => {
+  const inferredState = extractStateCode(opportunity.location) ?? operatorBaseState.toUpperCase();
+  const acquisitionState = intake.acquisition_state.trim().toUpperCase() || inferredState;
+  const conditionNotes = [
+    intake.condition_notes.trim() || opportunity.condition_raw || "No condition notes provided.",
+    `GovDeals URL: ${opportunity.listing_url || "not provided"}`,
+    `Agency: ${opportunity.seller_agency || "unknown"}`,
+    `Location: ${opportunity.location || "unknown"}`,
+    `Auction End: ${opportunity.auction_end || "unknown"}`,
+  ].join("\n");
+
+  return {
+    label: intake.label.trim() || opportunity.title,
+    category: mapCategoryToDealCategory(opportunity),
+    source_platform: "govdeals",
+    seller_type: opportunity.seller_type,
+    acquisition_state: acquisitionState,
+    discovered_date: new Date().toISOString(),
+    quantity_purchased: intake.quantity_purchased,
+    quantity_broken: intake.quantity_broken,
+    financials: {
+      acquisition_cost: Math.max(0, intake.final_bid),
+      buyer_premium_pct: Math.max(0, intake.buyer_premium_pct),
+      transport_cost_actual: intake.transport_cost_actual,
+      transport_cost_estimated: intake.transport_cost_estimated,
+      repair_cost: intake.repair_cost,
+      prep_cost: intake.prep_cost,
+      estimated_market_value: Math.max(0, intake.estimated_market_value),
+    },
+    metadata: {
+      condition_grade: mapConditionGrade(intake.condition_notes || opportunity.condition_raw),
+      condition_notes: conditionNotes,
+      transport_type: opportunity.category === "vehicle" ? "auto_transport" : "freight",
+      presentation_quality: "standard",
+      removal_deadline: intake.removal_deadline,
+      title_status: intake.title_status,
+    },
+  };
+};
+
 export const toPreviewSnapshot = (previewDeal: DealView): OpportunityPreviewSnapshot => ({
   projected_profit: previewDeal.calculations.projected_profit,
   total_cost_basis: previewDeal.calculations.total_cost_basis,
@@ -612,6 +675,7 @@ const SAMPLE_OPPORTUNITIES: Array<Omit<GovDealsOpportunity, "id" | "created_at">
     quantity_purchased: null,
     quantity_broken: null,
     status: "new",
+    interest: "undecided",
   },
   {
     source: "keyword_search",
@@ -633,6 +697,7 @@ const SAMPLE_OPPORTUNITIES: Array<Omit<GovDealsOpportunity, "id" | "created_at">
     quantity_purchased: 36,
     quantity_broken: 6,
     status: "new",
+    interest: "undecided",
   },
   {
     source: "keyword_search",
@@ -654,6 +719,7 @@ const SAMPLE_OPPORTUNITIES: Array<Omit<GovDealsOpportunity, "id" | "created_at">
     quantity_purchased: null,
     quantity_broken: null,
     status: "new",
+    interest: "undecided",
   },
   {
     source: "keyword_search",
@@ -675,6 +741,7 @@ const SAMPLE_OPPORTUNITIES: Array<Omit<GovDealsOpportunity, "id" | "created_at">
     quantity_purchased: null,
     quantity_broken: null,
     status: "new",
+    interest: "undecided",
   },
 ];
 
@@ -718,6 +785,7 @@ export const buildKeywordOpportunities = (keyword: string): GovDealsOpportunity[
       quantity_purchased: null,
       quantity_broken: null,
       status: "new",
+      interest: "undecided",
     }),
   ];
 };
@@ -754,6 +822,7 @@ export const buildOpportunityFromUrl = (listingUrl: string, keywordHint = ""): G
     quantity_purchased: null,
     quantity_broken: null,
     status: "new",
+    interest: "undecided",
   });
 };
 
@@ -784,6 +853,7 @@ export const buildManualOpportunity = (input: ManualOpportunityInput): GovDealsO
         ? null
         : Math.max(0, Math.round(input.quantity_broken)),
     status: "new",
+    interest: "undecided",
   });
 
 export const upsertOpportunities = (
@@ -821,3 +891,10 @@ export const setOpportunityStatus = (
   status: OpportunityStatus
 ): GovDealsOpportunity[] =>
   opportunities.map((item) => (item.id === id ? { ...item, status } : item));
+
+export const setOpportunityInterest = (
+  opportunities: GovDealsOpportunity[],
+  id: string,
+  interest: OpportunityInterest
+): GovDealsOpportunity[] =>
+  opportunities.map((item) => (item.id === id ? { ...item, interest } : item));
