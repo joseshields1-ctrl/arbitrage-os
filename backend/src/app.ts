@@ -14,7 +14,31 @@ import dashboardRouter from "./routes/dashboard";
 
 const app = express();
 
-app.use(cors());
+const configuredCorsOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter((value) => value.length > 0);
+
+const defaultDevOrigins = ["http://localhost:5173", "http://127.0.0.1:5173"];
+const allowedOrigins = configuredCorsOrigins.length > 0 ? configuredCorsOrigins : defaultDevOrigins;
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(null, false);
+    },
+    methods: ["GET", "POST", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 app.use(express.json());
 app.use("/health", healthRouter);
 app.use("/test-cost", testCostRouter);

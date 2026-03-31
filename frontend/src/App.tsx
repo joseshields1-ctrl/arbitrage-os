@@ -5,12 +5,14 @@ import {
   fetchDeals,
   previewDeal,
   queryAssistant,
+  submitDealDecision,
   updateDealStage,
 } from "./api";
+import DashboardPanels from "./components/DashboardPanels";
 import DealCard from "./components/DealCard";
 import DetailPanel from "./components/DetailPanel";
+import PreBidSanityModal from "./components/PreBidSanityModal";
 import {
-  CATEGORY_OPTIONS,
   CONDITION_GRADE_OPTIONS,
   DEAL_STAGES,
   SOURCE_PLATFORM_OPTIONS,
@@ -23,14 +25,52 @@ import type {
   DealCategory,
   DealStage,
   DealView,
+  IntakeCategory,
+  ReconditioningRecord,
   TitleStatus,
+  VehicleMarketIntel,
 } from "./types";
+import {
+  computeEffectiveHourlyRate,
+  createEmptyVehicleIntel,
+  inferVehicleMarketIntel,
+  loadMarketIntelMap,
+  saveMarketIntelMap,
+} from "./utils/marketIntel";
+import {
+  createEmptyReconditioningRecord,
+  inferReconditioningForDeal,
+  loadReconditioningMap,
+  saveReconditioningMap,
+} from "./utils/reconditioning";
 import "./App.css";
 
 const INTAKE_QUEUE_STORAGE_KEY = "arbitrage_os_intake_queue_v1";
 
 type ActivePage = "dashboard" | "pipeline" | "intake" | "alerts" | "archive";
 type PipelineAlertFilter = "all" | "critical" | "warning" | "none";
+type IntakeStep = 1 | 2 | 3;
+
+const QUICK_ASSISTANT_PROMPTS = [
+  "Explain this deal",
+  "What should I do next?",
+  "Why is this risky?",
+] as const;
+
+const CATEGORY_GROUP_OPTIONS: Record<IntakeCategory, DealCategory[]> = {
+  vehicle: ["vehicle_suv", "vehicle_police_fleet"],
+  electronics: ["electronics_bulk", "electronics_individual"],
+  other: ["powersports"],
+};
+
+interface MonthlyPerformancePoint {
+  month_key: string;
+  month_label: string;
+  revenue_confirmed: number;
+  realized_net_confirmed: number;
+  projected_net_estimated: number;
+  effective_hourly_rate: number;
+}
 
 interface IntakeFormState {
   listing_url: string;
@@ -53,6 +93,8 @@ interface IntakeFormState {
   condition_notes: string;
   title_status: TitleStatus;
   removal_deadline: string;
+  quantity_purchased: string;
+  quantity_broken: string;
   unit_count: string;
   units_total: string;
   units_working: string;
@@ -66,6 +108,9 @@ interface IntakeFormState {
   prep_defective_units: string;
   prep_locked_units: string;
   prep_total_prep_time_minutes: string;
+  market_kbb_value: string;
+  market_nada_value: string;
+  market_carfax_status: string;
 }
 
 interface IntakeQueueEntry {
@@ -77,12 +122,6 @@ interface IntakeQueueEntry {
   auction_end: string;
   payload: CreateDealRequest;
 }
-
-const QUICK_ASSISTANT_PROMPTS = [
-  "Explain this deal",
-  "What should I do next?",
-  "Why is this risky?",
-] as const;
 
 const DEFAULT_INTAKE_FORM: IntakeFormState = {
   listing_url: "",
@@ -105,6 +144,8 @@ const DEFAULT_INTAKE_FORM: IntakeFormState = {
   condition_notes: "",
   title_status: "unknown",
   removal_deadline: "",
+  quantity_purchased: "",
+  quantity_broken: "",
   unit_count: "",
   units_total: "",
   units_working: "",
@@ -118,6 +159,9 @@ const DEFAULT_INTAKE_FORM: IntakeFormState = {
   prep_defective_units: "",
   prep_locked_units: "",
   prep_total_prep_time_minutes: "",
+  market_kbb_value: "",
+  market_nada_value: "",
+  market_carfax_status: "",
 };
 
 const nextStage = (status: DealStage): DealStage | null => {
@@ -126,6 +170,16 @@ const nextStage = (status: DealStage): DealStage | null => {
     return null;
   }
   return DEAL_STAGES[index + 1];
+};
+
+const getCategoryGroup = (category: DealCategory): IntakeCategory => {
+  if (category.startsWith("vehicle")) {
+    return "vehicle";
+  }
+  if (category.startsWith("electronics")) {
+    return "electronics";
+  }
+  return "other";
 };
 
 const toIsoOrNull = (value: string): string | null => {
@@ -164,11 +218,28 @@ const toDateTimeLocalInput = (value: string | null | undefined): string => {
   return new Date(timestamp).toISOString().slice(0, 16);
 };
 
+const toVehicleIntelFromForm = (form: IntakeFormState): VehicleMarketIntel | null => {
+  const kbb = toOptionalNumber(form.market_kbb_value);
+  const nada = toOptionalNumber(form.market_nada_value);
+  const carfax = form.market_carfax_status.trim();
+  if (kbb === null && nada === null && !carfax) {
+    return null;
+  }
+  return {
+    kbb_value: kbb,
+    nada_value: nada,
+    carfax_status: carfax || null,
+    manual_comps: [],
+  };
+};
+
 function App() {
   const [activePage, setActivePage] = useState<ActivePage>("dashboard");
   const [rightPanelMode, setRightPanelMode] = useState<"detail" | "assistant">("detail");
   const [pipelineAlertFilter, setPipelineAlertFilter] = useState<PipelineAlertFilter>("all");
   const [showAdvancedFields, setShowAdvancedFields] = useState(false);
+  const [intakeStep, setIntakeStep] = useState<IntakeStep>(1);
+  const [intakeCategory, setIntakeCategory] = useState<IntakeCategory>("vehicle");
   const [deals, setDeals] = useState<DealView[]>([]);
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
   const [dashboard, setDashboard] = useState<DashboardSummary | null>(null);
@@ -184,6 +255,15 @@ function App() {
   const [intakePreviewDeal, setIntakePreviewDeal] = useState<DealView | null>(null);
   const [savedForLaterIntake, setSavedForLaterIntake] = useState<IntakeQueueEntry[]>([]);
   const [intakeForm, setIntakeForm] = useState<IntakeFormState>(DEFAULT_INTAKE_FORM);
+  const [marketIntelMap, setMarketIntelMap] = useState<Record<string, VehicleMarketIntel>>({});
+  const [reconditioningMap, setReconditioningMap] = useState<Record<string, ReconditioningRecord>>({});
+  const [pendingApprovalDealId, setPendingApprovalDealId] = useState<string | null>(null);
+
+  const isElectronicsCategory = intakeCategory === "electronics";
+  const isVehicleCategory = intakeCategory === "vehicle";
+  const quantityPurchased = toOptionalInteger(intakeForm.quantity_purchased) ?? 0;
+  const quantityBroken = toOptionalInteger(intakeForm.quantity_broken) ?? 0;
+  const autoWorkingUnits = Math.max(0, quantityPurchased - quantityBroken);
 
   const loadData = async () => {
     setLoading(true);
@@ -206,6 +286,19 @@ function App() {
   useEffect(() => {
     void loadData();
   }, []);
+
+  useEffect(() => {
+    setMarketIntelMap(loadMarketIntelMap());
+    setReconditioningMap(loadReconditioningMap());
+  }, []);
+
+  useEffect(() => {
+    saveMarketIntelMap(marketIntelMap);
+  }, [marketIntelMap]);
+
+  useEffect(() => {
+    saveReconditioningMap(reconditioningMap);
+  }, [reconditioningMap]);
 
   useEffect(() => {
     try {
@@ -244,6 +337,19 @@ function App() {
     deals[0] ??
     null;
 
+  const selectedDealMarketIntel = selectedDeal
+    ? inferVehicleMarketIntel(selectedDeal, marketIntelMap)
+    : createEmptyVehicleIntel();
+
+  const selectedDealReconditioning = selectedDeal
+    ? inferReconditioningForDeal(selectedDeal, reconditioningMap)
+    : createEmptyReconditioningRecord();
+
+  const pendingApprovalDeal = deals.find((item) => item.deal.id === pendingApprovalDealId) ?? null;
+  const pendingApprovalReconditioning = pendingApprovalDeal
+    ? inferReconditioningForDeal(pendingApprovalDeal, reconditioningMap)
+    : createEmptyReconditioningRecord();
+
   const activeDealsCount =
     dashboard?.active_deals ?? deals.filter((item) => item.deal.status !== "completed").length;
   const completedDealsCount =
@@ -278,12 +384,104 @@ function App() {
     return deals.filter((deal) => (deal.alerts?.length ?? 0) === 0);
   }, [deals, pipelineAlertFilter]);
 
+  const monthlyPerformance = useMemo<MonthlyPerformancePoint[]>(() => {
+    const monthFormatter = new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      year: "numeric",
+    });
+    const monthBuckets = new Map<
+      string,
+      MonthlyPerformancePoint & { ehr_sum: number; ehr_count: number }
+    >();
+    const upsertMonth = (iso: string) => {
+      const timestamp = Date.parse(iso);
+      if (!Number.isFinite(timestamp)) {
+        return null;
+      }
+      const date = new Date(timestamp);
+      const monthKey = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+      const monthStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+      if (!monthBuckets.has(monthKey)) {
+        monthBuckets.set(monthKey, {
+          month_key: monthKey,
+          month_label: monthFormatter.format(monthStart),
+          revenue_confirmed: 0,
+          realized_net_confirmed: 0,
+          projected_net_estimated: 0,
+          effective_hourly_rate: 0,
+          ehr_sum: 0,
+          ehr_count: 0,
+        });
+      }
+      return monthBuckets.get(monthKey) ?? null;
+    };
+
+    deals.forEach((item) => {
+      const monthIso =
+        item.deal.status === "completed"
+          ? item.deal.completion_date ?? item.deal.sale_date ?? item.deal.stage_updated_at
+          : item.deal.stage_updated_at;
+      const bucket = upsertMonth(monthIso);
+      if (!bucket) {
+        return;
+      }
+
+      if (item.deal.status === "completed") {
+        bucket.revenue_confirmed += Math.max(0, item.financials.sale_price_actual ?? 0);
+        bucket.realized_net_confirmed += item.calculations.realized_profit ?? 0;
+      } else {
+        bucket.projected_net_estimated += item.calculations.projected_profit;
+      }
+
+      const ehr = computeEffectiveHourlyRate(item);
+      if (ehr !== null) {
+        bucket.ehr_sum += ehr;
+        bucket.ehr_count += 1;
+      }
+    });
+
+    return Array.from(monthBuckets.values())
+      .map((item) => ({
+        month_key: item.month_key,
+        month_label: item.month_label,
+        revenue_confirmed: item.revenue_confirmed,
+        realized_net_confirmed: item.realized_net_confirmed,
+        projected_net_estimated: item.projected_net_estimated,
+        effective_hourly_rate: item.ehr_count > 0 ? item.ehr_sum / item.ehr_count : 0,
+      }))
+      .sort((a, b) => a.month_key.localeCompare(b.month_key))
+      .slice(-8);
+  }, [deals]);
+
+  const monthlyChartScale = useMemo(() => {
+    const maxAbsValue = monthlyPerformance.reduce((max, item) => {
+      const localMaxAbs = Math.max(
+        Math.abs(item.revenue_confirmed),
+        Math.abs(item.realized_net_confirmed),
+        Math.abs(item.projected_net_estimated)
+      );
+      return Math.max(max, localMaxAbs);
+    }, 0);
+    return maxAbsValue > 0 ? maxAbsValue : 1;
+  }, [monthlyPerformance]);
+
+  const monthlyEhrScale = useMemo(() => {
+    const maxAbs = monthlyPerformance.reduce(
+      (max, item) => Math.max(max, Math.abs(item.effective_hourly_rate)),
+      0
+    );
+    return maxAbs > 0 ? maxAbs : 1;
+  }, [monthlyPerformance]);
+
+  const updateForm = <K extends keyof IntakeFormState>(field: K, value: IntakeFormState[K]) => {
+    setIntakeForm((prev) => ({ ...prev, [field]: value }));
+  };
+
   const buildIntakePayload = (): CreateDealRequest => {
     const currentBid = toOptionalNumber(intakeForm.current_bid) ?? 0;
     const acquisitionCost = toOptionalNumber(intakeForm.acquisition_cost) ?? currentBid;
     const estimatedMarketValue =
       toOptionalNumber(intakeForm.estimated_market_value) ?? Math.max(0, acquisitionCost * 1.35);
-
     const hasUnitBreakdown = [
       intakeForm.units_total,
       intakeForm.units_working,
@@ -291,7 +489,6 @@ function App() {
       intakeForm.units_defective,
       intakeForm.units_locked,
     ].some((value) => value.trim().length > 0);
-
     const hasPrepMetrics = [
       intakeForm.prep_total_units,
       intakeForm.prep_working_units,
@@ -301,7 +498,6 @@ function App() {
       intakeForm.prep_locked_units,
       intakeForm.prep_total_prep_time_minutes,
     ].some((value) => value.trim().length > 0);
-
     const conditionNotes = intakeForm.condition_notes.trim();
     const sourceLine = intakeForm.listing_url.trim()
       ? `Source: ${intakeForm.listing_url.trim()}`
@@ -309,6 +505,10 @@ function App() {
     const mergedConditionNotes = [conditionNotes || "No condition notes provided.", sourceLine]
       .filter(Boolean)
       .join("\n");
+    const intakeIntel = toVehicleIntelFromForm(intakeForm);
+    const computedWorkingUnits =
+      toOptionalInteger(intakeForm.units_working) ??
+      (isElectronicsCategory ? autoWorkingUnits : 0);
 
     return {
       label: intakeForm.title.trim() || "GovDeals Intake",
@@ -317,6 +517,8 @@ function App() {
       seller_type: intakeForm.seller_type,
       acquisition_state: intakeForm.acquisition_state.trim().toUpperCase(),
       discovered_date: toIsoOrNull(intakeForm.auction_end),
+      quantity_purchased: toOptionalInteger(intakeForm.quantity_purchased),
+      quantity_broken: toOptionalInteger(intakeForm.quantity_broken),
       financials: {
         acquisition_cost: acquisitionCost,
         buyer_premium_pct: toOptionalNumber(intakeForm.buyer_premium_pct) ?? 0.1,
@@ -338,7 +540,7 @@ function App() {
       unit_breakdown: hasUnitBreakdown
         ? {
             units_total: toOptionalInteger(intakeForm.units_total) ?? 0,
-            units_working: toOptionalInteger(intakeForm.units_working) ?? 0,
+            units_working: computedWorkingUnits,
             units_minor_issue: toOptionalInteger(intakeForm.units_minor_issue) ?? 0,
             units_defective: toOptionalInteger(intakeForm.units_defective) ?? 0,
             units_locked: toOptionalInteger(intakeForm.units_locked) ?? 0,
@@ -355,12 +557,25 @@ function App() {
             total_prep_time_minutes: toOptionalNumber(intakeForm.prep_total_prep_time_minutes) ?? 0,
           }
         : undefined,
+      market_intel: intakeIntel,
     };
   };
 
   const resetIntakeForm = (): void => {
     setIntakeForm(DEFAULT_INTAKE_FORM);
+    setIntakeCategory(getCategoryGroup(DEFAULT_INTAKE_FORM.category));
+    setIntakeStep(1);
     setShowAdvancedFields(false);
+  };
+
+  const saveIntelForDeal = (dealId: string, intel: VehicleMarketIntel | null): void => {
+    if (!intel) {
+      return;
+    }
+    setMarketIntelMap((prev) => ({
+      ...prev,
+      [dealId]: intel,
+    }));
   };
 
   const handleIntakePreview = async () => {
@@ -368,11 +583,13 @@ function App() {
     setError(null);
     setIntakeStatusMessage(null);
     try {
-      const preview = await previewDeal(buildIntakePayload());
+      const payload = buildIntakePayload();
+      const preview = await previewDeal(payload);
       setIntakePreviewDeal(preview);
       setSelectedDealId(preview.deal.id);
       setRightPanelMode("detail");
       setIntakeStatusMessage("Preview ready. This is not yet a created deal.");
+      saveIntelForDeal(preview.deal.id, payload.market_intel ?? null);
     } catch (previewError) {
       const message = previewError instanceof Error ? previewError.message : "Failed intake preview";
       setError(message);
@@ -386,12 +603,14 @@ function App() {
     setError(null);
     setIntakeStatusMessage(null);
     try {
-      const created = await createDeal(buildIntakePayload());
+      const payload = buildIntakePayload();
+      const created = await createDeal(payload);
       setSelectedDealId(created.deal.id);
       setIntakePreviewDeal(null);
       setActivePage("pipeline");
       setRightPanelMode("detail");
       setIntakeStatusMessage("Deal created from intake.");
+      saveIntelForDeal(created.deal.id, payload.market_intel ?? null);
       resetIntakeForm();
       await loadData();
     } catch (createError) {
@@ -435,6 +654,11 @@ function App() {
       setSelectedDealId(preview.deal.id);
       setRightPanelMode("detail");
       setIntakeStatusMessage("Queue item loaded into preview.");
+
+      const group = getCategoryGroup(entry.payload.category);
+      setIntakeCategory(group);
+      setIntakeStep(3);
+
       setIntakeForm((prev) => ({
         ...prev,
         listing_url: entry.listing_url,
@@ -475,6 +699,14 @@ function App() {
         condition_notes: entry.payload.metadata.condition_notes,
         title_status: entry.payload.metadata.title_status ?? "unknown",
         removal_deadline: toDateTimeLocalInput(entry.payload.metadata.removal_deadline),
+        quantity_purchased:
+          entry.payload.quantity_purchased !== null && entry.payload.quantity_purchased !== undefined
+            ? String(entry.payload.quantity_purchased)
+            : "",
+        quantity_broken:
+          entry.payload.quantity_broken !== null && entry.payload.quantity_broken !== undefined
+            ? String(entry.payload.quantity_broken)
+            : "",
         unit_count:
           entry.payload.unit_count !== null && entry.payload.unit_count !== undefined
             ? String(entry.payload.unit_count)
@@ -497,8 +729,22 @@ function App() {
         prep_total_prep_time_minutes: entry.payload.prep_metrics
           ? String(entry.payload.prep_metrics.total_prep_time_minutes)
           : "",
+        market_kbb_value:
+          entry.payload.market_intel?.kbb_value !== null &&
+          entry.payload.market_intel?.kbb_value !== undefined
+            ? String(entry.payload.market_intel.kbb_value)
+            : "",
+        market_nada_value:
+          entry.payload.market_intel?.nada_value !== null &&
+          entry.payload.market_intel?.nada_value !== undefined
+            ? String(entry.payload.market_intel.nada_value)
+            : "",
+        market_carfax_status: entry.payload.market_intel?.carfax_status ?? "",
       }));
-      setShowAdvancedFields(Boolean(entry.payload.prep_metrics || entry.payload.unit_breakdown || entry.payload.unit_count));
+      setShowAdvancedFields(Boolean(entry.payload.prep_metrics || entry.payload.unit_breakdown));
+      if (entry.payload.market_intel) {
+        saveIntelForDeal(preview.deal.id, entry.payload.market_intel);
+      }
     } catch (queueError) {
       const message = queueError instanceof Error ? queueError.message : "Failed to load queue item";
       setError(message);
@@ -509,6 +755,37 @@ function App() {
 
   const handleRemoveQueueEntry = (id: string): void => {
     setSavedForLaterIntake((prev) => prev.filter((entry) => entry.id !== id));
+  };
+
+  const handleRequestApproveDecision = (dealId: string): void => {
+    setPendingApprovalDealId(dealId);
+  };
+
+  const handleApproveWithSanityCheck = async (dealId: string): Promise<void> => {
+    const targetDeal = deals.find((item) => item.deal.id === dealId);
+    if (!targetDeal) {
+      setError("Deal not found for approval.");
+      return;
+    }
+    try {
+      await submitDealDecision(dealId, {
+        decision: "approved",
+        reason: "Approved after pre-bid sanity check acknowledgement.",
+      });
+      await loadData();
+      setPendingApprovalDealId(null);
+    } catch (approvalError) {
+      const message =
+        approvalError instanceof Error ? approvalError.message : "Failed to approve after sanity check";
+      setError(message);
+    }
+  };
+
+  const handleReconditioningChange = (dealId: string, record: ReconditioningRecord): void => {
+    setReconditioningMap((prev) => ({
+      ...prev,
+      [dealId]: record,
+    }));
   };
 
   const handleStageAdvance = async (deal: DealView) => {
@@ -579,6 +856,19 @@ function App() {
     }
   };
 
+  const handleMarketIntelChange = (dealId: string, intel: VehicleMarketIntel) => {
+    setMarketIntelMap((prev) => ({
+      ...prev,
+      [dealId]: intel,
+    }));
+  };
+
+  const step2Ready =
+    intakeForm.title.trim().length > 0 &&
+    intakeForm.acquisition_state.trim().length > 0 &&
+    (toOptionalNumber(intakeForm.acquisition_cost) ?? 0) > 0;
+  const step3Ready = (toOptionalNumber(intakeForm.estimated_market_value) ?? 0) > 0;
+
   return (
     <main className="operator-shell">
       <header className="top-bar">
@@ -604,11 +894,41 @@ function App() {
         <aside className="left-nav">
           <h1>Arbitrage OS</h1>
           <p>Operator Console</p>
-          <button type="button" className={activePage === "dashboard" ? "active" : ""} onClick={() => setActivePage("dashboard")}>Dashboard</button>
-          <button type="button" className={activePage === "pipeline" ? "active" : ""} onClick={() => setActivePage("pipeline")}>Pipeline</button>
-          <button type="button" className={activePage === "intake" ? "active" : ""} onClick={() => setActivePage("intake")}>Intake</button>
-          <button type="button" className={activePage === "alerts" ? "active" : ""} onClick={() => setActivePage("alerts")}>Alerts</button>
-          <button type="button" className={activePage === "archive" ? "active" : ""} onClick={() => setActivePage("archive")}>Archive</button>
+          <button
+            type="button"
+            className={activePage === "dashboard" ? "active" : ""}
+            onClick={() => setActivePage("dashboard")}
+          >
+            Dashboard
+          </button>
+          <button
+            type="button"
+            className={activePage === "pipeline" ? "active" : ""}
+            onClick={() => setActivePage("pipeline")}
+          >
+            Pipeline
+          </button>
+          <button
+            type="button"
+            className={activePage === "intake" ? "active" : ""}
+            onClick={() => setActivePage("intake")}
+          >
+            Intake
+          </button>
+          <button
+            type="button"
+            className={activePage === "alerts" ? "active" : ""}
+            onClick={() => setActivePage("alerts")}
+          >
+            Alerts
+          </button>
+          <button
+            type="button"
+            className={activePage === "archive" ? "active" : ""}
+            onClick={() => setActivePage("archive")}
+          >
+            Archive
+          </button>
         </aside>
 
         <section className="main-area">
@@ -616,25 +936,118 @@ function App() {
 
           {activePage === "dashboard" ? (
             <section className="panel">
-              <h2 className="page-title">Dashboard</h2>
+              <h2 className="page-title">Decision Dashboard</h2>
               <div className="dashboard-grid">
-                <article className="dashboard-stat-card"><h3>Active Deals</h3><p>{activeDealsCount}</p></article>
-                <article className="dashboard-stat-card"><h3>Completed Deals</h3><p>{completedDealsCount}</p></article>
-                <article className="dashboard-stat-card"><h3>Projected Profit (estimate)</h3><p>${(dashboard?.projected_profit_total ?? 0).toFixed(2)}</p></article>
-                <article className="dashboard-stat-card"><h3>Realized Profit</h3><p>${(dashboard?.realized_profit_total ?? 0).toFixed(2)}</p></article>
+                <article className="dashboard-stat-card">
+                  <h3>Active Deals</h3>
+                  <p>{activeDealsCount}</p>
+                </article>
+                <article className="dashboard-stat-card">
+                  <h3>Completed Deals</h3>
+                  <p>{completedDealsCount}</p>
+                </article>
+                <article className="dashboard-stat-card">
+                  <h3>Projected Profit (estimate)</h3>
+                  <p>${(dashboard?.projected_profit_total ?? 0).toFixed(2)}</p>
+                </article>
+                <article className="dashboard-stat-card">
+                  <h3>Realized Profit</h3>
+                  <p>${(dashboard?.realized_profit_total ?? 0).toFixed(2)}</p>
+                </article>
               </div>
-              <div className="burn-list">
-                <h3>Burn List <span className="action-required">Action Required</span></h3>
-                {(dashboard?.burn_list?.length ?? 0) === 0 ? (
-                  <p>No stuck deals right now.</p>
+
+              <DashboardPanels deals={deals} reconditioningMap={reconditioningMap} />
+
+              <div className="dashboard-chart-card">
+                <h3>Monthly Revenue + Net + EHR</h3>
+                <p className="chart-subtitle">
+                  Revenue/net from completed deals, projected net from active deals, EHR from prep
+                  time when available.
+                </p>
+                {monthlyPerformance.length === 0 ? (
+                  <p>No monthly data yet.</p>
                 ) : (
-                  <ul>
-                    {dashboard?.burn_list.map((item) => (
-                      <li key={item.id}>
-                        <strong>{item.label}</strong> · {item.days_in_stage} days in stage · Projected ${item.projected_profit.toFixed(2)} · Action: {item.recommended_action ?? "completed"}
-                      </li>
-                    ))}
-                  </ul>
+                  <>
+                    <div className="chart-legend">
+                      <span className="legend-chip revenue">Revenue (confirmed)</span>
+                      <span className="legend-chip realized">Realized Net (confirmed)</span>
+                      <span className="legend-chip projected">Projected Net (estimated)</span>
+                      <span className="legend-chip ehr">Effective Hourly Rate</span>
+                    </div>
+                    <div className="monthly-chart-grid">
+                      {monthlyPerformance.map((point) => {
+                        const revenueHeight = Math.max(
+                          4,
+                          Math.round((Math.abs(point.revenue_confirmed) / monthlyChartScale) * 64)
+                        );
+                        const realizedHeight = Math.max(
+                          4,
+                          Math.round((Math.abs(point.realized_net_confirmed) / monthlyChartScale) * 64)
+                        );
+                        const projectedHeight = Math.max(
+                          4,
+                          Math.round((Math.abs(point.projected_net_estimated) / monthlyChartScale) * 64)
+                        );
+                        const ehrHeight = Math.max(
+                          4,
+                          Math.round((Math.abs(point.effective_hourly_rate) / monthlyEhrScale) * 64)
+                        );
+                        return (
+                          <div className="month-column" key={point.month_key}>
+                            <div className="bars bars-four">
+                              <div className="bar-slot">
+                                <div
+                                  className="bar revenue"
+                                  style={{ height: `${revenueHeight}px`, bottom: "50%" }}
+                                  title={`Revenue: $${point.revenue_confirmed.toFixed(2)}`}
+                                />
+                              </div>
+                              <div className="bar-slot">
+                                <div
+                                  className={`bar realized ${
+                                    point.realized_net_confirmed < 0 ? "negative" : ""
+                                  }`}
+                                  style={
+                                    point.realized_net_confirmed >= 0
+                                      ? { height: `${realizedHeight}px`, bottom: "50%" }
+                                      : { height: `${realizedHeight}px`, top: "50%" }
+                                  }
+                                  title={`Realized Net: $${point.realized_net_confirmed.toFixed(2)}`}
+                                />
+                              </div>
+                              <div className="bar-slot">
+                                <div
+                                  className={`bar projected ${
+                                    point.projected_net_estimated < 0 ? "negative" : ""
+                                  }`}
+                                  style={
+                                    point.projected_net_estimated >= 0
+                                      ? { height: `${projectedHeight}px`, bottom: "50%" }
+                                      : { height: `${projectedHeight}px`, top: "50%" }
+                                  }
+                                  title={`Projected Net: $${point.projected_net_estimated.toFixed(2)}`}
+                                />
+                              </div>
+                              <div className="bar-slot">
+                                <div
+                                  className={`bar ehr ${
+                                    point.effective_hourly_rate < 0 ? "negative" : ""
+                                  }`}
+                                  style={
+                                    point.effective_hourly_rate >= 0
+                                      ? { height: `${ehrHeight}px`, bottom: "50%" }
+                                      : { height: `${ehrHeight}px`, top: "50%" }
+                                  }
+                                  title={`EHR: $${point.effective_hourly_rate.toFixed(2)}/hr`}
+                                />
+                              </div>
+                            </div>
+                            <span className="month-label">{point.month_label}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
                 )}
               </div>
             </section>
@@ -646,7 +1059,12 @@ function App() {
               <div className="pipeline-filter-row">
                 <span>Alert Filter:</span>
                 {(["all", "critical", "warning", "none"] as const).map((filter) => (
-                  <button key={filter} type="button" className={pipelineAlertFilter === filter ? "active" : ""} onClick={() => setPipelineAlertFilter(filter)}>
+                  <button
+                    key={filter}
+                    type="button"
+                    className={pipelineAlertFilter === filter ? "active" : ""}
+                    onClick={() => setPipelineAlertFilter(filter)}
+                  >
                     {filter[0].toUpperCase() + filter.slice(1)}
                   </button>
                 ))}
@@ -678,107 +1096,527 @@ function App() {
 
           {activePage === "intake" ? (
             <section className="panel">
-              <h2 className="page-title">Deal Entry / Intake</h2>
-              <p className="section-subtitle">Structured deal intake for faster, lower-error operator review.</p>
-              <form
-                className="modern-entry-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void handleIntakePreview();
-                }}
-              >
+              <h2 className="page-title">Adaptive Intake Flow</h2>
+              <p className="section-subtitle">
+                Step-based intake for speed and decision quality. Shared fields first, category
+                specifics next.
+              </p>
+
+              <div className="intake-stepper">
+                <span className={intakeStep === 1 ? "active" : ""}>Step 1: Category</span>
+                <span className={intakeStep === 2 ? "active" : ""}>Step 2: Shared Fields</span>
+                <span className={intakeStep === 3 ? "active" : ""}>Step 3: Category Fields + Review</span>
+              </div>
+
+              {intakeStep === 1 ? (
                 <section className="form-section-card">
-                  <h3>Basic Info</h3>
+                  <h3>Select Category</h3>
+                  <div className="intake-category-grid">
+                    {(["vehicle", "electronics", "other"] as const).map((group) => (
+                      <button
+                        key={group}
+                        type="button"
+                        className={`intake-category-card ${intakeCategory === group ? "active" : ""}`}
+                        onClick={() => {
+                          setIntakeCategory(group);
+                          updateForm("category", CATEGORY_GROUP_OPTIONS[group][0]);
+                        }}
+                      >
+                        <strong>{group[0].toUpperCase() + group.slice(1)}</strong>
+                        <span>{CATEGORY_GROUP_OPTIONS[group].join(" / ")}</span>
+                      </button>
+                    ))}
+                  </div>
                   <div className="form-grid-two">
-                    <label>Label<input required value={intakeForm.title} onChange={(event) => setIntakeForm((prev) => ({ ...prev, title: event.target.value }))} /></label>
-                    <label>Category<select value={intakeForm.category} onChange={(event) => setIntakeForm((prev) => ({ ...prev, category: event.target.value as DealCategory }))}>{CATEGORY_OPTIONS.map((category) => <option key={category} value={category}>{category}</option>)}</select></label>
-                    <label>Source Platform<select value={intakeForm.source_platform} onChange={(event) => setIntakeForm((prev) => ({ ...prev, source_platform: event.target.value as CreateDealRequest["source_platform"] }))}>{SOURCE_PLATFORM_OPTIONS.map((platform) => <option key={platform} value={platform}>{platform}</option>)}</select></label>
-                    <label>Acquisition State<input required value={intakeForm.acquisition_state} onChange={(event) => setIntakeForm((prev) => ({ ...prev, acquisition_state: event.target.value.toUpperCase() }))} /></label>
-                    <label>Listing URL<input value={intakeForm.listing_url} onChange={(event) => setIntakeForm((prev) => ({ ...prev, listing_url: event.target.value }))} /></label>
-                    <label>Seller Type<select value={intakeForm.seller_type} onChange={(event) => setIntakeForm((prev) => ({ ...prev, seller_type: event.target.value as IntakeFormState["seller_type"] }))}><option value="government">government</option><option value="commercial">commercial</option><option value="unknown">unknown</option></select></label>
+                    <label>
+                      Specific Category
+                      <select
+                        value={intakeForm.category}
+                        onChange={(event) => updateForm("category", event.target.value as DealCategory)}
+                      >
+                        {CATEGORY_GROUP_OPTIONS[intakeCategory].map((category) => (
+                          <option key={category} value={category}>
+                            {category}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <div className="entry-actions">
+                    <button type="button" className="primary-button" onClick={() => setIntakeStep(2)}>
+                      Continue
+                    </button>
                   </div>
                 </section>
+              ) : null}
 
+              {intakeStep === 2 ? (
                 <section className="form-section-card">
-                  <h3>Acquisition</h3>
+                  <h3>Shared Fields</h3>
                   <div className="form-grid-two">
-                    <label>Acquisition Cost<input type="number" step="0.01" value={intakeForm.acquisition_cost} onChange={(event) => setIntakeForm((prev) => ({ ...prev, acquisition_cost: event.target.value }))} /></label>
-                    <label>Buyer Premium (decimal)<input type="number" step="0.001" value={intakeForm.buyer_premium_pct} onChange={(event) => setIntakeForm((prev) => ({ ...prev, buyer_premium_pct: event.target.value }))} /></label>
-                    <label>Current Bid (intake)<input type="number" step="0.01" value={intakeForm.current_bid} onChange={(event) => setIntakeForm((prev) => ({ ...prev, current_bid: event.target.value }))} /></label>
-                    <label>Auction End<input type="datetime-local" value={intakeForm.auction_end} onChange={(event) => setIntakeForm((prev) => ({ ...prev, auction_end: event.target.value }))} /></label>
+                    <label>
+                      Label
+                      <input
+                        required
+                        value={intakeForm.title}
+                        onChange={(event) => updateForm("title", event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      Source Platform
+                      <select
+                        value={intakeForm.source_platform}
+                        onChange={(event) =>
+                          updateForm(
+                            "source_platform",
+                            event.target.value as CreateDealRequest["source_platform"]
+                          )
+                        }
+                      >
+                        {SOURCE_PLATFORM_OPTIONS.map((platform) => (
+                          <option key={platform} value={platform}>
+                            {platform}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Acquisition State
+                      <input
+                        required
+                        value={intakeForm.acquisition_state}
+                        onChange={(event) => updateForm("acquisition_state", event.target.value.toUpperCase())}
+                      />
+                    </label>
+                    <label>
+                      Listing URL
+                      <input
+                        value={intakeForm.listing_url}
+                        onChange={(event) => updateForm("listing_url", event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      Seller Type
+                      <select
+                        value={intakeForm.seller_type}
+                        onChange={(event) =>
+                          updateForm("seller_type", event.target.value as IntakeFormState["seller_type"])
+                        }
+                      >
+                        <option value="government">government</option>
+                        <option value="commercial">commercial</option>
+                        <option value="unknown">unknown</option>
+                      </select>
+                    </label>
+                    <label>
+                      Acquisition Cost
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={intakeForm.acquisition_cost}
+                        onChange={(event) => updateForm("acquisition_cost", event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      Buyer Premium (decimal)
+                      <input
+                        type="number"
+                        step="0.001"
+                        value={intakeForm.buyer_premium_pct}
+                        onChange={(event) => updateForm("buyer_premium_pct", event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      Current Bid
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={intakeForm.current_bid}
+                        onChange={(event) => updateForm("current_bid", event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      Auction End
+                      <input
+                        type="datetime-local"
+                        value={intakeForm.auction_end}
+                        onChange={(event) => updateForm("auction_end", event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      Estimated Market Value
+                      <input
+                        required
+                        type="number"
+                        step="0.01"
+                        value={intakeForm.estimated_market_value}
+                        onChange={(event) => updateForm("estimated_market_value", event.target.value)}
+                      />
+                    </label>
+                  </div>
+                  <div className="entry-actions">
+                    <button type="button" className="ghost-button" onClick={() => setIntakeStep(1)}>
+                      Back
+                    </button>
+                    <button
+                      type="button"
+                      className="primary-button"
+                      disabled={!step2Ready}
+                      onClick={() => setIntakeStep(3)}
+                    >
+                      Continue
+                    </button>
                   </div>
                 </section>
+              ) : null}
 
-                <section className="form-section-card">
-                  <h3>Transport & Costs</h3>
-                  <div className="form-grid-two">
-                    <label>Transport Type<select value={intakeForm.transport_type} onChange={(event) => setIntakeForm((prev) => ({ ...prev, transport_type: event.target.value as CreateDealRequest["metadata"]["transport_type"] }))}>{TRANSPORT_TYPE_OPTIONS.map((transportType) => <option key={transportType} value={transportType}>{transportType}</option>)}</select></label>
-                    <label>Transport Cost (Actual)<input type="number" step="0.01" value={intakeForm.transport_cost_actual} onChange={(event) => setIntakeForm((prev) => ({ ...prev, transport_cost_actual: event.target.value }))} /></label>
-                    <label>Transport Cost (Estimated)<input type="number" step="0.01" value={intakeForm.transport_cost_estimated} onChange={(event) => setIntakeForm((prev) => ({ ...prev, transport_cost_estimated: event.target.value }))} /></label>
-                    <label>Repair Cost<input type="number" step="0.01" value={intakeForm.repair_cost} onChange={(event) => setIntakeForm((prev) => ({ ...prev, repair_cost: event.target.value }))} /></label>
-                    <label>Prep Cost<input type="number" step="0.01" value={intakeForm.prep_cost} onChange={(event) => setIntakeForm((prev) => ({ ...prev, prep_cost: event.target.value }))} /></label>
-                  </div>
-                </section>
+              {intakeStep === 3 ? (
+                <form
+                  className="modern-entry-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void handleIntakePreview();
+                  }}
+                >
+                  {isElectronicsCategory ? (
+                    <section className="form-section-card prioritized-electronics-section">
+                      <h3>Electronics Units (Top Priority)</h3>
+                      <div className="form-grid-two">
+                        <label>
+                          Quantity Purchased
+                          <input
+                            type="number"
+                            step="1"
+                            min="0"
+                            value={intakeForm.quantity_purchased}
+                            onChange={(event) => updateForm("quantity_purchased", event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Quantity Broken
+                          <input
+                            type="number"
+                            step="1"
+                            min="0"
+                            value={intakeForm.quantity_broken}
+                            onChange={(event) => updateForm("quantity_broken", event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Auto Working Units
+                          <input value={String(autoWorkingUnits)} disabled />
+                        </label>
+                        <label>
+                          Unit Count (Fallback)
+                          <input
+                            type="number"
+                            step="1"
+                            value={intakeForm.unit_count}
+                            onChange={(event) => updateForm("unit_count", event.target.value)}
+                          />
+                        </label>
+                      </div>
+                    </section>
+                  ) : null}
 
-                <section className="form-section-card">
-                  <h3>Market</h3>
-                  <div className="form-grid-two">
-                    <label>Estimated Market Value<input required type="number" step="0.01" value={intakeForm.estimated_market_value} onChange={(event) => setIntakeForm((prev) => ({ ...prev, estimated_market_value: event.target.value }))} /></label>
-                  </div>
-                </section>
-
-                <section className="form-section-card">
-                  <h3>Condition</h3>
-                  <div className="form-grid-two">
-                    <label>Condition Grade<select value={intakeForm.condition_grade} onChange={(event) => setIntakeForm((prev) => ({ ...prev, condition_grade: event.target.value as CreateDealRequest["metadata"]["condition_grade"] }))}>{CONDITION_GRADE_OPTIONS.map((grade) => <option key={grade} value={grade}>{grade}</option>)}</select></label>
-                    <label>Title Status<select value={intakeForm.title_status} onChange={(event) => setIntakeForm((prev) => ({ ...prev, title_status: event.target.value as TitleStatus }))}><option value="on_site">on_site</option><option value="delayed">delayed</option><option value="unknown">unknown</option></select></label>
-                    <label>Removal Deadline<input type="datetime-local" value={intakeForm.removal_deadline} onChange={(event) => setIntakeForm((prev) => ({ ...prev, removal_deadline: event.target.value }))} /></label>
-                    <label className="span-two">Condition Notes<textarea rows={3} value={intakeForm.condition_notes} onChange={(event) => setIntakeForm((prev) => ({ ...prev, condition_notes: event.target.value }))} /></label>
-                  </div>
-                </section>
-
-                <div className="advanced-toggle-row">
-                  <button type="button" className="link-button" onClick={() => setShowAdvancedFields((value) => !value)}>
-                    {showAdvancedFields ? "Hide Advanced Fields" : "Show Advanced Fields"}
-                  </button>
-                </div>
-
-                {showAdvancedFields ? (
                   <section className="form-section-card">
-                    <h3>Advanced Fields</h3>
+                    <h3>{isVehicleCategory ? "Vehicle Fields" : "Category Fields"}</h3>
                     <div className="form-grid-two">
-                      <label>Unit Count<input type="number" step="1" value={intakeForm.unit_count} onChange={(event) => setIntakeForm((prev) => ({ ...prev, unit_count: event.target.value }))} /></label>
-                      <label>Units Total<input type="number" step="1" value={intakeForm.units_total} onChange={(event) => setIntakeForm((prev) => ({ ...prev, units_total: event.target.value }))} /></label>
-                      <label>Units Working<input type="number" step="1" value={intakeForm.units_working} onChange={(event) => setIntakeForm((prev) => ({ ...prev, units_working: event.target.value }))} /></label>
-                      <label>Units Minor Issue<input type="number" step="1" value={intakeForm.units_minor_issue} onChange={(event) => setIntakeForm((prev) => ({ ...prev, units_minor_issue: event.target.value }))} /></label>
-                      <label>Units Defective<input type="number" step="1" value={intakeForm.units_defective} onChange={(event) => setIntakeForm((prev) => ({ ...prev, units_defective: event.target.value }))} /></label>
-                      <label>Units Locked<input type="number" step="1" value={intakeForm.units_locked} onChange={(event) => setIntakeForm((prev) => ({ ...prev, units_locked: event.target.value }))} /></label>
-                      <label>Prep Total Units<input type="number" step="1" value={intakeForm.prep_total_units} onChange={(event) => setIntakeForm((prev) => ({ ...prev, prep_total_units: event.target.value }))} /></label>
-                      <label>Prep Working Units<input type="number" step="1" value={intakeForm.prep_working_units} onChange={(event) => setIntakeForm((prev) => ({ ...prev, prep_working_units: event.target.value }))} /></label>
-                      <label>Prep Cosmetic Units<input type="number" step="1" value={intakeForm.prep_cosmetic_units} onChange={(event) => setIntakeForm((prev) => ({ ...prev, prep_cosmetic_units: event.target.value }))} /></label>
-                      <label>Prep Functional Units<input type="number" step="1" value={intakeForm.prep_functional_units} onChange={(event) => setIntakeForm((prev) => ({ ...prev, prep_functional_units: event.target.value }))} /></label>
-                      <label>Prep Defective Units<input type="number" step="1" value={intakeForm.prep_defective_units} onChange={(event) => setIntakeForm((prev) => ({ ...prev, prep_defective_units: event.target.value }))} /></label>
-                      <label>Prep Locked Units<input type="number" step="1" value={intakeForm.prep_locked_units} onChange={(event) => setIntakeForm((prev) => ({ ...prev, prep_locked_units: event.target.value }))} /></label>
-                      <label>Total Prep Time (minutes)<input type="number" step="1" value={intakeForm.prep_total_prep_time_minutes} onChange={(event) => setIntakeForm((prev) => ({ ...prev, prep_total_prep_time_minutes: event.target.value }))} /></label>
+                      <label>
+                        Transport Type
+                        <select
+                          value={intakeForm.transport_type}
+                          onChange={(event) =>
+                            updateForm(
+                              "transport_type",
+                              event.target.value as CreateDealRequest["metadata"]["transport_type"]
+                            )
+                          }
+                        >
+                          {TRANSPORT_TYPE_OPTIONS.map((transportType) => (
+                            <option key={transportType} value={transportType}>
+                              {transportType}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Transport Cost (Actual)
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={intakeForm.transport_cost_actual}
+                          onChange={(event) => updateForm("transport_cost_actual", event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        Transport Cost (Estimated)
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={intakeForm.transport_cost_estimated}
+                          onChange={(event) => updateForm("transport_cost_estimated", event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        Repair Cost
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={intakeForm.repair_cost}
+                          onChange={(event) => updateForm("repair_cost", event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        Prep Cost
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={intakeForm.prep_cost}
+                          onChange={(event) => updateForm("prep_cost", event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        Condition Grade
+                        <select
+                          value={intakeForm.condition_grade}
+                          onChange={(event) =>
+                            updateForm(
+                              "condition_grade",
+                              event.target.value as CreateDealRequest["metadata"]["condition_grade"]
+                            )
+                          }
+                        >
+                          {CONDITION_GRADE_OPTIONS.map((grade) => (
+                            <option key={grade} value={grade}>
+                              {grade}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Title Status
+                        <select
+                          value={intakeForm.title_status}
+                          onChange={(event) => updateForm("title_status", event.target.value as TitleStatus)}
+                        >
+                          <option value="on_site">on_site</option>
+                          <option value="delayed">delayed</option>
+                          <option value="unknown">unknown</option>
+                        </select>
+                      </label>
+                      <label>
+                        Removal Deadline
+                        <input
+                          type="datetime-local"
+                          value={intakeForm.removal_deadline}
+                          onChange={(event) => updateForm("removal_deadline", event.target.value)}
+                        />
+                      </label>
+                      <label className="span-two">
+                        Condition Notes
+                        <textarea
+                          rows={3}
+                          value={intakeForm.condition_notes}
+                          onChange={(event) => updateForm("condition_notes", event.target.value)}
+                        />
+                      </label>
                     </div>
                   </section>
-                ) : null}
 
-                <div className="entry-actions intake-primary-actions">
-                  <button type="submit" disabled={submitting} className="secondary-button">
-                    {submitting ? "Working..." : "Preview"}
-                  </button>
-                  <button type="button" disabled={submitting} onClick={() => void handleIntakeCreateDeal()} className="primary-button">
-                    Create Deal
-                  </button>
-                  <button type="button" disabled={submitting} onClick={handleIntakePass} className="ghost-button">
-                    Pass
-                  </button>
-                  <button type="button" disabled={submitting} onClick={handleIntakeSaveForLater} className="ghost-button">
-                    Save for later
-                  </button>
-                </div>
-              </form>
+                  {isVehicleCategory ? (
+                    <section className="form-section-card">
+                      <h3>Vehicle Market Inputs</h3>
+                      <div className="form-grid-two">
+                        <label>
+                          KBB Value
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={intakeForm.market_kbb_value}
+                            onChange={(event) => updateForm("market_kbb_value", event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          J.D. Power / NADA Value
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={intakeForm.market_nada_value}
+                            onChange={(event) => updateForm("market_nada_value", event.target.value)}
+                          />
+                        </label>
+                        <label className="span-two">
+                          CARFAX Status
+                          <input
+                            value={intakeForm.market_carfax_status}
+                            onChange={(event) => updateForm("market_carfax_status", event.target.value)}
+                            placeholder="e.g. clean title, minor damage, unknown"
+                          />
+                        </label>
+                      </div>
+                    </section>
+                  ) : null}
+
+                  <div className="advanced-toggle-row">
+                    <button
+                      type="button"
+                      className="link-button"
+                      onClick={() => setShowAdvancedFields((value) => !value)}
+                    >
+                      {showAdvancedFields ? "Hide Advanced Fields" : "Show Advanced Fields"}
+                    </button>
+                  </div>
+
+                  {showAdvancedFields ? (
+                    <section className="form-section-card">
+                      <h3>Advanced Ops Fields</h3>
+                      <div className="form-grid-two">
+                        <label>
+                          Units Total
+                          <input
+                            type="number"
+                            step="1"
+                            value={intakeForm.units_total}
+                            onChange={(event) => updateForm("units_total", event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Units Working
+                          <input
+                            type="number"
+                            step="1"
+                            value={intakeForm.units_working}
+                            onChange={(event) => updateForm("units_working", event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Units Minor Issue
+                          <input
+                            type="number"
+                            step="1"
+                            value={intakeForm.units_minor_issue}
+                            onChange={(event) => updateForm("units_minor_issue", event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Units Defective
+                          <input
+                            type="number"
+                            step="1"
+                            value={intakeForm.units_defective}
+                            onChange={(event) => updateForm("units_defective", event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Units Locked
+                          <input
+                            type="number"
+                            step="1"
+                            value={intakeForm.units_locked}
+                            onChange={(event) => updateForm("units_locked", event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Prep Total Units
+                          <input
+                            type="number"
+                            step="1"
+                            value={intakeForm.prep_total_units}
+                            onChange={(event) => updateForm("prep_total_units", event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Prep Working Units
+                          <input
+                            type="number"
+                            step="1"
+                            value={intakeForm.prep_working_units}
+                            onChange={(event) => updateForm("prep_working_units", event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Prep Cosmetic Units
+                          <input
+                            type="number"
+                            step="1"
+                            value={intakeForm.prep_cosmetic_units}
+                            onChange={(event) => updateForm("prep_cosmetic_units", event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Prep Functional Units
+                          <input
+                            type="number"
+                            step="1"
+                            value={intakeForm.prep_functional_units}
+                            onChange={(event) => updateForm("prep_functional_units", event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Prep Defective Units
+                          <input
+                            type="number"
+                            step="1"
+                            value={intakeForm.prep_defective_units}
+                            onChange={(event) => updateForm("prep_defective_units", event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Prep Locked Units
+                          <input
+                            type="number"
+                            step="1"
+                            value={intakeForm.prep_locked_units}
+                            onChange={(event) => updateForm("prep_locked_units", event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Total Prep Time (minutes)
+                          <input
+                            type="number"
+                            step="1"
+                            value={intakeForm.prep_total_prep_time_minutes}
+                            onChange={(event) => updateForm("prep_total_prep_time_minutes", event.target.value)}
+                          />
+                        </label>
+                      </div>
+                    </section>
+                  ) : null}
+
+                  <div className="entry-actions intake-primary-actions">
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => setIntakeStep(2)}
+                    >
+                      Back
+                    </button>
+                    <button type="submit" disabled={submitting || !step3Ready} className="secondary-button">
+                      {submitting ? "Working..." : "Preview"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={submitting || !step3Ready}
+                      onClick={() => void handleIntakeCreateDeal()}
+                      className="primary-button"
+                    >
+                      Create Deal
+                    </button>
+                    <button type="button" disabled={submitting} onClick={handleIntakePass} className="ghost-button">
+                      Pass
+                    </button>
+                    <button
+                      type="button"
+                      disabled={submitting}
+                      onClick={handleIntakeSaveForLater}
+                      className="ghost-button"
+                    >
+                      Save for later
+                    </button>
+                  </div>
+                </form>
+              ) : null}
 
               {intakeStatusMessage ? <p className="decision-confirmation">{intakeStatusMessage}</p> : null}
 
@@ -797,6 +1635,15 @@ function App() {
                       ? new Date(intakePreviewDeal.metadata.removal_deadline).toLocaleString()
                       : "not provided"}
                   </p>
+                  {(intakePreviewDeal.deal.quantity_purchased !== null &&
+                    intakePreviewDeal.deal.quantity_purchased !== undefined) ||
+                  (intakePreviewDeal.deal.quantity_broken !== null &&
+                    intakePreviewDeal.deal.quantity_broken !== undefined) ? (
+                    <p>
+                      Quantity Purchased: {intakePreviewDeal.deal.quantity_purchased ?? "N/A"} · Quantity Broken:{" "}
+                      {intakePreviewDeal.deal.quantity_broken ?? "N/A"}
+                    </p>
+                  ) : null}
                   {(intakePreviewDeal.warnings ?? []).includes("REMOVAL_URGENT") ? (
                     <p className="warning-text">REMOVAL_URGENT — deadline is near.</p>
                   ) : null}
@@ -809,10 +1656,24 @@ function App() {
                   <ul>
                     {savedForLaterIntake.map((entry) => (
                       <li key={entry.id}>
-                        <strong>{entry.title}</strong> · Bid {entry.current_bid || "0"} · {entry.payload.acquisition_state} · {entry.payload.seller_type ?? "unknown"} · Saved {new Date(entry.created_at).toLocaleString()}
+                        <strong>{entry.title}</strong> · Bid {entry.current_bid || "0"} ·{" "}
+                        {entry.payload.acquisition_state} · {entry.payload.seller_type ?? "unknown"} · Saved{" "}
+                        {new Date(entry.created_at).toLocaleString()}
                         <div className="entry-actions">
-                          <button type="button" onClick={() => void handleLoadQueueEntry(entry)} className="secondary-button">Load Preview</button>
-                          <button type="button" onClick={() => handleRemoveQueueEntry(entry.id)} className="ghost-button">Remove</button>
+                          <button
+                            type="button"
+                            onClick={() => void handleLoadQueueEntry(entry)}
+                            className="secondary-button"
+                          >
+                            Load Preview
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveQueueEntry(entry.id)}
+                            className="ghost-button"
+                          >
+                            Remove
+                          </button>
                         </div>
                       </li>
                     ))}
@@ -845,11 +1706,15 @@ function App() {
                   .filter((item) => (item.alerts?.length ?? 0) > 0)
                   .map((item) => (
                     <div className="preview-box" key={item.deal.id}>
-                      <p><strong>{item.deal.label}</strong></p>
+                      <p>
+                        <strong>{item.deal.label}</strong>
+                      </p>
                       <ul>
                         {item.alerts?.map((alert) => (
                           <li key={`${item.deal.id}-${alert.code}-${alert.message}`}>
-                            <span className={alert.severity === "critical" ? "alert-critical" : ""}>[{alert.severity.toUpperCase()}]</span>{" "}
+                            <span className={alert.severity === "critical" ? "alert-critical" : ""}>
+                              [{alert.severity.toUpperCase()}]
+                            </span>{" "}
                             {alert.code}: {alert.message}
                           </li>
                         ))}
@@ -870,7 +1735,10 @@ function App() {
                   .filter((item) => item.deal.status === "completed")
                   .map((item) => (
                     <div className="preview-box" key={item.deal.id}>
-                      <p><strong>{item.deal.label}</strong> · Realized ${(item.calculations.realized_profit ?? 0).toFixed(2)}</p>
+                      <p>
+                        <strong>{item.deal.label}</strong> · Realized $
+                        {(item.calculations.realized_profit ?? 0).toFixed(2)}
+                      </p>
                     </div>
                   ))
               )}
@@ -880,8 +1748,20 @@ function App() {
 
         <aside className="right-panel">
           <div className="right-panel-toggle">
-            <button type="button" className={rightPanelMode === "detail" ? "active" : ""} onClick={() => setRightPanelMode("detail")}>Deal Detail</button>
-            <button type="button" className={rightPanelMode === "assistant" ? "active" : ""} onClick={() => setRightPanelMode("assistant")}>AI Assistant</button>
+            <button
+              type="button"
+              className={rightPanelMode === "detail" ? "active" : ""}
+              onClick={() => setRightPanelMode("detail")}
+            >
+              Deal Detail
+            </button>
+            <button
+              type="button"
+              className={rightPanelMode === "assistant" ? "active" : ""}
+              onClick={() => setRightPanelMode("assistant")}
+            >
+              AI Assistant
+            </button>
           </div>
 
           {rightPanelMode === "detail" ? (
@@ -894,14 +1774,11 @@ function App() {
                 ) : null}
                 <DetailPanel
                   deal={selectedDeal}
-                  onDecisionRecorded={(updatedDeal) => {
-                    setDeals((prev) =>
-                      prev.map((current) => (current.deal.id === updatedDeal.deal.id ? updatedDeal : current))
-                    );
-                    if (intakePreviewDeal && intakePreviewDeal.deal.id === updatedDeal.deal.id) {
-                      setIntakePreviewDeal(updatedDeal);
-                    }
-                  }}
+                  marketIntel={selectedDealMarketIntel}
+                  reconditioning={selectedDealReconditioning}
+                  onMarketIntelChange={handleMarketIntelChange}
+                  onReconditioningChange={handleReconditioningChange}
+                  onRequestApproveDecision={handleRequestApproveDecision}
                 />
               </>
             ) : (
@@ -909,7 +1786,10 @@ function App() {
             )
           ) : (
             <div className="assistant-panel">
-              <p>Selected deal: {selectedDeal ? `${selectedDeal.deal.label} (${selectedDeal.deal.id})` : "None selected"}</p>
+              <p>
+                Selected deal:{" "}
+                {selectedDeal ? `${selectedDeal.deal.label} (${selectedDeal.deal.id})` : "None selected"}
+              </p>
               <div className="quick-prompts">
                 {QUICK_ASSISTANT_PROMPTS.map((prompt) => (
                   <button
@@ -927,19 +1807,35 @@ function App() {
               </div>
               <label>
                 Ask about this deal
-                <textarea rows={3} value={assistantQuestion} onChange={(event) => setAssistantQuestion(event.target.value)} placeholder="What are the top risks and next action?" />
+                <textarea
+                  rows={3}
+                  value={assistantQuestion}
+                  onChange={(event) => setAssistantQuestion(event.target.value)}
+                  placeholder="What are the top risks and next action?"
+                />
               </label>
               <div className="entry-actions">
-                <button type="button" className="secondary-button" disabled={assistantLoading || !selectedDeal} onClick={() => void handleAssistantSubmit()}>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={assistantLoading || !selectedDeal}
+                  onClick={() => void handleAssistantSubmit()}
+                >
                   {assistantLoading ? "Asking..." : "Ask Assistant"}
                 </button>
               </div>
               {assistantError ? <p className="warning-banner">{assistantError}</p> : null}
               {assistantResponse ? (
                 <div className="preview-box">
-                  <p><strong>Response:</strong> {assistantResponse.response}</p>
-                  <p><strong>Risk:</strong> {assistantResponse.risk_level}</p>
-                  <p><strong>Suggested Action:</strong> {assistantResponse.suggested_action}</p>
+                  <p>
+                    <strong>Response:</strong> {assistantResponse.response}
+                  </p>
+                  <p>
+                    <strong>Risk:</strong> {assistantResponse.risk_level}
+                  </p>
+                  <p>
+                    <strong>Suggested Action:</strong> {assistantResponse.suggested_action}
+                  </p>
                   {assistantResponse.key_points.length > 0 ? (
                     <ul>
                       {assistantResponse.key_points.map((point) => (
@@ -953,6 +1849,15 @@ function App() {
           )}
         </aside>
       </div>
+      <PreBidSanityModal
+        deal={pendingApprovalDeal}
+        reconditioning={pendingApprovalReconditioning}
+        isOpen={Boolean(pendingApprovalDeal)}
+        onClose={() => setPendingApprovalDealId(null)}
+        onAcknowledgeAndApprove={() =>
+          pendingApprovalDeal ? void handleApproveWithSanityCheck(pendingApprovalDeal.deal.id) : undefined
+        }
+      />
     </main>
   );
 }

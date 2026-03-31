@@ -12,6 +12,9 @@ import type {
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/+$/, "");
 const apiUrl = (path: string): string => {
   if (!API_BASE) {
+    if (import.meta.env.PROD) {
+      throw new Error("VITE_API_BASE_URL is required for production deployments.");
+    }
     return path;
   }
 

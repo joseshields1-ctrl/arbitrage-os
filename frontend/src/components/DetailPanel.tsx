@@ -1,13 +1,37 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { submitDealDecision } from "../api";
-import type { DealView } from "../types";
+import type { DealView, ReconditioningRecord, VehicleMarketIntel } from "../types";
+import {
+  buildMarketLinks,
+  calculateRoiPct,
+  computeBlendedMarketValue,
+  computeDaysToCashBack,
+  getCapitalVelocityLabel,
+  normalizeVehicleIntel,
+} from "../utils/marketIntel";
+import VehicleMarketPanel from "./VehicleMarketPanel";
+import ReconditioningPanel from "./ReconditioningPanel";
 
 interface DetailPanelProps {
   deal: DealView;
-  onDecisionRecorded: (updatedDeal: DealView) => void;
+  marketIntel: VehicleMarketIntel;
+  reconditioning: ReconditioningRecord;
+  onMarketIntelChange: (dealId: string, intel: VehicleMarketIntel) => void;
+  onReconditioningChange: (dealId: string, next: ReconditioningRecord) => void;
+  onRequestApproveDecision: (dealId: string) => void;
 }
 
-const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
+const formatCurrency = (value: number | null): string =>
+  value === null ? "N/A" : `$${value.toFixed(2)}`;
+
+const DetailPanel = ({
+  deal,
+  marketIntel,
+  reconditioning,
+  onMarketIntelChange,
+  onReconditioningChange,
+  onRequestApproveDecision,
+}: DetailPanelProps) => {
   const unitBreakdown = deal.deal.unit_breakdown;
   const prepMetrics = deal.deal.prep_metrics;
   const mismatch = (deal.warnings ?? []).some((warning) =>
@@ -16,8 +40,8 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
   const [decisionReason, setDecisionReason] = useState("");
   const [decisionSubmitting, setDecisionSubmitting] = useState(false);
   const [decisionError, setDecisionError] = useState<string | null>(null);
-  const [decisionConfirmation, setDecisionConfirmation] = useState<string | null>(null);
   const [showPreviousDecisions, setShowPreviousDecisions] = useState(false);
+  const normalizedIntel = useMemo(() => normalizeVehicleIntel(marketIntel), [marketIntel]);
   const qualityFlag = deal.calculations.source_quality_flag;
   const latestDecision = deal.operator_decision_history[0] ?? null;
   const previousDecisions = deal.operator_decision_history.slice(1);
@@ -45,29 +69,53 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
         : deal.calculations.efficiency_rating === "BAD"
           ? "efficiency-bad"
           : undefined;
+  const categoryGroup = deal.deal.category.startsWith("vehicle") ? "vehicle" : "other";
+  const blendedMarketValue = computeBlendedMarketValue(
+    normalizedIntel,
+    deal.financials.estimated_market_value
+  );
+  const marketLinks = buildMarketLinks(deal.deal.label);
+  const totalInvestment =
+    deal.calculations.total_cost_basis + (deal.financials.repair_cost ?? 0) + (deal.financials.prep_cost ?? 0);
+  const projectedResale = blendedMarketValue ?? deal.financials.estimated_market_value;
+  const projectedNet = projectedResale - totalInvestment;
+  const projectedRoiPct = calculateRoiPct(projectedNet, totalInvestment);
+  const reconTotal = reconditioning.entries.reduce((sum, entry) => sum + entry.cost, 0);
+  const projectedAfterRecon = projectedNet - reconTotal;
+  const cycleStart = deal.deal.discovered_date ?? deal.deal.purchase_date ?? deal.deal.stage_updated_at;
+  const cycleEnd = deal.deal.completion_date ?? deal.deal.sale_date ?? deal.deal.stage_updated_at;
+  const daysToSell =
+    deal.deal.sale_date && cycleStart
+      ? Math.max(
+          0,
+          Math.floor((Date.parse(deal.deal.sale_date) - Date.parse(cycleStart)) / (1000 * 60 * 60 * 24))
+        )
+      : null;
+  const totalCycleTime =
+    cycleEnd
+      ? Math.max(
+          0,
+          Math.floor((Date.parse(cycleEnd) - Date.parse(cycleStart)) / (1000 * 60 * 60 * 24))
+        )
+      : null;
+  const daysToCashBack = computeDaysToCashBack(deal);
+  const capitalVelocityLabel = getCapitalVelocityLabel(daysToCashBack);
+  const realizedRoiPct = calculateRoiPct(deal.calculations.realized_profit, deal.calculations.total_cost_basis);
 
-  const handleDecision = async (decision: "approved" | "rejected") => {
+  const handleRejectDecision = async () => {
     const trimmedReason = decisionReason.trim();
     if (!trimmedReason) {
       setDecisionError("Reason is required.");
-      setDecisionConfirmation(null);
       return;
     }
     setDecisionSubmitting(true);
     setDecisionError(null);
-    setDecisionConfirmation(null);
     try {
-      const response = await submitDealDecision(deal.deal.id, {
-        decision,
+      await submitDealDecision(deal.deal.id, {
+        decision: "rejected",
         reason: trimmedReason,
       });
-      onDecisionRecorded(response.deal);
       setDecisionReason("");
-      setDecisionConfirmation(
-        `Saved decision: ${response.stored_decision.decision} at ${new Date(
-          response.stored_decision.decided_at
-        ).toLocaleString()}`
-      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to save decision";
       setDecisionError(message);
@@ -97,6 +145,76 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
           {keyWarnings.length > 0 ? keyWarnings.join(", ") : "none"}
         </p>
       </div>
+      <div className="decision-section">
+        <h4>Upside Snapshot</h4>
+        <p>
+          <strong>Blended Market Value:</strong>{" "}
+          {formatCurrency(blendedMarketValue)}
+        </p>
+        <p>
+          <strong>Acquisition Cost:</strong> {formatCurrency(deal.financials.acquisition_cost)}
+        </p>
+        <p>
+          <strong>Estimated Repairs:</strong>{" "}
+          {formatCurrency((deal.financials.repair_cost ?? 0) + (deal.financials.prep_cost ?? 0))}
+        </p>
+        <p>
+          <strong>Total Investment:</strong> {formatCurrency(totalInvestment)}
+        </p>
+        <p>
+          <strong>Projected Resale:</strong> {formatCurrency(projectedResale)}
+        </p>
+        <p>
+          <strong>Net Profit:</strong> {formatCurrency(projectedNet)}
+        </p>
+        <p>
+          <strong>ROI %:</strong>{" "}
+          {deal.deal.status === "completed" ? realizedRoiPct.toFixed(1) : projectedRoiPct.toFixed(1)}%
+        </p>
+      </div>
+      <div className="decision-section">
+        <h4>Capital Velocity</h4>
+        <p>
+          <strong>ROI %:</strong> {projectedRoiPct.toFixed(1)}%
+        </p>
+        <p>
+          <strong>Days to Sell:</strong> {daysToSell === null ? "N/A" : daysToSell}
+        </p>
+        <p>
+          <strong>Total Cycle Time:</strong> {totalCycleTime === null ? "N/A" : totalCycleTime}
+        </p>
+        <p>
+          <strong>Days to Cash Back:</strong> {daysToCashBack}
+        </p>
+        <p>
+          <strong>Capital Velocity:</strong> {capitalVelocityLabel}
+        </p>
+      </div>
+      {categoryGroup === "vehicle" ? (
+        <VehicleMarketPanel
+          intel={normalizedIntel}
+          marketLinks={marketLinks}
+          onIntelChange={(next) => onMarketIntelChange(deal.deal.id, next)}
+        />
+      ) : null}
+      {categoryGroup === "vehicle" ? (
+        <ReconditioningPanel
+          deal={deal}
+          value={reconditioning}
+          onChange={onReconditioningChange}
+        />
+      ) : null}
+      {categoryGroup === "vehicle" ? (
+        <div className="decision-section">
+          <h4>Recon Impact</h4>
+          <p>
+            <strong>Total Recon Cost:</strong> {formatCurrency(reconTotal)}
+          </p>
+          <p>
+            <strong>Profit After Recon:</strong> {formatCurrency(projectedAfterRecon)}
+          </p>
+        </div>
+      ) : null}
       {unitBreakdown ? (
         <div className="unit-breakdown">
           <div>
@@ -162,11 +280,42 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
       {deal.warnings?.includes("TRANSPORT_ESTIMATED") ? (
         <p className="warning-text">Estimated Transport (Estimated) — transport value is not actual.</p>
       ) : null}
+      {categoryGroup === "vehicle" ? (
+        <div className="decision-section">
+          <h4>Transport Cost Realism</h4>
+          <p>
+            Standard transport usually ranges from <strong>$0.60-$0.80/mile</strong>.
+            Urgent moves can run up to <strong>$1.00/mile</strong>.
+          </p>
+          <p>
+            <strong>Actual Transport:</strong>{" "}
+            {deal.financials.transport_cost_actual === null
+              ? "Not entered"
+              : formatCurrency(deal.financials.transport_cost_actual)}
+          </p>
+          <p>
+            <strong>Estimated Transport:</strong>{" "}
+            {deal.financials.transport_cost_estimated === null
+              ? "Not entered"
+              : `${formatCurrency(deal.financials.transport_cost_estimated)} (Estimated Transport)`}
+          </p>
+          {deal.warnings?.includes("TRANSPORT_ESTIMATED") ? (
+            <p className="warning-text">TRANSPORT_ESTIMATED</p>
+          ) : null}
+        </div>
+      ) : null}
       <div className="decision-section">
         <h4>Intake / Ops Fields</h4>
         <p>
           <strong>Title Status:</strong> {deal.metadata.title_status}
         </p>
+        {(deal.deal.quantity_purchased !== null && deal.deal.quantity_purchased !== undefined) ||
+        (deal.deal.quantity_broken !== null && deal.deal.quantity_broken !== undefined) ? (
+          <p>
+            <strong>Quantity Purchased:</strong> {deal.deal.quantity_purchased ?? "N/A"} ·{" "}
+            <strong>Quantity Broken:</strong> {deal.deal.quantity_broken ?? "N/A"}
+          </p>
+        ) : null}
         <p className={deal.warnings?.includes("REMOVAL_URGENT") ? "warning-text" : undefined}>
           <strong>Removal Deadline:</strong>{" "}
           {deal.metadata.removal_deadline
@@ -267,22 +416,19 @@ const DetailPanel = ({ deal, onDecisionRecorded }: DetailPanelProps) => {
           <button
             type="button"
             disabled={decisionSubmitting}
-            onClick={() => void handleDecision("approved")}
+            onClick={() => onRequestApproveDecision(deal.deal.id)}
           >
             Approve
           </button>
           <button
             type="button"
             disabled={decisionSubmitting}
-            onClick={() => void handleDecision("rejected")}
+            onClick={() => void handleRejectDecision()}
           >
             Reject
           </button>
         </div>
         {decisionError ? <p className="warning-text">{decisionError}</p> : null}
-        {decisionConfirmation ? (
-          <p className="decision-confirmation">{decisionConfirmation}</p>
-        ) : null}
       </div>
     </div>
   );

@@ -56,6 +56,8 @@ export interface DealRow {
   listing_date: string | null;
   sale_date: string | null;
   completion_date: string | null;
+  quantity_purchased?: number | null;
+  quantity_broken?: number | null;
   unit_count?: number | null;
   unit_breakdown?: UnitBreakdown | null;
   prep_metrics?: PrepMetrics | null;

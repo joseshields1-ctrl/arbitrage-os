@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: arbitrage-os-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: SQLITE_DB_PATH
+        value: /var/data/arbitrage-os.db
+      # Set this to your deployed frontend URL(s), comma-separated if needed.
+      # Example: https://specialty-sniper.vercel.app
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      # Optional for live assistant responses. If omitted, assistant returns safe mock output.
+      - key: OPENAI_API_KEY
+        sync: false
+    disk:
+      name: arbitrage-os-data
+      mountPath: /var/data
+      sizeGB: 1

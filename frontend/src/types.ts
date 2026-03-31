@@ -36,6 +36,52 @@ export type ConditionGrade =
   | "defective"
   | "parts_only";
 
+export type IntakeCategory = "vehicle" | "electronics" | "other";
+export type CompSourceType = "facebook" | "craigslist" | "dealer" | "auction" | "other";
+export type CompConfidence = "HIGH" | "MEDIUM" | "LOW" | "MANUAL_REVIEW_REQUIRED";
+export type ReconStatus = "not_started" | "in_progress" | "completed";
+export type ReconCategory =
+  | "Paint & Body"
+  | "Tires"
+  | "Rims"
+  | "Mechanical Repair"
+  | "Mechanical Maintenance"
+  | "Soft Detail"
+  | "Deep Detail"
+  | "Other";
+export type ReconPaidBy = "buyer" | "seller" | "split";
+
+export interface ManualCompEntry {
+  id: string;
+  price: number;
+  source: CompSourceType;
+  notes: string;
+  date: string;
+}
+
+export interface VehicleMarketIntel {
+  kbb_value: number | null;
+  nada_value: number | null;
+  carfax_status: string | null;
+  manual_comps: ManualCompEntry[];
+}
+
+export interface ReconditioningEntry {
+  id: string;
+  category: ReconCategory;
+  description: string;
+  cost: number;
+  date: string;
+  paid_by: ReconPaidBy;
+}
+
+export interface ReconditioningRecord {
+  arrival_date: string | null;
+  extension_days: 0 | 14;
+  status: ReconStatus;
+  entries: ReconditioningEntry[];
+}
+
 export interface DealRecord {
   id: string;
   label: string;
@@ -50,6 +96,8 @@ export interface DealRecord {
   listing_date: string | null;
   sale_date: string | null;
   completion_date: string | null;
+  quantity_purchased?: number | null;
+  quantity_broken?: number | null;
   unit_count?: number | null;
   unit_breakdown?: {
     units_total: number;
@@ -67,6 +115,7 @@ export interface DealRecord {
     locked_units: number;
     total_prep_time_minutes: number;
   } | null;
+  market_intel?: VehicleMarketIntel | null;
 }
 
 export interface FinancialRecord {
@@ -255,6 +304,8 @@ export interface CreateDealRequest {
   listing_date?: string | null;
   sale_date?: string | null;
   completion_date?: string | null;
+  quantity_purchased?: number | null;
+  quantity_broken?: number | null;
   financials: {
     acquisition_cost: number;
     buyer_premium_pct?: number;
@@ -289,6 +340,7 @@ export interface CreateDealRequest {
     locked_units: number;
     total_prep_time_minutes: number;
   };
+  market_intel?: VehicleMarketIntel | null;
 }
 
 export interface DashboardSummary {
