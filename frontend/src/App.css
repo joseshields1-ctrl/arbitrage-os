@@ -203,6 +203,44 @@
   gap: 6px;
 }
 
+.sniper-score-breakdown {
+  border: 1px dashed #bfdbfe;
+  border-radius: 8px;
+  padding: 8px;
+  background: #f8fbff;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.sniper-score-breakdown span {
+  font-size: 0.74rem;
+  color: #1f2937;
+}
+
+.sniper-score-breakdown strong {
+  margin-left: 4px;
+}
+
+.risk-chip.info {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1e40af;
+}
+
+.risk-chip.critical {
+  border-color: #fca5a5;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.risk-chip.quality-signal {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #166534;
+  font-weight: 600;
+}
+
 .status-badge.opportunity-status.converted {
   border-color: #93c5fd;
   background: #eff6ff;

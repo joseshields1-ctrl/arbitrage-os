@@ -99,6 +99,21 @@ export interface SniperAIPick {
   metrics: OpportunityDerivedMetrics;
   score: number;
   explanation: string;
+  quality_signals: string[];
+  scoring_breakdown: {
+    profit_score: number;
+    roi_score: number;
+    transport_score: number;
+    confidence_score: number;
+    ehr_score: number;
+    urgency_boost: number;
+    interest_adjustment: number;
+    behavior_adjustment: number;
+    risk_penalty: number;
+    real_world_penalty: number;
+    capital_penalty: number;
+    final_score: number;
+  };
 }
 
 export interface SniperDashboardSummary {
@@ -124,11 +139,22 @@ export interface OpportunityPreviewSnapshot {
 export interface OpportunityDerivedMetrics {
   estimated_distance_miles: number | null;
   estimated_transport_cost: number | null;
+  estimated_total_cost: number;
   projected_upside: number;
   projected_roi_pct: number;
   confidence: number;
   time_left_hours: number | null;
+  estimated_ehr: number | null;
+  capital_blocked: boolean;
   risk_flags: string[];
+  applied_penalties: string[];
+}
+
+export interface SniperBehaviorProfile {
+  distance_pass_rate: number;
+  funds_pass_rate: number;
+  coordination_pass_rate: number;
+  risk_pass_rate: number;
 }
 
 export interface OpportunityFilters {
@@ -292,6 +318,7 @@ export const OPPORTUNITY_SORT_OPTIONS: Array<{ value: OpportunitySortMode; label
 ];
 
 export const SNIPER_CONFIDENCE_THRESHOLD = 62;
+const KEY_NONRUNNER_COST_PENALTY = 450;
 const MAJOR_EXCLUDED_RISK_FLAGS = new Set([
   "FORCE_LIQUIDATION",
   "ESTIMATION_FAILURE",
@@ -426,13 +453,25 @@ const estimateConfidence = (opportunity: GovDealsOpportunity, distanceMiles: num
 export const computeOpportunityDerivedMetrics = (
   opportunity: GovDealsOpportunity,
   operatorBaseState: string,
-  preview?: OpportunityPreviewSnapshot
+  preview?: OpportunityPreviewSnapshot,
+  availableLiquidCash = Number.POSITIVE_INFINITY
 ): OpportunityDerivedMetrics => {
   const estimatedDistance = estimateDistanceMiles(operatorBaseState, opportunity.location);
   const estimatedTransportCost = estimateTransportCost(estimatedDistance, opportunity.category, opportunity.auction_end);
+  const conditionLower = opportunity.condition_raw.toLowerCase();
+  const missingKey = conditionLower.includes("missing key") || conditionLower.includes("no key");
+  const nonRunner =
+    conditionLower.includes("non-runner") ||
+    conditionLower.includes("non runner") ||
+    conditionLower.includes("does not run");
+  const keyNonRunnerCost = missingKey || nonRunner ? KEY_NONRUNNER_COST_PENALTY : 0;
   const premiumCost = opportunity.current_bid * opportunity.buyer_premium_pct;
   const estimatedTotalInvestment =
-    opportunity.current_bid + premiumCost + (estimatedTransportCost ?? 0) + opportunity.estimated_repair_cost;
+    opportunity.current_bid +
+    premiumCost +
+    (estimatedTransportCost ?? 0) +
+    opportunity.estimated_repair_cost +
+    keyNonRunnerCost;
   const rawUpside = opportunity.estimated_resale_value - estimatedTotalInvestment;
   const rawRoi = estimatedTotalInvestment > 0 ? (rawUpside / estimatedTotalInvestment) * 100 : 0;
   const timeLeft = hoursUntil(opportunity.auction_end);
@@ -444,8 +483,26 @@ export const computeOpportunityDerivedMetrics = (
   if (opportunity.relisted) {
     riskFlags.add("RELISTED_ASSET");
   }
+  if (opportunity.title_status !== "on_site") {
+    riskFlags.add("CAPITAL_LOCK");
+  }
   if (timeLeft !== null && timeLeft < 12) {
     riskFlags.add("ENDING_SOON");
+  }
+  if (opportunity.removal_window_days <= 2) {
+    riskFlags.add("REMOVAL_RISK");
+  }
+  if (timeLeft !== null && timeLeft <= 36) {
+    const auctionEndTs = Date.parse(opportunity.auction_end);
+    const removalDeadlineTs =
+      Number.isFinite(auctionEndTs) && opportunity.removal_window_days > 0
+        ? auctionEndTs + opportunity.removal_window_days * 24 * 60 * 60 * 1000
+        : Number.NaN;
+    const removalDay = Number.isFinite(removalDeadlineTs) ? new Date(removalDeadlineTs).getDay() : null;
+    if (removalDay === 0 || removalDay === 6) {
+      riskFlags.add("WEEKEND_REMOVAL");
+      riskFlags.add("REMOVAL_RISK");
+    }
   }
   if (estimatedDistance !== null && estimatedDistance > 450) {
     riskFlags.add("LONG_DISTANCE");
@@ -462,18 +519,48 @@ export const computeOpportunityDerivedMetrics = (
   if (opportunity.seller_type === "unknown") {
     riskFlags.add("UNKNOWN_SELLER_TYPE");
   }
+  if (missingKey || nonRunner) {
+    riskFlags.add("KEY_NONRUNNER");
+    riskFlags.add("KEY_NONRUNNER_PENALTY");
+  }
+  if (opportunity.relisted) {
+    riskFlags.add("POSSIBLE_DOG");
+  }
+  if (conditionLower.includes("bad listing") || conditionLower.includes("repeat issue")) {
+    riskFlags.add("SELLER_REPUTATION_RISK");
+  }
+  const capitalBlocked = estimatedTotalInvestment > availableLiquidCash;
+  if (capitalBlocked) {
+    riskFlags.add("CAPITAL_BLOCKED");
+  }
   if (preview) {
     preview.warnings.forEach((warning) => riskFlags.add(warning));
   }
+  const appliedPenalties = [
+    riskFlags.has("CAPITAL_LOCK") ? "CAPITAL_LOCK" : null,
+    riskFlags.has("REMOVAL_RISK") ? "REMOVAL_RISK" : null,
+    riskFlags.has("KEY_NONRUNNER_PENALTY") ? "KEY_NONRUNNER_PENALTY" : null,
+    riskFlags.has("POSSIBLE_DOG") ? "POSSIBLE_DOG" : null,
+    riskFlags.has("SELLER_REPUTATION_RISK") ? "SELLER_REPUTATION_RISK" : null,
+    riskFlags.has("CAPITAL_BLOCKED") ? "CAPITAL_BLOCKED" : null,
+  ].filter((item): item is string => item !== null);
+  const estimatedEhr =
+    metricsProjectedHours(opportunity, estimatedDistance) > 0
+      ? rawUpside / metricsProjectedHours(opportunity, estimatedDistance)
+      : null;
 
   return {
     estimated_distance_miles: estimatedDistance,
     estimated_transport_cost: estimatedTransportCost,
+    estimated_total_cost: estimatedTotalInvestment,
     projected_upside: preview?.projected_profit ?? rawUpside,
     projected_roi_pct: preview?.projected_roi_pct ?? rawRoi,
     confidence,
     time_left_hours: timeLeft,
+    estimated_ehr: estimatedEhr,
+    capital_blocked: capitalBlocked,
     risk_flags: Array.from(riskFlags),
+    applied_penalties: appliedPenalties,
   };
 };
 
@@ -983,10 +1070,121 @@ const hasReasonableTransportEconomics = (metrics: OpportunityDerivedMetrics): bo
   return metrics.estimated_transport_cost <= metrics.projected_upside * 0.65;
 };
 
-export const computeSniperScore = (
+const metricsProjectedHours = (
+  opportunity: GovDealsOpportunity,
+  distanceMiles: number | null
+): number => {
+  const pickupHours = opportunity.category === "vehicle" ? 2.5 : 1.5;
+  const transportHours = distanceMiles === null ? 2 : Math.max(1, distanceMiles / 55);
+  const units = opportunity.quantity_purchased ?? (opportunity.category === "electronics" ? 20 : 1);
+  const broken = opportunity.quantity_broken ?? 0;
+  const prepPerUnit = opportunity.category === "electronics" ? 0.2 : 0.8;
+  const reworkHours = broken * 0.35;
+  return pickupHours + transportHours + units * prepPerUnit + reworkHours;
+};
+
+const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
+
+const computeBehaviorProfileFromDecisions = (decisions: SniperDecisionRecord[]): SniperBehaviorProfile => {
+  const passed = decisions.filter((item) => item.decision === "passed");
+  const totalPassed = Math.max(1, passed.length);
+  const countReason = (reason: SniperPassReason): number =>
+    passed.filter((item) => item.pass_reason === reason).length;
+  return {
+    distance_pass_rate: countReason("distance") / totalPassed,
+    funds_pass_rate: countReason("funds") / totalPassed,
+    coordination_pass_rate: countReason("coordination") / totalPassed,
+    risk_pass_rate: countReason("risk") / totalPassed,
+  };
+};
+
+const computeRealWorldPenalty = (
   opportunity: GovDealsOpportunity,
   metrics: OpportunityDerivedMetrics
+): { penalty: number; flags: string[] } => {
+  let penalty = 0;
+  const flags: string[] = [];
+  if (opportunity.title_status !== "on_site") {
+    penalty += 12;
+    flags.push("CAPITAL_LOCK");
+  }
+  const weekendRemoval = metrics.risk_flags.includes("WEEKEND_REMOVAL");
+  const shortRemoval = opportunity.removal_window_days <= 2;
+  if (shortRemoval || weekendRemoval) {
+    penalty += shortRemoval ? 8 : 5;
+    flags.push("REMOVAL_RISK");
+  }
+  if (metrics.risk_flags.includes("KEY_NONRUNNER")) {
+    penalty += 10;
+    flags.push("KEY_NONRUNNER_PENALTY");
+  }
+  if (opportunity.relisted) {
+    penalty += 14;
+    flags.push("POSSIBLE_DOG");
+  }
+  if (metrics.risk_flags.includes("SELLER_REPUTATION_RISK")) {
+    penalty += 7;
+    flags.push("SELLER_REPUTATION_RISK");
+  }
+  return { penalty, flags };
+};
+
+const computeBehaviorAdjustment = (
+  metrics: OpportunityDerivedMetrics,
+  profile: SniperBehaviorProfile
 ): number => {
+  let adjustment = 0;
+  const distanceFactor = clamp(profile.distance_pass_rate * 18, 0, 18);
+  const fundsFactor = clamp(profile.funds_pass_rate * 18, 0, 18);
+  const coordinationFactor = clamp(profile.coordination_pass_rate * 16, 0, 16);
+  const riskFactor = clamp(profile.risk_pass_rate * 20, 0, 20);
+  if ((metrics.estimated_distance_miles ?? 0) > 350) {
+    adjustment -= distanceFactor;
+  }
+  if (metrics.estimated_total_cost > 6000) {
+    adjustment -= fundsFactor;
+  }
+  if ((metrics.estimated_distance_miles ?? 0) > 250 && metrics.risk_flags.includes("REMOVAL_RISK")) {
+    adjustment -= coordinationFactor;
+  }
+  if (metrics.risk_flags.length >= 3) {
+    adjustment -= riskFactor;
+  }
+  return adjustment;
+};
+
+const buildQualitySignals = (metrics: OpportunityDerivedMetrics): string[] => {
+  const signals: string[] = [];
+  if (metrics.projected_upside >= 1200) {
+    signals.push("HIGH UPSIDE");
+  }
+  if ((metrics.time_left_hours ?? 999) <= 16 && metrics.projected_roi_pct >= 15) {
+    signals.push("FAST FLIP");
+  }
+  if ((metrics.risk_flags.length <= 1 && (metrics.estimated_distance_miles ?? 0) <= 180) || metrics.confidence >= 82) {
+    signals.push("LOW EFFORT");
+  }
+  if (metrics.estimated_total_cost >= 7000 || metrics.capital_blocked) {
+    signals.push("CAPITAL HEAVY");
+  }
+  if (metrics.risk_flags.length >= 3 || metrics.confidence < 65) {
+    signals.push("HIGH RISK");
+  }
+  if (
+    metrics.estimated_transport_cost !== null &&
+    metrics.estimated_transport_cost >= 900
+  ) {
+    signals.push("TRANSPORT SENSITIVE");
+  }
+  return signals;
+};
+
+export const computeSniperScore = (
+  opportunity: GovDealsOpportunity,
+  metrics: OpportunityDerivedMetrics,
+  behaviorProfile: SniperBehaviorProfile,
+  availableLiquidCash: number
+): SniperAIPick["scoring_breakdown"] => {
   const profitScore = Math.min(35, Math.max(0, (metrics.projected_upside / 2000) * 35));
   const roiScore = Math.min(20, Math.max(0, (metrics.projected_roi_pct / 35) * 20));
   const transportDistancePenalty =
@@ -995,6 +1193,10 @@ export const computeSniperScore = (
   const transportScore = Math.max(0, 16 - transportDistancePenalty);
   const confidenceScore = Math.min(18, Math.max(0, (metrics.confidence / 100) * 18));
   const riskPenalty = metrics.risk_flags.length * 6;
+  const ehrScore =
+    metrics.estimated_ehr === null
+      ? 0
+      : clamp(((metrics.estimated_ehr - 45) / 45) * 12, -8, 12);
   const urgencyBoost =
     metrics.time_left_hours === null
       ? 0
@@ -1011,36 +1213,80 @@ export const computeSniperScore = (
       : opportunity.interest === "not_interested"
         ? -20
         : 0;
+  const behaviorAdjustment = computeBehaviorAdjustment(metrics, behaviorProfile);
+  const realWorldPenalty = computeRealWorldPenalty(opportunity, metrics).penalty;
+  const capitalPenalty =
+    metrics.estimated_total_cost > availableLiquidCash ? clamp((metrics.estimated_total_cost - availableLiquidCash) / 450, 6, 18) : 0;
 
-  return normalizeScore(
+  const finalScore = normalizeScore(
     profitScore +
       roiScore +
       transportScore +
       confidenceScore +
+      ehrScore +
       urgencyBoost +
       interestBoost -
+      realWorldPenalty +
+      behaviorAdjustment -
+      capitalPenalty -
       riskPenalty
   );
+
+  return {
+    profit_score: Number(profitScore.toFixed(2)),
+    roi_score: Number(roiScore.toFixed(2)),
+    transport_score: Number(transportScore.toFixed(2)),
+    confidence_score: Number(confidenceScore.toFixed(2)),
+    ehr_score: Number(ehrScore.toFixed(2)),
+    urgency_boost: Number(urgencyBoost.toFixed(2)),
+    interest_adjustment: Number(interestBoost.toFixed(2)),
+    behavior_adjustment: Number(behaviorAdjustment.toFixed(2)),
+    risk_penalty: Number(riskPenalty.toFixed(2)),
+    real_world_penalty: Number(realWorldPenalty.toFixed(2)),
+    capital_penalty: Number(capitalPenalty.toFixed(2)),
+    final_score: finalScore,
+  };
 };
 
 export const buildSniperExplanation = (
   opportunity: GovDealsOpportunity,
-  metrics: OpportunityDerivedMetrics
+  metrics: OpportunityDerivedMetrics,
+  scoring: SniperAIPick["scoring_breakdown"]
 ): string => {
   const parts: string[] = [
-    `Selected due to ${formatUsd(metrics.projected_upside)} projected profit`,
+    `Ranked with ${formatUsd(metrics.projected_upside)} projected profit`,
     `${metrics.projected_roi_pct.toFixed(1)}% ROI`,
+    metrics.estimated_ehr === null ? "EHR pending" : `EHR est. ${formatUsd(metrics.estimated_ehr)}/hr`,
     metrics.estimated_transport_cost === null
       ? "transport pending confirmation"
-      : `transport est. ${formatUsd(metrics.estimated_transport_cost)}`,
+      : `distance ${metrics.estimated_distance_miles ?? "N/A"} mi / transport ${formatUsd(
+            metrics.estimated_transport_cost
+          )}`,
     `confidence ${metrics.confidence}`,
   ];
+  const appliedPenaltyFlags = [
+    metrics.risk_flags.includes("CAPITAL_LOCK") ? "CAPITAL_LOCK" : null,
+    metrics.risk_flags.includes("REMOVAL_RISK") ? "REMOVAL_RISK" : null,
+    metrics.risk_flags.includes("KEY_NONRUNNER_PENALTY") ? "KEY_NONRUNNER_PENALTY" : null,
+    metrics.risk_flags.includes("POSSIBLE_DOG") ? "POSSIBLE_DOG" : null,
+    metrics.risk_flags.includes("SELLER_REPUTATION_RISK") ? "SELLER_REPUTATION_RISK" : null,
+    metrics.risk_flags.includes("CAPITAL_BLOCKED") ? "CAPITAL_BLOCKED" : null,
+  ].filter((item): item is string => item !== null);
   const riskText =
     metrics.risk_flags.length > 0 ? `Risk: ${metrics.risk_flags.join(", ")}` : "Risk: none flagged";
+  const penaltyText =
+    appliedPenaltyFlags.length > 0
+      ? `Penalty drivers: ${appliedPenaltyFlags.join(", ")}.`
+      : "No major operator penalties applied.";
+  const scoreText = `Score drivers → profit ${scoring.profit_score.toFixed(1)}, ROI ${scoring.roi_score.toFixed(
+    1
+  )}, EHR ${scoring.ehr_score.toFixed(1)}, risk -${scoring.risk_penalty.toFixed(
+    1
+  )}, real-world -${scoring.real_world_penalty.toFixed(1)}.`;
   if (opportunity.interest === "interested") {
     parts.push("prior interest signal detected");
   }
-  return `${parts.join(", ")}. ${riskText}.`;
+  return `${parts.join(", ")}. ${riskText}. ${penaltyText} ${scoreText}`;
 };
 
 const formatUsd = (value: number): string => `$${value.toFixed(0)}`;
@@ -1048,21 +1294,54 @@ const formatUsd = (value: number): string => `$${value.toFixed(0)}`;
 export const buildSniperAIPicks = (
   opportunities: GovDealsOpportunity[],
   operatorBaseState: string,
-  previewsById: Record<string, OpportunityPreviewSnapshot | undefined>
+  previewsById: Record<string, OpportunityPreviewSnapshot | undefined>,
+  decisions: SniperDecisionRecord[] = [],
+  availableLiquidCash = Number.POSITIVE_INFINITY
 ): SniperAIPick[] =>
-  opportunities
+  (() => {
+    const behaviorProfile = computeBehaviorProfileFromDecisions(decisions);
+    const sellerRiskCounts = opportunities.reduce<Record<string, number>>((acc, opportunity) => {
+      const key = opportunity.seller_agency.trim().toLowerCase();
+      if (!key) {
+        return acc;
+      }
+      const conditionLower = opportunity.condition_raw.toLowerCase();
+      const isBadSignal =
+        opportunity.relisted ||
+        conditionLower.includes("bad listing") ||
+        conditionLower.includes("repeat issue");
+      if (isBadSignal) {
+        acc[key] = (acc[key] ?? 0) + 1;
+      }
+      return acc;
+    }, {});
+
+    return opportunities
     .map((opportunity) => {
-      const metrics = computeOpportunityDerivedMetrics(
+      const rawMetrics = computeOpportunityDerivedMetrics(
         opportunity,
         operatorBaseState,
-        previewsById[opportunity.id]
+        previewsById[opportunity.id],
+        availableLiquidCash
       );
-      const score = computeSniperScore(opportunity, metrics);
+      const sellerKey = opportunity.seller_agency.trim().toLowerCase();
+      const sellerReputationRisk = sellerKey ? (sellerRiskCounts[sellerKey] ?? 0) >= 2 : false;
+      const metrics: OpportunityDerivedMetrics = sellerReputationRisk
+        ? {
+            ...rawMetrics,
+            risk_flags: rawMetrics.risk_flags.includes("SELLER_REPUTATION_RISK")
+              ? rawMetrics.risk_flags
+              : [...rawMetrics.risk_flags, "SELLER_REPUTATION_RISK"],
+          }
+        : rawMetrics;
+      const scoring = computeSniperScore(opportunity, metrics, behaviorProfile, availableLiquidCash);
       return {
         opportunity,
         metrics,
-        score,
-        explanation: buildSniperExplanation(opportunity, metrics),
+        score: scoring.final_score,
+        explanation: buildSniperExplanation(opportunity, metrics, scoring),
+        quality_signals: buildQualitySignals(metrics),
+        scoring_breakdown: scoring,
       };
     })
     .filter(({ opportunity, metrics }) => {
@@ -1087,6 +1366,7 @@ export const buildSniperAIPicks = (
       return true;
     })
     .sort((a, b) => b.score - a.score);
+  })();
 
 export const createSniperDecisionRecord = (
   opportunity: GovDealsOpportunity,

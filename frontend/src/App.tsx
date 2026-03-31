@@ -8,7 +8,7 @@ import {
   submitDealDecision,
   updateDealStage,
 } from "./api";
-import DashboardPanels from "./components/DashboardPanels";
+import DashboardPanels, { computeCapitalPanel } from "./components/DashboardPanels";
 import DealCard from "./components/DealCard";
 import DetailPanel from "./components/DetailPanel";
 import GovDealsScannerPanel from "./components/GovDealsScannerPanel";
@@ -514,9 +514,23 @@ function App() {
       ),
     [deals]
   );
+  const availableLiquidCash = useMemo(() => computeCapitalPanel(deals).available_capital, [deals]);
   const sniperPicks = useMemo(
-    () => buildSniperAIPicks(govDealsOpportunities, operatorBaseState, scannerPreviewsByOpportunityId),
-    [govDealsOpportunities, operatorBaseState, scannerPreviewsByOpportunityId]
+    () =>
+      buildSniperAIPicks(
+        govDealsOpportunities,
+        operatorBaseState,
+        scannerPreviewsByOpportunityId,
+        sniperDecisionHistory,
+        availableLiquidCash
+      ),
+    [
+      govDealsOpportunities,
+      operatorBaseState,
+      scannerPreviewsByOpportunityId,
+      sniperDecisionHistory,
+      availableLiquidCash,
+    ]
   );
   const sniperDashboardSummary = useMemo(
     () => computeSniperDashboardSummary(sniperPicks, govDealsOpportunities, sniperDecisionHistory),

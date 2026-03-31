@@ -676,6 +676,8 @@ function GovDealsScannerPanel({
         <p className="muted">
           Rules: projected profit ≥ $500, confidence ≥ {SNIPER_CONFIDENCE_THRESHOLD}, not marked
           Not Interested, not already converted, no major risk exclusion, and acceptable transport economics.
+          Ranking also factors operator penalties (title/removal/key/non-runner/relisted), EHR, capital pressure,
+          and pass-reason behavior bias.
         </p>
         <div className="sniper-bottlenecks">
           <span className="risk-chip">Pass: Distance {sniperDashboardSummary.passed_breakdown.distance}</span>
@@ -699,6 +701,15 @@ function GovDealsScannerPanel({
                     <span className="status-badge">Score {pick.score}</span>
                   </div>
                   <p className="muted">{pick.explanation}</p>
+                  {pick.quality_signals.length > 0 ? (
+                    <div className="pipeline-risk-flags">
+                      {pick.quality_signals.map((signal) => (
+                        <span key={`${pick.opportunity.id}-quality-${signal}`} className="risk-chip quality-signal">
+                          {signal}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
                   <div className="opportunity-grid-fields">
                     <div>
                       <span>Projected Profit</span>
@@ -728,6 +739,26 @@ function GovDealsScannerPanel({
                       <span>Time Left</span>
                       <strong>{formatHours(pick.metrics.time_left_hours)}</strong>
                     </div>
+                    <div>
+                      <span>Est. EHR</span>
+                      <strong>
+                        {pick.metrics.estimated_ehr === null
+                          ? "N/A"
+                          : `${formatCurrency(pick.metrics.estimated_ehr)}/hr`}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Est. Total Cost</span>
+                      <strong>{formatCurrency(pick.metrics.estimated_total_cost)}</strong>
+                    </div>
+                  </div>
+                  <div className="sniper-score-breakdown">
+                    <span>Profit {pick.scoring_breakdown.profit_score.toFixed(1)}</span>
+                    <span>ROI {pick.scoring_breakdown.roi_score.toFixed(1)}</span>
+                    <span>EHR {pick.scoring_breakdown.ehr_score.toFixed(1)}</span>
+                    <span>Behavior {pick.scoring_breakdown.behavior_adjustment.toFixed(1)}</span>
+                    <span>Real-world -{pick.scoring_breakdown.real_world_penalty.toFixed(1)}</span>
+                    <span>Capital -{pick.scoring_breakdown.capital_penalty.toFixed(1)}</span>
                   </div>
                   <div className="pipeline-risk-flags">
                     {pick.metrics.risk_flags.length > 0 ? (
