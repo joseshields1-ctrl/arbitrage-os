@@ -42,6 +42,16 @@ const run = async () => {
     .fill("tahoe");
   await page.locator("button", { hasText: "Search" }).first().click();
   await page.waitForTimeout(600);
+  const passReasonSelect = page.locator(".sniper-pass-row select").first();
+  if (await passReasonSelect.count()) {
+    await passReasonSelect.selectOption("risk");
+    await page.waitForTimeout(200);
+    const savePassButton = page.locator(".sniper-pass-row button", { hasText: "Save Pass" }).first();
+    if (await savePassButton.count()) {
+      await savePassButton.click();
+      await page.waitForTimeout(250);
+    }
+  }
   const interestedButton = page.locator(".interest-controls button", { hasText: "Interested" }).first();
   if (await interestedButton.count()) {
     await interestedButton.click();

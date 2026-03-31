@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { TitleStatus } from "../types";
 import type {
   GovDealsOpportunity,
@@ -7,12 +7,16 @@ import type {
   OpportunityFilters,
   OpportunityPreviewSnapshot,
   OpportunitySortMode,
+  SniperAIPick,
+  SniperDashboardSummary,
+  SniperPassReason,
   WonDealIntakeInput,
 } from "../utils/govDealsScanner";
 import {
   OPPORTUNITY_SORT_OPTIONS,
   DEFAULT_SCANNER_FILTERS,
   rankAndFilterOpportunities,
+  SNIPER_CONFIDENCE_THRESHOLD,
 } from "../utils/govDealsScanner";
 
 interface GovDealsScannerPanelProps {
@@ -24,6 +28,8 @@ interface GovDealsScannerPanelProps {
   busyOpportunityId: string | null;
   statusMessage: string | null;
   errorMessage: string | null;
+  sniperPicks: SniperAIPick[];
+  sniperDashboardSummary: SniperDashboardSummary;
   onOperatorBaseStateChange: (value: string) => void;
   onFiltersChange: (next: OpportunityFilters) => void;
   onSortModeChange: (next: OpportunitySortMode) => void;
@@ -42,6 +48,8 @@ interface GovDealsScannerPanelProps {
     opportunity: GovDealsOpportunity,
     intake: WonDealIntakeInput
   ) => Promise<void>;
+  onSniperApprove: (pick: SniperAIPick) => void;
+  onSniperPass: (pick: SniperAIPick, reason: SniperPassReason, note: string | null) => void;
 }
 
 const formatCurrency = (value: number | null): string =>
@@ -125,6 +133,8 @@ function GovDealsScannerPanel({
   busyOpportunityId,
   statusMessage,
   errorMessage,
+  sniperPicks,
+  sniperDashboardSummary,
   onOperatorBaseStateChange,
   onFiltersChange,
   onSortModeChange,
@@ -137,6 +147,8 @@ function GovDealsScannerPanel({
   onPass,
   onSetInterest,
   onCreateFromWonDeal,
+  onSniperApprove,
+  onSniperPass,
 }: GovDealsScannerPanelProps) {
   const [urlInput, setUrlInput] = useState("");
   const [urlKeywordHint, setUrlKeywordHint] = useState("");
@@ -144,6 +156,9 @@ function GovDealsScannerPanel({
   const [manualInput, setManualInput] = useState<ManualOpportunityInput>(createDefaultManualInput());
   const [expandedOpportunityId, setExpandedOpportunityId] = useState<string | null>(null);
   const [wonDealIntakeMap, setWonDealIntakeMap] = useState<Record<string, WonDealIntakeInput>>({});
+  const [sniperPassDrafts, setSniperPassDrafts] = useState<Record<string, { reason: SniperPassReason; note: string }>>(
+    {}
+  );
 
   const ranked = useMemo(
     () =>
@@ -180,18 +195,6 @@ function GovDealsScannerPanel({
     setManualInput(createDefaultManualInput());
   };
 
-  useEffect(() => {
-    setWonDealIntakeMap((prev) => {
-      const next = { ...prev };
-      ranked.forEach(({ opportunity }) => {
-        if (!next[opportunity.id]) {
-          next[opportunity.id] = createWonIntakeFromOpportunity(opportunity);
-        }
-      });
-      return next;
-    });
-  }, [ranked]);
-
   const updateWonIntakeField = <K extends keyof WonDealIntakeInput>(
     opportunityId: string,
     opportunity: GovDealsOpportunity,
@@ -203,6 +206,20 @@ function GovDealsScannerPanel({
       [opportunityId]: {
         ...(prev[opportunityId] ?? createWonIntakeFromOpportunity(opportunity)),
         [field]: value,
+      },
+    }));
+  };
+
+  const updateSniperPassDraft = (
+    opportunityId: string,
+    update: Partial<{ reason: SniperPassReason; note: string }>
+  ): void => {
+    setSniperPassDrafts((prev) => ({
+      ...prev,
+      [opportunityId]: {
+        reason: prev[opportunityId]?.reason ?? "risk",
+        note: prev[opportunityId]?.note ?? "",
+        ...update,
       },
     }));
   };
@@ -646,6 +663,145 @@ function GovDealsScannerPanel({
         </article>
       </div>
 
+      <section className="sniper-picks-section">
+        <div className="scanner-results-header">
+          <h3>Sniper AI Picks</h3>
+          <div className="interest-summary">
+            <span className="risk-chip">Picks: {sniperDashboardSummary.picks_count}</span>
+            <span className="risk-chip warning">
+              Approved, not acted: {sniperDashboardSummary.approved_not_acted_on}
+            </span>
+          </div>
+        </div>
+        <p className="muted">
+          Rules: projected profit ≥ $500, confidence ≥ {SNIPER_CONFIDENCE_THRESHOLD}, not marked
+          Not Interested, not already converted, no major risk exclusion, and acceptable transport economics.
+        </p>
+        <div className="sniper-bottlenecks">
+          <span className="risk-chip">Pass: Distance {sniperDashboardSummary.passed_breakdown.distance}</span>
+          <span className="risk-chip">Pass: Funds {sniperDashboardSummary.passed_breakdown.funds}</span>
+          <span className="risk-chip">
+            Pass: Coordination {sniperDashboardSummary.passed_breakdown.coordination}
+          </span>
+          <span className="risk-chip">Pass: Risk {sniperDashboardSummary.passed_breakdown.risk}</span>
+          <span className="risk-chip">Pass: Other {sniperDashboardSummary.passed_breakdown.other}</span>
+        </div>
+        {sniperPicks.length === 0 ? (
+          <p>No sniper picks right now.</p>
+        ) : (
+          <div className="sniper-picks-grid">
+            {sniperPicks.slice(0, 8).map((pick) => {
+              const draft = sniperPassDrafts[pick.opportunity.id] ?? { reason: "risk" as SniperPassReason, note: "" };
+              return (
+                <article className="sniper-pick-card" key={`sniper-${pick.opportunity.id}`}>
+                  <div className="opportunity-head">
+                    <h4>{pick.opportunity.title}</h4>
+                    <span className="status-badge">Score {pick.score}</span>
+                  </div>
+                  <p className="muted">{pick.explanation}</p>
+                  <div className="opportunity-grid-fields">
+                    <div>
+                      <span>Projected Profit</span>
+                      <strong>{formatCurrency(pick.metrics.projected_upside)}</strong>
+                    </div>
+                    <div>
+                      <span>ROI</span>
+                      <strong>{pick.metrics.projected_roi_pct.toFixed(1)}%</strong>
+                    </div>
+                    <div>
+                      <span>Confidence</span>
+                      <strong>{pick.metrics.confidence}</strong>
+                    </div>
+                    <div>
+                      <span>Distance</span>
+                      <strong>
+                        {pick.metrics.estimated_distance_miles === null
+                          ? "N/A"
+                          : `${pick.metrics.estimated_distance_miles} mi`}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Transport</span>
+                      <strong>{formatCurrency(pick.metrics.estimated_transport_cost)}</strong>
+                    </div>
+                    <div>
+                      <span>Time Left</span>
+                      <strong>{formatHours(pick.metrics.time_left_hours)}</strong>
+                    </div>
+                  </div>
+                  <div className="pipeline-risk-flags">
+                    {pick.metrics.risk_flags.length > 0 ? (
+                      pick.metrics.risk_flags.map((flag) => (
+                        <span key={`${pick.opportunity.id}-sniper-risk-${flag}`} className="risk-chip warning">
+                          {flag}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="risk-chip">No major flags</span>
+                    )}
+                  </div>
+                  <div className="entry-actions">
+                    <button
+                      type="button"
+                      className="primary-button"
+                      disabled={busyOpportunityId === pick.opportunity.id}
+                      onClick={() => onSniperApprove(pick)}
+                    >
+                      Approve
+                    </button>
+                  </div>
+                  <div className="sniper-pass-row">
+                    <label>
+                      Pass Reason
+                      <select
+                        value={draft.reason}
+                        onChange={(event) =>
+                          updateSniperPassDraft(pick.opportunity.id, {
+                            reason: event.target.value as SniperPassReason,
+                          })
+                        }
+                      >
+                        <option value="distance">Pass — Distance</option>
+                        <option value="funds">Pass — Lack of Funds</option>
+                        <option value="coordination">Pass — Lack of Coordination</option>
+                        <option value="risk">Pass — Risk</option>
+                        <option value="other">Pass — Other</option>
+                      </select>
+                    </label>
+                    <label>
+                      Note (required for Other)
+                      <input
+                        value={draft.note}
+                        onChange={(event) =>
+                          updateSniperPassDraft(pick.opportunity.id, { note: event.target.value })
+                        }
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      disabled={
+                        busyOpportunityId === pick.opportunity.id ||
+                        (draft.reason === "other" && !draft.note.trim())
+                      }
+                      onClick={() =>
+                        onSniperPass(
+                          pick,
+                          draft.reason,
+                          draft.note.trim() ? draft.note.trim() : null
+                        )
+                      }
+                    >
+                      Save Pass
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
       <div className="scanner-results-header">
         <h3>Opportunities ({ranked.length})</h3>
         <div className="interest-summary">
@@ -684,7 +840,9 @@ function GovDealsScannerPanel({
                 ? "watch"
                 : opportunity.status === "passed"
                   ? "passed"
-                  : "new";
+                  : opportunity.status === "converted"
+                    ? "converted"
+                    : "new";
             const wonIntake = wonDealIntakeMap[opportunity.id] ?? createWonIntakeFromOpportunity(opportunity);
             const isExpanded = expandedOpportunityId === opportunity.id;
             const interestClass =

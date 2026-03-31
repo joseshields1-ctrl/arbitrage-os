@@ -2,8 +2,9 @@ import type { CreateDealRequest, DealCategory, TitleStatus } from "../types";
 import type { DealView } from "../types";
 
 export type OpportunityCategory = "vehicle" | "electronics" | "other";
-export type OpportunityStatus = "new" | "watch" | "passed";
+export type OpportunityStatus = "new" | "watch" | "passed" | "converted";
 export type OpportunityInterest = "undecided" | "interested" | "not_interested";
+export type SniperPassReason = "distance" | "funds" | "coordination" | "risk" | "other";
 export type OpportunitySortMode =
   | "best_deal"
   | "highest_upside"
@@ -72,6 +73,44 @@ export interface WonDealIntakeInput {
   condition_notes: string;
   quantity_purchased: number | null;
   quantity_broken: number | null;
+}
+
+export interface SniperDecisionRecord {
+  id: string;
+  opportunity_id: string;
+  decision: "approved" | "passed";
+  pass_reason: SniperPassReason | null;
+  note: string | null;
+  decided_at: string;
+  score_at_decision: number;
+  opportunity_snapshot: GovDealsOpportunity;
+}
+
+export interface InterestSignalRecord {
+  id: string;
+  opportunity_id: string;
+  interest: OpportunityInterest;
+  decided_at: string;
+  opportunity_snapshot: GovDealsOpportunity;
+}
+
+export interface SniperAIPick {
+  opportunity: GovDealsOpportunity;
+  metrics: OpportunityDerivedMetrics;
+  score: number;
+  explanation: string;
+}
+
+export interface SniperDashboardSummary {
+  picks_count: number;
+  approved_not_acted_on: number;
+  passed_breakdown: {
+    distance: number;
+    funds: number;
+    coordination: number;
+    risk: number;
+    other: number;
+  };
 }
 
 export interface OpportunityPreviewSnapshot {
@@ -251,6 +290,13 @@ export const OPPORTUNITY_SORT_OPTIONS: Array<{ value: OpportunitySortMode; label
   { value: "lowest_risk", label: "Lowest Risk" },
   { value: "time_left", label: "Ending Soonest" },
 ];
+
+export const SNIPER_CONFIDENCE_THRESHOLD = 62;
+const MAJOR_EXCLUDED_RISK_FLAGS = new Set([
+  "FORCE_LIQUIDATION",
+  "ESTIMATION_FAILURE",
+  "LOW_CONFIDENCE",
+]);
 
 export const extractStateCode = (location: string): string | null => {
   const trimmed = location.trim();
@@ -898,3 +944,223 @@ export const setOpportunityInterest = (
   interest: OpportunityInterest
 ): GovDealsOpportunity[] =>
   opportunities.map((item) => (item.id === id ? { ...item, interest } : item));
+
+export const normalizeOpportunities = (
+  opportunities: GovDealsOpportunity[]
+): GovDealsOpportunity[] =>
+  opportunities.map((item) => ({
+    ...item,
+    status:
+      item.status === "new" ||
+      item.status === "watch" ||
+      item.status === "passed" ||
+      item.status === "converted"
+        ? item.status
+        : "new",
+    interest:
+      item.interest === "interested" ||
+      item.interest === "not_interested" ||
+      item.interest === "undecided"
+        ? item.interest
+        : "undecided",
+  }));
+
+const normalizeScore = (value: number): number => Math.max(0, Math.min(100, Math.round(value)));
+
+const hasMajorExcludedRisk = (riskFlags: string[]): boolean =>
+  riskFlags.some((flag) => MAJOR_EXCLUDED_RISK_FLAGS.has(flag));
+
+const hasReasonableTransportEconomics = (metrics: OpportunityDerivedMetrics): boolean => {
+  if (metrics.estimated_transport_cost === null || metrics.estimated_distance_miles === null) {
+    return true;
+  }
+  if (metrics.estimated_distance_miles > 700) {
+    return false;
+  }
+  if (metrics.projected_upside <= 0) {
+    return false;
+  }
+  return metrics.estimated_transport_cost <= metrics.projected_upside * 0.65;
+};
+
+export const computeSniperScore = (
+  opportunity: GovDealsOpportunity,
+  metrics: OpportunityDerivedMetrics
+): number => {
+  const profitScore = Math.min(35, Math.max(0, (metrics.projected_upside / 2000) * 35));
+  const roiScore = Math.min(20, Math.max(0, (metrics.projected_roi_pct / 35) * 20));
+  const transportDistancePenalty =
+    (metrics.estimated_distance_miles ?? 200) * 0.015 +
+    (metrics.estimated_transport_cost ?? 250) * 0.004;
+  const transportScore = Math.max(0, 16 - transportDistancePenalty);
+  const confidenceScore = Math.min(18, Math.max(0, (metrics.confidence / 100) * 18));
+  const riskPenalty = metrics.risk_flags.length * 6;
+  const urgencyBoost =
+    metrics.time_left_hours === null
+      ? 0
+      : metrics.time_left_hours <= 12
+        ? 8
+        : metrics.time_left_hours <= 24
+          ? 5
+          : metrics.time_left_hours <= 48
+            ? 2
+            : 0;
+  const interestBoost =
+    opportunity.interest === "interested"
+      ? 5
+      : opportunity.interest === "not_interested"
+        ? -20
+        : 0;
+
+  return normalizeScore(
+    profitScore +
+      roiScore +
+      transportScore +
+      confidenceScore +
+      urgencyBoost +
+      interestBoost -
+      riskPenalty
+  );
+};
+
+export const buildSniperExplanation = (
+  opportunity: GovDealsOpportunity,
+  metrics: OpportunityDerivedMetrics
+): string => {
+  const parts: string[] = [
+    `Selected due to ${formatUsd(metrics.projected_upside)} projected profit`,
+    `${metrics.projected_roi_pct.toFixed(1)}% ROI`,
+    metrics.estimated_transport_cost === null
+      ? "transport pending confirmation"
+      : `transport est. ${formatUsd(metrics.estimated_transport_cost)}`,
+    `confidence ${metrics.confidence}`,
+  ];
+  const riskText =
+    metrics.risk_flags.length > 0 ? `Risk: ${metrics.risk_flags.join(", ")}` : "Risk: none flagged";
+  if (opportunity.interest === "interested") {
+    parts.push("prior interest signal detected");
+  }
+  return `${parts.join(", ")}. ${riskText}.`;
+};
+
+const formatUsd = (value: number): string => `$${value.toFixed(0)}`;
+
+export const buildSniperAIPicks = (
+  opportunities: GovDealsOpportunity[],
+  operatorBaseState: string,
+  previewsById: Record<string, OpportunityPreviewSnapshot | undefined>
+): SniperAIPick[] =>
+  opportunities
+    .map((opportunity) => {
+      const metrics = computeOpportunityDerivedMetrics(
+        opportunity,
+        operatorBaseState,
+        previewsById[opportunity.id]
+      );
+      const score = computeSniperScore(opportunity, metrics);
+      return {
+        opportunity,
+        metrics,
+        score,
+        explanation: buildSniperExplanation(opportunity, metrics),
+      };
+    })
+    .filter(({ opportunity, metrics }) => {
+      if (opportunity.interest === "not_interested") {
+        return false;
+      }
+      if (opportunity.status === "converted") {
+        return false;
+      }
+      if (metrics.projected_upside < 500) {
+        return false;
+      }
+      if (metrics.confidence < SNIPER_CONFIDENCE_THRESHOLD) {
+        return false;
+      }
+      if (hasMajorExcludedRisk(metrics.risk_flags)) {
+        return false;
+      }
+      if (!hasReasonableTransportEconomics(metrics)) {
+        return false;
+      }
+      return true;
+    })
+    .sort((a, b) => b.score - a.score);
+
+export const createSniperDecisionRecord = (
+  opportunity: GovDealsOpportunity,
+  score: number,
+  decision: "approved" | "passed",
+  passReason: SniperPassReason | null,
+  note: string | null
+): SniperDecisionRecord => ({
+  id: `sniper-${crypto.randomUUID()}`,
+  opportunity_id: opportunity.id,
+  decision,
+  pass_reason: passReason,
+  note: note?.trim() ? note.trim() : null,
+  decided_at: new Date().toISOString(),
+  score_at_decision: score,
+  opportunity_snapshot: { ...opportunity },
+});
+
+export const createInterestSignalRecord = (
+  opportunity: GovDealsOpportunity,
+  interest: OpportunityInterest
+): InterestSignalRecord => ({
+  id: `interest-${crypto.randomUUID()}`,
+  opportunity_id: opportunity.id,
+  interest,
+  decided_at: new Date().toISOString(),
+  opportunity_snapshot: { ...opportunity, interest },
+});
+
+const getLatestDecisionByOpportunity = (
+  decisions: SniperDecisionRecord[]
+): Record<string, SniperDecisionRecord> => {
+  const latest: Record<string, SniperDecisionRecord> = {};
+  decisions.forEach((decision) => {
+    const current = latest[decision.opportunity_id];
+    if (!current || Date.parse(decision.decided_at) >= Date.parse(current.decided_at)) {
+      latest[decision.opportunity_id] = decision;
+    }
+  });
+  return latest;
+};
+
+export const computeSniperDashboardSummary = (
+  picks: SniperAIPick[],
+  opportunities: GovDealsOpportunity[],
+  decisions: SniperDecisionRecord[]
+): SniperDashboardSummary => {
+  const latestByOpportunity = getLatestDecisionByOpportunity(decisions);
+  let approvedNotActedOn = 0;
+  const passedBreakdown = {
+    distance: 0,
+    funds: 0,
+    coordination: 0,
+    risk: 0,
+    other: 0,
+  };
+
+  Object.entries(latestByOpportunity).forEach(([opportunityId, decision]) => {
+    const opportunity = opportunities.find((item) => item.id === opportunityId);
+    if (!opportunity) {
+      return;
+    }
+    if (decision.decision === "approved" && opportunity.status !== "converted") {
+      approvedNotActedOn += 1;
+      return;
+    }
+    if (decision.decision === "passed" && decision.pass_reason) {
+      passedBreakdown[decision.pass_reason] += 1;
+    }
+  });
+
+  return {
+    picks_count: picks.length,
+    approved_not_acted_on: approvedNotActedOn,
+    passed_breakdown: passedBreakdown,
+  };
+};

@@ -9,7 +9,7 @@
 
 .top-bar {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(8, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -147,6 +147,66 @@
 .scanner-panel {
   display: grid;
   gap: 12px;
+}
+
+.sniper-picks-section {
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  background: #eff6ff;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.sniper-picks-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sniper-picks-header h3 {
+  margin: 0;
+}
+
+.sniper-bottlenecks {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sniper-picks-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sniper-pick-card {
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.sniper-pass-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.sniper-pass-row label {
+  display: grid;
+  gap: 6px;
+}
+
+.status-badge.opportunity-status.converted {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
 }
 
 .scanner-layout {
@@ -1079,6 +1139,8 @@
 
 @media (max-width: 900px) {
   .scanner-layout,
+  .sniper-picks-grid,
+  .sniper-pass-row,
   .opportunity-grid,
   .opportunity-grid-fields {
     grid-template-columns: 1fr;

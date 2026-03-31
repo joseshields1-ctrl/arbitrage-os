@@ -50,6 +50,10 @@ import {
   buildKeywordOpportunities,
   buildManualOpportunity,
   buildOpportunityFromUrl,
+  buildSniperAIPicks,
+  computeSniperDashboardSummary,
+  createInterestSignalRecord,
+  createSniperDecisionRecord,
   DEFAULT_OPPORTUNITY_SORT_MODE,
   DEFAULT_SCANNER_FILTERS,
   setOpportunityInterest,
@@ -59,10 +63,13 @@ import {
 } from "./utils/govDealsScanner";
 import type {
   GovDealsOpportunity,
+  InterestSignalRecord,
   ManualOpportunityInput,
   OpportunityFilters,
   OpportunityPreviewSnapshot,
   OpportunitySortMode,
+  SniperDecisionRecord,
+  SniperPassReason,
   WonDealIntakeInput,
 } from "./utils/govDealsScanner";
 import "./App.css";
@@ -70,6 +77,8 @@ import "./App.css";
 const INTAKE_QUEUE_STORAGE_KEY = "arbitrage_os_intake_queue_v1";
 const GOVDEALS_OPPORTUNITIES_STORAGE_KEY = "arbitrage_os_govdeals_opportunities_v1";
 const GOVDEALS_SCANNER_META_STORAGE_KEY = "arbitrage_os_govdeals_scanner_meta_v1";
+const SNIPER_DECISIONS_STORAGE_KEY = "arbitrage_os_sniper_decisions_v1";
+const INTEREST_SIGNALS_STORAGE_KEY = "arbitrage_os_interest_signals_v1";
 
 type ActivePage =
   | "dashboard"
@@ -299,6 +308,8 @@ function App() {
   const [scannerBusyOpportunityId, setScannerBusyOpportunityId] = useState<string | null>(null);
   const [scannerStatusMessage, setScannerStatusMessage] = useState<string | null>(null);
   const [scannerErrorMessage, setScannerErrorMessage] = useState<string | null>(null);
+  const [sniperDecisionHistory, setSniperDecisionHistory] = useState<SniperDecisionRecord[]>([]);
+  const [interestSignalHistory, setInterestSignalHistory] = useState<InterestSignalRecord[]>([]);
 
   const isElectronicsCategory = intakeCategory === "electronics";
   const isVehicleCategory = intakeCategory === "vehicle";
@@ -430,6 +441,44 @@ function App() {
     );
   }, [operatorBaseState, scannerFilters, scannerSortMode]);
 
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SNIPER_DECISIONS_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+      const parsed = JSON.parse(raw) as SniperDecisionRecord[];
+      if (Array.isArray(parsed)) {
+        setSniperDecisionHistory(parsed);
+      }
+    } catch {
+      setSniperDecisionHistory([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(SNIPER_DECISIONS_STORAGE_KEY, JSON.stringify(sniperDecisionHistory));
+  }, [sniperDecisionHistory]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(INTEREST_SIGNALS_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+      const parsed = JSON.parse(raw) as InterestSignalRecord[];
+      if (Array.isArray(parsed)) {
+        setInterestSignalHistory(parsed);
+      }
+    } catch {
+      setInterestSignalHistory([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(INTEREST_SIGNALS_STORAGE_KEY, JSON.stringify(interestSignalHistory));
+  }, [interestSignalHistory]);
+
   const selectedDeal =
     deals.find((deal) => deal.deal.id === selectedDealId) ??
     (selectedDealId?.startsWith("preview-") ? intakePreviewDeal : null) ??
@@ -464,6 +513,14 @@ function App() {
         0
       ),
     [deals]
+  );
+  const sniperPicks = useMemo(
+    () => buildSniperAIPicks(govDealsOpportunities, operatorBaseState, scannerPreviewsByOpportunityId),
+    [govDealsOpportunities, operatorBaseState, scannerPreviewsByOpportunityId]
+  );
+  const sniperDashboardSummary = useMemo(
+    () => computeSniperDashboardSummary(sniperPicks, govDealsOpportunities, sniperDecisionHistory),
+    [sniperPicks, govDealsOpportunities, sniperDecisionHistory]
   );
 
   const pipelineDeals = useMemo(() => {
@@ -1046,7 +1103,7 @@ function App() {
       setIntakePreviewDeal(null);
       setActivePage("pipeline");
       setRightPanelMode("detail");
-      setGovDealsOpportunities((prev) => setOpportunityStatus(prev, opportunity.id, "watch"));
+      setGovDealsOpportunities((prev) => setOpportunityStatus(prev, opportunity.id, "converted"));
       await loadData();
       setScannerStatusMessage("Deal created from opportunity.");
     } catch (createError) {
@@ -1063,7 +1120,13 @@ function App() {
     interest: "interested" | "not_interested" | "undecided"
   ): void => {
     clearScannerMessages();
-    setGovDealsOpportunities((prev) => setOpportunityInterest(prev, opportunityId, interest));
+    const priorSnapshot = govDealsOpportunities.find((item) => item.id === opportunityId) ?? null;
+    setGovDealsOpportunities((prev) => {
+      return setOpportunityInterest(prev, opportunityId, interest);
+    });
+    if (priorSnapshot) {
+      setInterestSignalHistory((prev) => [createInterestSignalRecord(priorSnapshot, interest), ...prev]);
+    }
     setScannerStatusMessage(
       interest === "interested"
         ? "Marked as interested for pattern tracking."
@@ -1086,7 +1149,7 @@ function App() {
       setIntakePreviewDeal(null);
       setActivePage("pipeline");
       setRightPanelMode("detail");
-      setGovDealsOpportunities((prev) => setOpportunityStatus(prev, opportunity.id, "watch"));
+      setGovDealsOpportunities((prev) => setOpportunityStatus(prev, opportunity.id, "converted"));
       await loadData();
       setScannerStatusMessage("Won deal imported and calculated using final numbers.");
     } catch (createError) {
@@ -1095,6 +1158,25 @@ function App() {
       setScannerErrorMessage(message);
     } finally {
       setScannerBusyOpportunityId(null);
+    }
+  };
+
+  const handleSniperDecision = (
+    opportunity: GovDealsOpportunity,
+    score: number,
+    decision: "approved" | "passed",
+    passReason: SniperPassReason | null,
+    note: string | null
+  ): void => {
+    clearScannerMessages();
+    const nextRecord = createSniperDecisionRecord(opportunity, score, decision, passReason, note);
+    setSniperDecisionHistory((prev) => [nextRecord, ...prev]);
+    if (decision === "approved") {
+      setGovDealsOpportunities((prev) => setOpportunityStatus(prev, opportunity.id, "watch"));
+      setScannerStatusMessage("Sniper pick approved.");
+    } else {
+      setGovDealsOpportunities((prev) => setOpportunityStatus(prev, opportunity.id, "passed"));
+      setScannerStatusMessage(`Sniper pick passed (${passReason ?? "unspecified"}).`);
     }
   };
 
@@ -1122,6 +1204,28 @@ function App() {
         <div className={`kpi-card alerts ${criticalAlertsCount > 0 ? "critical" : ""}`}>
           <span>Alerts</span>
           <strong>{alertsCount}</strong>
+        </div>
+        <div className="kpi-card">
+          <span>Sniper AI Picks</span>
+          <strong>{sniperDashboardSummary.picks_count}</strong>
+        </div>
+        <div className="kpi-card">
+          <span>Approved Not Acted On</span>
+          <strong>{sniperDashboardSummary.approved_not_acted_on}</strong>
+        </div>
+        <div className="kpi-card">
+          <span>Passed: Distance / Funds</span>
+          <strong>
+            {sniperDashboardSummary.passed_breakdown.distance} /{" "}
+            {sniperDashboardSummary.passed_breakdown.funds}
+          </strong>
+        </div>
+        <div className="kpi-card">
+          <span>Passed: Coordination / Risk</span>
+          <strong>
+            {sniperDashboardSummary.passed_breakdown.coordination} /{" "}
+            {sniperDashboardSummary.passed_breakdown.risk}
+          </strong>
         </div>
       </header>
 
@@ -1317,6 +1421,14 @@ function App() {
               onPass={handleScannerPass}
               onSetInterest={handleScannerSetInterest}
               onCreateFromWonDeal={handleScannerCreateFromWonDeal}
+              sniperPicks={sniperPicks}
+              sniperDashboardSummary={sniperDashboardSummary}
+              onSniperApprove={(pick) =>
+                handleSniperDecision(pick.opportunity, pick.score, "approved", null, null)
+              }
+              onSniperPass={(pick, reason, note) =>
+                handleSniperDecision(pick.opportunity, pick.score, "passed", reason, note)
+              }
             />
           ) : null}
 
