@@ -8,7 +8,7 @@ import {
   submitDealDecision,
   updateDealStage,
 } from "./api";
-import DashboardPanels, { computeCapitalPanel } from "./components/DashboardPanels";
+import DashboardPanels, { computeCapitalPanel, computeDecisionQueue } from "./components/DashboardPanels";
 import DealCard from "./components/DealCard";
 import DetailPanel from "./components/DetailPanel";
 import GovDealsScannerPanel from "./components/GovDealsScannerPanel";
@@ -87,6 +87,8 @@ type ActivePage =
   | "intake"
   | "alerts"
   | "archive";
+type OperatorMode = "manage" | "hunt" | "analyze";
+type RightPanelDetailTab = "decision" | "market" | "recon";
 type PipelineAlertFilter = "all" | "critical" | "warning" | "none";
 type IntakeStep = 1 | 2 | 3;
 
@@ -100,6 +102,16 @@ const CATEGORY_GROUP_OPTIONS: Record<IntakeCategory, DealCategory[]> = {
   vehicle: ["vehicle_suv", "vehicle_police_fleet"],
   electronics: ["electronics_bulk", "electronics_individual"],
   other: ["powersports"],
+};
+
+const getOperatorModeForPage = (page: ActivePage): OperatorMode => {
+  if (page === "pipeline") {
+    return "analyze";
+  }
+  if (page === "opportunities" || page === "intake") {
+    return "hunt";
+  }
+  return "manage";
 };
 
 interface MonthlyPerformancePoint {
@@ -275,6 +287,7 @@ const toVehicleIntelFromForm = (form: IntakeFormState): VehicleMarketIntel | nul
 function App() {
   const [activePage, setActivePage] = useState<ActivePage>("dashboard");
   const [rightPanelMode, setRightPanelMode] = useState<"detail" | "assistant">("detail");
+  const [rightPanelDetailTab, setRightPanelDetailTab] = useState<RightPanelDetailTab>("decision");
   const [pipelineAlertFilter, setPipelineAlertFilter] = useState<PipelineAlertFilter>("all");
   const [showAdvancedFields, setShowAdvancedFields] = useState(false);
   const [intakeStep, setIntakeStep] = useState<IntakeStep>(1);
@@ -515,6 +528,31 @@ function App() {
     [deals]
   );
   const availableLiquidCash = useMemo(() => computeCapitalPanel(deals).available_capital, [deals]);
+  const capitalPanelSnapshot = useMemo(() => computeCapitalPanel(deals), [deals]);
+  const decisionQueue = useMemo(() => computeDecisionQueue(deals), [deals]);
+  const burnListUrgentCount = useMemo(() => {
+    return deals.filter((deal) => {
+      if (deal.deal.status === "completed") {
+        return false;
+      }
+      if (deal.deal.category.startsWith("vehicle")) {
+        return deal.calculations.days_in_current_stage > 14;
+      }
+      if (deal.deal.category.startsWith("electronics")) {
+        return deal.calculations.days_in_current_stage > 7;
+      }
+      return deal.calculations.days_in_current_stage > 10;
+    }).length;
+  }, [deals]);
+  const capitalLockWarningCount = useMemo(
+    () =>
+      deals.filter((deal) => {
+        const warnings = deal.warnings ?? [];
+        return warnings.includes("TITLE_DELAY") || warnings.includes("CAPITAL_LOCK");
+      }).length,
+    [deals]
+  );
+  const operatorMode = getOperatorModeForPage(activePage);
   const sniperPicks = useMemo(
     () =>
       buildSniperAIPicks(
@@ -779,6 +817,7 @@ function App() {
       setIntakePreviewDeal(null);
       setActivePage("pipeline");
       setRightPanelMode("detail");
+      setRightPanelDetailTab("decision");
       setIntakeStatusMessage("Deal created from intake.");
       saveIntelForDeal(created.deal.id, payload.market_intel ?? null);
       resetIntakeForm();
@@ -1117,6 +1156,7 @@ function App() {
       setIntakePreviewDeal(null);
       setActivePage("pipeline");
       setRightPanelMode("detail");
+      setRightPanelDetailTab("decision");
       setGovDealsOpportunities((prev) => setOpportunityStatus(prev, opportunity.id, "converted"));
       await loadData();
       setScannerStatusMessage("Deal created from opportunity.");
@@ -1163,6 +1203,7 @@ function App() {
       setIntakePreviewDeal(null);
       setActivePage("pipeline");
       setRightPanelMode("detail");
+      setRightPanelDetailTab("decision");
       setGovDealsOpportunities((prev) => setOpportunityStatus(prev, opportunity.id, "converted"));
       await loadData();
       setScannerStatusMessage("Won deal imported and calculated using final numbers.");
@@ -1201,8 +1242,18 @@ function App() {
   const step3Ready = (toOptionalNumber(intakeForm.estimated_market_value) ?? 0) > 0;
 
   return (
-    <main className="operator-shell">
+    <main className={`operator-shell mode-${operatorMode}`}>
       <header className="top-bar">
+        <div className="top-bar-title">
+          <h2>Operator Command Surface</h2>
+          <div className="mode-switcher">
+            <span className={`mode-pill ${operatorMode === "hunt" ? "active" : ""}`}>Hunt Mode</span>
+            <span className={`mode-pill ${operatorMode === "analyze" ? "active" : ""}`}>
+              Analyze Mode
+            </span>
+            <span className={`mode-pill ${operatorMode === "manage" ? "active" : ""}`}>Manage Mode</span>
+          </div>
+        </div>
         <div className="kpi-card primary">
           <span>Realized Profit</span>
           <strong>${(dashboard?.realized_profit_total ?? 0).toFixed(2)}</strong>
@@ -1242,11 +1293,46 @@ function App() {
           </strong>
         </div>
       </header>
+      <section className="next-action-bar">
+        <div className="next-action-mode">
+          <span>Mode</span>
+          <strong>
+            {operatorMode === "manage"
+              ? "Manage Mode"
+              : operatorMode === "hunt"
+                ? "Hunt Mode"
+                : "Analyze Mode"}
+          </strong>
+        </div>
+        <div className="next-action-item priority-high">
+          <span>Deals needing decision</span>
+          <strong>{decisionQueue.length}</strong>
+        </div>
+        <div className="next-action-item priority-high">
+          <span>Burn list alerts</span>
+          <strong>{burnListUrgentCount}</strong>
+        </div>
+        <div className="next-action-item priority-medium">
+          <span>Capital locked warnings</span>
+          <strong>{capitalLockWarningCount}</strong>
+        </div>
+        <div className="next-action-item priority-low">
+          <span>Available capital</span>
+          <strong>${capitalPanelSnapshot.available_capital.toFixed(0)}</strong>
+        </div>
+      </section>
 
       <div className="workspace-layout">
         <aside className="left-nav">
           <h1>Arbitrage OS</h1>
           <p>Operator Console</p>
+          <p className="mode-chip">
+            {operatorMode === "manage"
+              ? "Manage Mode"
+              : operatorMode === "hunt"
+                ? "Hunt Mode"
+                : "Analyze Mode"}
+          </p>
           <button
             type="button"
             className={activePage === "dashboard" ? "active" : ""}
@@ -1295,7 +1381,7 @@ function App() {
           {error ? <p className="error-banner">{error}</p> : null}
 
           {activePage === "dashboard" ? (
-            <section className="panel">
+            <section className="panel priority-low">
               <h2 className="page-title">Decision Dashboard</h2>
               <div className="dashboard-grid">
                 <article className="dashboard-stat-card">
@@ -1318,7 +1404,7 @@ function App() {
 
               <DashboardPanels deals={deals} reconditioningMap={reconditioningMap} />
 
-              <div className="dashboard-chart-card">
+              <div className="dashboard-chart-card low-emphasis">
                 <h3>Monthly Revenue + Net + EHR</h3>
                 <p className="chart-subtitle">
                   Revenue/net from completed deals, projected net from active deals, EHR from prep
@@ -2087,6 +2173,7 @@ function App() {
                   onClick={() => {
                     setActivePage("dashboard");
                     setRightPanelMode("detail");
+                    setRightPanelDetailTab("decision");
                   }}
                 >
                   Go to Burn List
@@ -2165,10 +2252,34 @@ function App() {
                     <p className="preview-banner">Preview — Not Yet Created</p>
                   </div>
                 ) : null}
+                <div className="detail-tab-row">
+                  <button
+                    type="button"
+                    className={rightPanelDetailTab === "decision" ? "active" : ""}
+                    onClick={() => setRightPanelDetailTab("decision")}
+                  >
+                    Decision
+                  </button>
+                  <button
+                    type="button"
+                    className={rightPanelDetailTab === "market" ? "active" : ""}
+                    onClick={() => setRightPanelDetailTab("market")}
+                  >
+                    Market
+                  </button>
+                  <button
+                    type="button"
+                    className={rightPanelDetailTab === "recon" ? "active" : ""}
+                    onClick={() => setRightPanelDetailTab("recon")}
+                  >
+                    Recon
+                  </button>
+                </div>
                 <DetailPanel
                   deal={selectedDeal}
                   marketIntel={selectedDealMarketIntel}
                   reconditioning={selectedDealReconditioning}
+                  activeTab={rightPanelDetailTab}
                   onMarketIntelChange={handleMarketIntelChange}
                   onReconditioningChange={handleReconditioningChange}
                   onRequestApproveDecision={handleRequestApproveDecision}

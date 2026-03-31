@@ -4,7 +4,8 @@
   flex-direction: column;
   gap: 12px;
   padding: 12px;
-  background: #f3f4f6;
+  background: radial-gradient(circle at top, #111827 0%, #0b1220 35%, #060b15 100%);
+  color: #e5e7eb;
 }
 
 .top-bar {
@@ -13,9 +14,50 @@
   gap: 12px;
 }
 
+.next-action-bar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.next-action-item {
+  border: 1px solid #334155;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #0f172a;
+  display: grid;
+  gap: 4px;
+}
+
+.next-action-item span {
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #94a3b8;
+}
+
+.next-action-item strong {
+  font-size: 1.2rem;
+  color: #f8fafc;
+}
+
+.next-action-item.high-priority {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.35);
+}
+
+.next-action-item.medium-priority {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.25);
+}
+
+.next-action-item.low-priority {
+  border-color: #334155;
+}
+
 .kpi-card {
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: #0f172a;
+  border: 1px solid #334155;
   border-radius: 8px;
   padding: 10px 12px;
   display: grid;
@@ -24,11 +66,12 @@
 
 .kpi-card span {
   font-size: 0.85rem;
-  color: #6b7280;
+  color: #94a3b8;
 }
 
 .kpi-card strong {
   font-size: 1.2rem;
+  color: #f8fafc;
 }
 
 .kpi-card.primary {
@@ -48,6 +91,12 @@
 
 .kpi-card.alerts.critical {
   border-color: #ef4444;
+}
+
+.top-bar-title h2 {
+  margin: 0 0 6px;
+  font-size: 1.28rem;
+  color: #f8fafc;
 }
 
 .workspace-layout {
@@ -79,6 +128,68 @@
   font-size: 0.85rem;
 }
 
+.mode-chip {
+  margin: 0 0 8px;
+  border: 1px solid #334155;
+  border-radius: 999px;
+  padding: 3px 10px;
+  background: #0f172a;
+  color: #bfdbfe;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.top-bar-title {
+  margin: 0 0 6px;
+  font-size: 1.15rem;
+  color: #dbeafe;
+}
+
+.mode-switcher {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mode-pill {
+  border: 1px solid #334155;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.74rem;
+  color: #cbd5e1;
+  background: #0f172a;
+}
+
+.mode-pill.active {
+  border-color: #60a5fa;
+  color: #dbeafe;
+  background: #1e3a8a;
+  font-weight: 700;
+}
+
+.next-action-mode {
+  border: 1px dashed #334155;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #0b1220;
+  display: grid;
+  gap: 4px;
+}
+
+.next-action-mode span {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #94a3b8;
+}
+
+.next-action-mode strong {
+  font-size: 1.1rem;
+  color: #e2e8f0;
+}
+
 .left-nav button {
   font: inherit;
   text-align: left;
@@ -100,6 +211,25 @@
   gap: 12px;
 }
 
+.mode-banner {
+  border: 1px solid #334155;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #0f172a;
+}
+
+.mode-banner h3 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+  color: #f8fafc;
+}
+
+.mode-banner p {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 0.86rem;
+}
+
 .right-panel {
   position: sticky;
   top: 12px;
@@ -115,15 +245,55 @@
 .right-panel-toggle button {
   font: inherit;
   padding: 8px 10px;
-  border: 1px solid #d1d5db;
+  border: 1px solid #334155;
   border-radius: 6px;
-  background: #fff;
+  background: #111827;
+  color: #e5e7eb;
   cursor: pointer;
 }
 
 .right-panel-toggle button.active {
   border-color: #2563eb;
-  background: #dbeafe;
+  background: #1d4ed8;
+  color: #eff6ff;
+}
+
+.detail-tab-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.detail-tab-row button {
+  font: inherit;
+  min-height: 36px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #111827;
+  color: #cbd5e1;
+  cursor: pointer;
+}
+
+.detail-tab-row button.active {
+  border-color: #60a5fa;
+  background: #1e3a8a;
+  color: #dbeafe;
+  font-weight: 700;
+}
+
+.detail-tab-content {
+  border: 1px solid #334155;
+  border-radius: 10px;
+  background: #0f172a;
+  padding: 8px;
+  display: grid;
+  gap: 10px;
+}
+
+.detail-tab-hint {
+  margin: 0;
+  color: #93c5fd;
+  font-size: 0.82rem;
 }
 
 .error-banner {
@@ -137,11 +307,11 @@
 }
 
 .panel {
-  border: 1px solid #e5e7eb;
+  border: 1px solid #334155;
   border-radius: 12px;
   padding: 18px;
-  background: #ffffff;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  background: #111827;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
 .scanner-panel {
@@ -183,12 +353,42 @@
 }
 
 .sniper-pick-card {
-  border: 1px solid #bfdbfe;
+  border: 1px solid #facc15;
   border-radius: 10px;
-  background: #ffffff;
+  background: #0f172a;
   padding: 10px;
   display: grid;
   gap: 8px;
+}
+
+.sniper-card-top,
+.sniper-card-middle,
+.sniper-card-bottom {
+  display: grid;
+  gap: 8px;
+}
+
+.sniper-card-middle {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.sniper-card-middle .metric {
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #111827;
+  padding: 6px 8px;
+  display: grid;
+  gap: 2px;
+}
+
+.sniper-card-middle .metric span {
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+
+.sniper-card-middle .metric strong {
+  font-size: 0.95rem;
+  color: #f8fafc;
 }
 
 .sniper-pass-row {
@@ -204,10 +404,10 @@
 }
 
 .sniper-score-breakdown {
-  border: 1px dashed #bfdbfe;
+  border: 1px dashed #334155;
   border-radius: 8px;
   padding: 8px;
-  background: #f8fbff;
+  background: #0b1220;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
@@ -215,11 +415,22 @@
 
 .sniper-score-breakdown span {
   font-size: 0.74rem;
-  color: #1f2937;
+  color: #94a3b8;
 }
 
 .sniper-score-breakdown strong {
   margin-left: 4px;
+}
+
+.sniper-top-metrics {
+  display: grid;
+  gap: 6px;
+  justify-items: end;
+}
+
+.sniper-profit-big {
+  font-size: 1.22rem;
+  color: #22c55e;
 }
 
 .risk-chip.info {
@@ -442,19 +653,20 @@
 
 .panel h2 {
   margin: 0 0 12px;
-  font-size: 1.2rem;
+  font-size: 1.35rem;
+  color: #f8fafc;
 }
 
 .page-title {
   margin: 0 0 6px;
-  font-size: 1.35rem;
+  font-size: 1.5rem;
   font-weight: 700;
-  color: #0f172a;
+  color: #f8fafc;
 }
 
 .section-subtitle {
   margin: 0 0 14px;
-  color: #6b7280;
+  color: #94a3b8;
   font-size: 0.92rem;
 }
 
@@ -653,11 +865,22 @@
 
 .dashboard-chart-card {
   margin-top: 14px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #334155;
   border-radius: 12px;
-  background: #ffffff;
+  background: #0f172a;
   box-shadow: 0 1px 4px rgba(15, 23, 42, 0.05);
   padding: 12px;
+  opacity: 0.78;
+}
+
+.dashboard-chart-card.low-emphasis {
+  opacity: 0.62;
+}
+
+.dashboard-priority-note {
+  margin: 0 0 10px;
+  color: #93c5fd;
+  font-size: 0.85rem;
 }
 
 .dashboard-chart-card h3 {
@@ -1087,8 +1310,8 @@
 }
 
 .assistant-panel {
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: #0f172a;
+  border: 1px solid #334155;
   border-radius: 8px;
   padding: 12px;
   display: grid;
@@ -1111,9 +1334,9 @@
 }
 
 .detail-panel {
-  margin-top: 12px;
-  border-top: 1px solid #e5e7eb;
-  padding-top: 12px;
+  margin-top: 0;
+  border-top: none;
+  padding-top: 0;
 }
 
 .detail-panel h4 {
@@ -1141,6 +1364,32 @@
   border-color: #f59e0b;
   background: #fffbeb;
   color: #92400e;
+}
+
+.priority-high {
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.35);
+}
+
+.priority-medium {
+  border-color: #facc15 !important;
+  box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.25);
+}
+
+.priority-low {
+  opacity: 0.9;
+}
+
+.mode-manage .next-action-item.high-priority {
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.4);
+}
+
+.mode-hunt .next-action-item.medium-priority {
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.35);
+}
+
+.mode-analyze .next-action-item.high-priority {
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.45);
 }
 
 .link-button {
@@ -1176,11 +1425,21 @@
 
 
 @media (max-width: 900px) {
+  .next-action-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .mode-switcher {
+    flex-wrap: wrap;
+  }
+
   .scanner-layout,
   .sniper-picks-grid,
   .sniper-pass-row,
   .opportunity-grid,
-  .opportunity-grid-fields {
+  .opportunity-grid-fields,
+  .sniper-card-middle,
+  .detail-tab-row {
     grid-template-columns: 1fr;
   }
 

@@ -663,7 +663,7 @@ function GovDealsScannerPanel({
         </article>
       </div>
 
-      <section className="sniper-picks-section">
+      <section className="sniper-picks-section priority-medium">
         <div className="scanner-results-header">
           <h3>Sniper AI Picks</h3>
           <div className="interest-summary">
@@ -696,32 +696,22 @@ function GovDealsScannerPanel({
               const draft = sniperPassDrafts[pick.opportunity.id] ?? { reason: "risk" as SniperPassReason, note: "" };
               return (
                 <article className="sniper-pick-card" key={`sniper-${pick.opportunity.id}`}>
-                  <div className="opportunity-head">
-                    <h4>{pick.opportunity.title}</h4>
-                    <span className="status-badge">Score {pick.score}</span>
+                  <div className="sniper-card-top">
+                    <div>
+                      <h4>{pick.opportunity.title}</h4>
+                      <p className="muted">{pick.explanation}</p>
+                    </div>
+                    <div className="sniper-top-metrics">
+                      <span className="status-badge">Score {pick.score}</span>
+                      <strong className="sniper-profit-big">
+                        {formatCurrency(pick.metrics.projected_upside)}
+                      </strong>
+                    </div>
                   </div>
-                  <p className="muted">{pick.explanation}</p>
-                  {pick.quality_signals.length > 0 ? (
-                    <div className="pipeline-risk-flags">
-                      {pick.quality_signals.map((signal) => (
-                        <span key={`${pick.opportunity.id}-quality-${signal}`} className="risk-chip quality-signal">
-                          {signal}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-                  <div className="opportunity-grid-fields">
+                  <div className="sniper-card-middle">
                     <div>
-                      <span>Projected Profit</span>
+                      <span>Profit</span>
                       <strong>{formatCurrency(pick.metrics.projected_upside)}</strong>
-                    </div>
-                    <div>
-                      <span>ROI</span>
-                      <strong>{pick.metrics.projected_roi_pct.toFixed(1)}%</strong>
-                    </div>
-                    <div>
-                      <span>Confidence</span>
-                      <strong>{pick.metrics.confidence}</strong>
                     </div>
                     <div>
                       <span>Distance</span>
@@ -732,24 +722,16 @@ function GovDealsScannerPanel({
                       </strong>
                     </div>
                     <div>
-                      <span>Transport</span>
-                      <strong>{formatCurrency(pick.metrics.estimated_transport_cost)}</strong>
+                      <span>Risk</span>
+                      <strong>{pick.metrics.risk_flags.length === 0 ? "Low" : "Flagged"}</strong>
                     </div>
                     <div>
-                      <span>Time Left</span>
-                      <strong>{formatHours(pick.metrics.time_left_hours)}</strong>
-                    </div>
-                    <div>
-                      <span>Est. EHR</span>
+                      <span>EHR</span>
                       <strong>
                         {pick.metrics.estimated_ehr === null
                           ? "N/A"
                           : `${formatCurrency(pick.metrics.estimated_ehr)}/hr`}
                       </strong>
-                    </div>
-                    <div>
-                      <span>Est. Total Cost</span>
-                      <strong>{formatCurrency(pick.metrics.estimated_total_cost)}</strong>
                     </div>
                   </div>
                   <div className="sniper-score-breakdown">
@@ -771,7 +753,16 @@ function GovDealsScannerPanel({
                       <span className="risk-chip">No major flags</span>
                     )}
                   </div>
-                  <div className="entry-actions">
+                  {pick.quality_signals.length > 0 ? (
+                    <div className="pipeline-risk-flags">
+                      {pick.quality_signals.map((signal) => (
+                        <span key={`${pick.opportunity.id}-quality-${signal}`} className="risk-chip quality-signal">
+                          {signal}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="entry-actions sniper-card-bottom">
                     <button
                       type="button"
                       className="primary-button"
