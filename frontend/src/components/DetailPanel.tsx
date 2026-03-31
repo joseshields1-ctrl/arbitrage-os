@@ -176,6 +176,32 @@ const DetailPanel = ({
       </div>
       {activeTab === "decision" ? (
         <div className="detail-tab-content">
+          <div className="decision-hero-metrics">
+            <div className="hero-metric">
+              <span>Profit</span>
+              <strong>{formatCurrency(projectedNet)}</strong>
+            </div>
+            <div className="hero-metric">
+              <span>ROI</span>
+              <strong>{projectedRoiPct.toFixed(1)}%</strong>
+            </div>
+            <div className="hero-metric">
+              <span>Distance</span>
+              <strong>
+                {(deal.engine?.cost_basis?.cost_basis_breakdown?.transport ??
+                  deal.financials.transport_cost_estimated ??
+                  deal.financials.transport_cost_actual ??
+                  0) > 0
+                  ? formatCurrency(
+                      deal.engine?.cost_basis?.cost_basis_breakdown?.transport ??
+                        deal.financials.transport_cost_estimated ??
+                        deal.financials.transport_cost_actual ??
+                        0
+                    )
+                  : "N/A"}
+              </strong>
+            </div>
+          </div>
           <div className="decision-section">
             <h4>Capital Velocity</h4>
             <p>

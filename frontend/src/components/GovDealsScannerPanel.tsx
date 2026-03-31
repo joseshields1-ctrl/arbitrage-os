@@ -58,6 +58,33 @@ const formatCurrency = (value: number | null): string =>
 const formatHours = (value: number | null): string =>
   value === null ? "N/A" : `${Math.max(0, value).toFixed(1)}h`;
 
+const getUrgencyClass = (timeLeftHours: number | null): string => {
+  if (timeLeftHours === null) {
+    return "urgency-neutral";
+  }
+  if (timeLeftHours < 3) {
+    return "urgency-red";
+  }
+  if (timeLeftHours < 6) {
+    return "urgency-strong-orange";
+  }
+  if (timeLeftHours < 12) {
+    return "urgency-orange";
+  }
+  return "urgency-neutral";
+};
+
+const getUrgencyLabel = (timeLeftHours: number | null): string => {
+  if (timeLeftHours === null) {
+    return "Time Left N/A";
+  }
+  const base = `Time Left ${formatHours(timeLeftHours)}`;
+  if (timeLeftHours < 3) {
+    return `⚠️ ${base}`;
+  }
+  return base;
+};
+
 const toNumberOrNull = (value: string): number | null => {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -694,15 +721,23 @@ function GovDealsScannerPanel({
           <div className="sniper-picks-grid">
             {sniperPicks.slice(0, 8).map((pick) => {
               const draft = sniperPassDrafts[pick.opportunity.id] ?? { reason: "risk" as SniperPassReason, note: "" };
+              const isTopPick = sniperPicks[0]?.opportunity.id === pick.opportunity.id;
+              const urgencyClass = getUrgencyClass(pick.metrics.time_left_hours);
+              const urgencyLabel = getUrgencyLabel(pick.metrics.time_left_hours);
               return (
-                <article className="sniper-pick-card" key={`sniper-${pick.opportunity.id}`}>
+                <article
+                  className={`sniper-pick-card ${isTopPick ? "sniper-top-pick" : ""}`}
+                  key={`sniper-${pick.opportunity.id}`}
+                >
                   <div className="sniper-card-top">
                     <div>
+                      {isTopPick ? <p className="top-pick-label">TOP PICK</p> : null}
                       <h4>{pick.opportunity.title}</h4>
                       <p className="muted">{pick.explanation}</p>
                     </div>
                     <div className="sniper-top-metrics">
                       <span className="status-badge">Score {pick.score}</span>
+                      <span className={`urgency-indicator ${urgencyClass}`}>{urgencyLabel}</span>
                       <strong className="sniper-profit-big">
                         {formatCurrency(pick.metrics.projected_upside)}
                       </strong>
@@ -756,7 +791,20 @@ function GovDealsScannerPanel({
                   {pick.quality_signals.length > 0 ? (
                     <div className="pipeline-risk-flags">
                       {pick.quality_signals.map((signal) => (
-                        <span key={`${pick.opportunity.id}-quality-${signal}`} className="risk-chip quality-signal">
+                        <span
+                          key={`${pick.opportunity.id}-quality-${signal}`}
+                          className={`risk-chip quality-signal ${
+                            signal === "HIGH UPSIDE"
+                              ? "high-upside"
+                              : signal === "FAST FLIP"
+                                ? "fast-flip"
+                                : signal === "LOW EFFORT"
+                                  ? "low-effort"
+                                  : signal === "HIGH RISK"
+                                    ? "high-risk"
+                                    : ""
+                          }`}
+                        >
                           {signal}
                         </span>
                       ))}
@@ -914,7 +962,9 @@ function GovDealsScannerPanel({
                   </div>
                   <div>
                     <span>Time Left</span>
-                    <strong>{formatHours(metrics.time_left_hours)}</strong>
+                    <strong className={`urgency-indicator ${getUrgencyClass(metrics.time_left_hours)}`}>
+                      {getUrgencyLabel(metrics.time_left_hours)}
+                    </strong>
                   </div>
                   <div>
                     <span>Buyer Premium</span>

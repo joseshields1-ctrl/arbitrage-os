@@ -574,6 +574,24 @@ function App() {
     () => computeSniperDashboardSummary(sniperPicks, govDealsOpportunities, sniperDecisionHistory),
     [sniperPicks, govDealsOpportunities, sniperDecisionHistory]
   );
+  const sniperLast10 = useMemo(() => sniperDecisionHistory.slice(0, 10), [sniperDecisionHistory]);
+  const sniperAccuracyLast10 = useMemo(() => {
+    if (sniperLast10.length === 0) {
+      return 0;
+    }
+    const approved = sniperLast10.filter((item) => item.decision === "approved").length;
+    return Math.round((approved / sniperLast10.length) * 100);
+  }, [sniperLast10]);
+  const operatorAgreementRate = useMemo(() => {
+    if (sniperLast10.length === 0) {
+      return 0;
+    }
+    const aligned = sniperLast10.filter((item) => {
+      const recommendation = item.opportunity_snapshot.interest === "interested" ? "approved" : "passed";
+      return recommendation === item.decision;
+    }).length;
+    return Math.round((aligned / sniperLast10.length) * 100);
+  }, [sniperLast10]);
 
   const pipelineDeals = useMemo(() => {
     if (pipelineAlertFilter === "all") {
@@ -1291,6 +1309,14 @@ function App() {
             {sniperDashboardSummary.passed_breakdown.coordination} /{" "}
             {sniperDashboardSummary.passed_breakdown.risk}
           </strong>
+        </div>
+        <div className="kpi-card">
+          <span>Sniper Accuracy (last 10)</span>
+          <strong>{sniperAccuracyLast10}%</strong>
+        </div>
+        <div className="kpi-card">
+          <span>Operator Agreement Rate</span>
+          <strong>{operatorAgreementRate}%</strong>
         </div>
       </header>
       <section className="next-action-bar">

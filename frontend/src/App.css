@@ -361,6 +361,35 @@
   gap: 8px;
 }
 
+.sniper-top-pick {
+  border-color: #f59e0b;
+  background: linear-gradient(180deg, #1f2937 0%, #0f172a 100%);
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.35), 0 10px 24px rgba(15, 23, 42, 0.4);
+  transform: scale(1.02);
+}
+
+.sniper-pick-card.top-pick {
+  border-color: #f59e0b;
+  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.45), 0 12px 26px rgba(245, 158, 11, 0.2);
+  padding: 14px;
+  transform: scale(1.02);
+}
+
+.top-pick-label {
+  display: inline-block;
+  margin: 0 0 4px;
+  border-radius: 999px;
+  border: 1px solid #f59e0b;
+  background: #f59e0b;
+  color: #111827;
+  font-weight: 800;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+}
+
 .sniper-card-top,
 .sniper-card-middle,
 .sniper-card-bottom {
@@ -446,10 +475,62 @@
 }
 
 .risk-chip.quality-signal {
-  border-color: #86efac;
-  background: #f0fdf4;
-  color: #166534;
-  font-weight: 600;
+  border-color: #60a5fa;
+  background: #1e293b;
+  color: #f8fafc;
+  font-weight: 800;
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  padding: 4px 10px;
+}
+
+.risk-chip.quality-signal.high-upside {
+  border-color: #22c55e;
+  background: #14532d;
+}
+
+.risk-chip.quality-signal.fast-flip {
+  border-color: #60a5fa;
+  background: #1e3a8a;
+}
+
+.risk-chip.quality-signal.low-effort {
+  border-color: #22d3ee;
+  background: #0e7490;
+}
+
+.risk-chip.quality-signal.high-risk {
+  border-color: #f87171;
+  background: #7f1d1d;
+}
+
+.urgency-indicator {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  border: 1px solid #334155;
+  background: #0b1220;
+  color: #cbd5e1;
+}
+
+.urgency-indicator.urgency-orange {
+  border-color: #f59e0b;
+  color: #fde68a;
+  background: rgba(245, 158, 11, 0.2);
+}
+
+.urgency-indicator.urgency-strong-orange {
+  border-color: #fb923c;
+  color: #fed7aa;
+  background: rgba(251, 146, 60, 0.24);
+}
+
+.urgency-indicator.urgency-red {
+  border-color: #ef4444;
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.24);
 }
 
 .status-badge.opportunity-status.converted {
@@ -1036,6 +1117,71 @@
   background: #dc2626;
 }
 
+.burn-aggressive {
+  border: 2px solid #ef4444 !important;
+  background: linear-gradient(180deg, #7f1d1d 0%, #991b1b 100%) !important;
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.35), 0 0 22px rgba(239, 68, 68, 0.28);
+  animation: burnPulse 1.8s ease-in-out infinite;
+}
+
+.burn-aggressive h3,
+.burn-aggressive li,
+.burn-aggressive p,
+.burn-aggressive strong {
+  color: #fee2e2;
+}
+
+.burn-required-label {
+  display: inline-block;
+  margin: 0 0 8px;
+  border-radius: 999px;
+  border: 1px solid #fee2e2;
+  background: #fee2e2;
+  color: #7f1d1d;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  padding: 3px 9px;
+}
+
+@keyframes burnPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.35), 0 0 22px rgba(239, 68, 68, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.55), 0 0 28px rgba(239, 68, 68, 0.4);
+  }
+}
+
+.decision-hero-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.hero-metric {
+  border: 1px solid #334155;
+  border-radius: 10px;
+  background: #111827;
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.hero-metric span {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #94a3b8;
+}
+
+.hero-metric strong {
+  font-size: 1.35rem;
+  color: #f8fafc;
+}
+
 .burn-list ul {
   margin: 0;
   padding-left: 18px;
@@ -1542,10 +1688,22 @@
 .dashboard-alert-sections,
 .market-intel-panel {
   margin-top: 12px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #334155;
   border-radius: 10px;
-  background: #fff;
+  background: #0f172a;
   padding: 12px;
+}
+
+.decision-queue-card {
+  order: 2;
+}
+
+.capital-panel {
+  order: 3;
+}
+
+.burn-enhanced-card {
+  order: 1;
 }
 
 .capital-grid {
