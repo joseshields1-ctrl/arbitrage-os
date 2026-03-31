@@ -144,6 +144,121 @@
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
 }
 
+.scanner-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.scanner-layout {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 12px;
+}
+
+.scanner-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 12px;
+  background: #ffffff;
+  display: grid;
+  gap: 10px;
+}
+
+.scanner-card h3 {
+  margin: 0;
+}
+
+.scanner-subsection {
+  border-top: 1px dashed #d1d5db;
+  padding-top: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.scanner-subsection h4 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.scanner-results-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.scanner-results-header h3 {
+  margin: 0;
+}
+
+.opportunity-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.opportunity-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.05);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.opportunity-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.opportunity-head h4 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.opportunity-status.new {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+}
+
+.opportunity-status.watch {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.opportunity-status.passed {
+  border-color: #e5e7eb;
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.opportunity-grid-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.opportunity-grid-fields > div {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 7px 8px;
+  display: grid;
+  gap: 2px;
+}
+
+.opportunity-grid-fields span {
+  font-size: 0.76rem;
+  color: #64748b;
+}
+
+.opportunity-grid-fields strong {
+  font-size: 0.9rem;
+}
+
 .panel h2 {
   margin: 0 0 12px;
   font-size: 1.2rem;
@@ -880,6 +995,12 @@
 
 
 @media (max-width: 900px) {
+  .scanner-layout,
+  .opportunity-grid,
+  .opportunity-grid-fields {
+    grid-template-columns: 1fr;
+  }
+
   .top-bar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

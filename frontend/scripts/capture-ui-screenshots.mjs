@@ -36,6 +36,17 @@ const run = async () => {
     fullPage: true,
   });
 
+  await clickNav(page, "Opportunities");
+  await page
+    .getByRole("textbox", { name: "Keyword", exact: true })
+    .fill("tahoe");
+  await page.locator("button", { hasText: "Search" }).first().click();
+  await page.waitForTimeout(600);
+  await page.screenshot({
+    path: `${outDir}/govdeals-opportunity-scanner.png`,
+    fullPage: true,
+  });
+
   await clickNav(page, "Intake");
   const stepOneButton = page.locator(".intake-category-card", { hasText: "Vehicle" }).first();
   if (await stepOneButton.count()) {

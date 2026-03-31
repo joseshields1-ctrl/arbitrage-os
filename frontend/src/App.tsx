@@ -11,6 +11,7 @@ import {
 import DashboardPanels from "./components/DashboardPanels";
 import DealCard from "./components/DealCard";
 import DetailPanel from "./components/DetailPanel";
+import GovDealsScannerPanel from "./components/GovDealsScannerPanel";
 import PreBidSanityModal from "./components/PreBidSanityModal";
 import {
   CONDITION_GRADE_OPTIONS,
@@ -43,11 +44,37 @@ import {
   loadReconditioningMap,
   saveReconditioningMap,
 } from "./utils/reconditioning";
+import {
+  buildCreateDealRequestFromOpportunity,
+  buildKeywordOpportunities,
+  buildManualOpportunity,
+  buildOpportunityFromUrl,
+  DEFAULT_OPPORTUNITY_SORT_MODE,
+  DEFAULT_SCANNER_FILTERS,
+  setOpportunityStatus,
+  toPreviewSnapshot,
+  upsertOpportunities,
+} from "./utils/govDealsScanner";
+import type {
+  GovDealsOpportunity,
+  ManualOpportunityInput,
+  OpportunityFilters,
+  OpportunityPreviewSnapshot,
+  OpportunitySortMode,
+} from "./utils/govDealsScanner";
 import "./App.css";
 
 const INTAKE_QUEUE_STORAGE_KEY = "arbitrage_os_intake_queue_v1";
+const GOVDEALS_OPPORTUNITIES_STORAGE_KEY = "arbitrage_os_govdeals_opportunities_v1";
+const GOVDEALS_SCANNER_META_STORAGE_KEY = "arbitrage_os_govdeals_scanner_meta_v1";
 
-type ActivePage = "dashboard" | "pipeline" | "intake" | "alerts" | "archive";
+type ActivePage =
+  | "dashboard"
+  | "opportunities"
+  | "pipeline"
+  | "intake"
+  | "alerts"
+  | "archive";
 type PipelineAlertFilter = "all" | "critical" | "warning" | "none";
 type IntakeStep = 1 | 2 | 3;
 
@@ -258,6 +285,17 @@ function App() {
   const [marketIntelMap, setMarketIntelMap] = useState<Record<string, VehicleMarketIntel>>({});
   const [reconditioningMap, setReconditioningMap] = useState<Record<string, ReconditioningRecord>>({});
   const [pendingApprovalDealId, setPendingApprovalDealId] = useState<string | null>(null);
+  const [govDealsOpportunities, setGovDealsOpportunities] = useState<GovDealsOpportunity[]>([]);
+  const [scannerFilters, setScannerFilters] = useState<OpportunityFilters>(DEFAULT_SCANNER_FILTERS);
+  const [scannerSortMode, setScannerSortMode] =
+    useState<OpportunitySortMode>(DEFAULT_OPPORTUNITY_SORT_MODE);
+  const [operatorBaseState, setOperatorBaseState] = useState("TX");
+  const [scannerPreviewsByOpportunityId, setScannerPreviewsByOpportunityId] = useState<
+    Record<string, OpportunityPreviewSnapshot | undefined>
+  >({});
+  const [scannerBusyOpportunityId, setScannerBusyOpportunityId] = useState<string | null>(null);
+  const [scannerStatusMessage, setScannerStatusMessage] = useState<string | null>(null);
+  const [scannerErrorMessage, setScannerErrorMessage] = useState<string | null>(null);
 
   const isElectronicsCategory = intakeCategory === "electronics";
   const isVehicleCategory = intakeCategory === "vehicle";
@@ -330,6 +368,64 @@ function App() {
   useEffect(() => {
     localStorage.setItem(INTAKE_QUEUE_STORAGE_KEY, JSON.stringify(savedForLaterIntake));
   }, [savedForLaterIntake]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(GOVDEALS_OPPORTUNITIES_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+      const parsed = JSON.parse(raw) as GovDealsOpportunity[];
+      if (Array.isArray(parsed)) {
+        setGovDealsOpportunities(parsed);
+      }
+    } catch {
+      setGovDealsOpportunities([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(
+      GOVDEALS_OPPORTUNITIES_STORAGE_KEY,
+      JSON.stringify(govDealsOpportunities)
+    );
+  }, [govDealsOpportunities]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(GOVDEALS_SCANNER_META_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+      const parsed = JSON.parse(raw) as {
+        operator_base_state?: string;
+        filters?: OpportunityFilters;
+        sort_mode?: OpportunitySortMode;
+      };
+      if (typeof parsed.operator_base_state === "string" && parsed.operator_base_state.trim()) {
+        setOperatorBaseState(parsed.operator_base_state.trim().toUpperCase().slice(0, 2));
+      }
+      if (parsed.filters && typeof parsed.filters === "object") {
+        setScannerFilters(parsed.filters);
+      }
+      if (typeof parsed.sort_mode === "string") {
+        setScannerSortMode(parsed.sort_mode);
+      }
+    } catch {
+      // ignore malformed scanner meta
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(
+      GOVDEALS_SCANNER_META_STORAGE_KEY,
+      JSON.stringify({
+        operator_base_state: operatorBaseState,
+        filters: scannerFilters,
+        sort_mode: scannerSortMode,
+      })
+    );
+  }, [operatorBaseState, scannerFilters, scannerSortMode]);
 
   const selectedDeal =
     deals.find((deal) => deal.deal.id === selectedDealId) ??
@@ -863,6 +959,102 @@ function App() {
     }));
   };
 
+  const clearScannerMessages = (): void => {
+    setScannerStatusMessage(null);
+    setScannerErrorMessage(null);
+  };
+
+  const handleScannerImportUrl = (listingUrl: string, keywordHint: string): void => {
+    clearScannerMessages();
+    const trimmed = listingUrl.trim();
+    if (!trimmed) {
+      setScannerErrorMessage("Listing URL is required.");
+      return;
+    }
+    const opportunity = buildOpportunityFromUrl(trimmed, keywordHint);
+    setGovDealsOpportunities((prev) => upsertOpportunities(prev, [opportunity]));
+    setScannerStatusMessage("URL imported into opportunities.");
+  };
+
+  const handleScannerKeywordSearch = (keyword: string): void => {
+    clearScannerMessages();
+    const trimmed = keyword.trim();
+    if (!trimmed) {
+      setScannerErrorMessage("Keyword is required.");
+      return;
+    }
+    const results = buildKeywordOpportunities(trimmed);
+    setGovDealsOpportunities((prev) => upsertOpportunities(prev, results));
+    setScannerStatusMessage(`Keyword search added ${results.length} opportunity result(s).`);
+  };
+
+  const handleScannerManualImport = (input: ManualOpportunityInput): void => {
+    clearScannerMessages();
+    if (!input.title.trim()) {
+      setScannerErrorMessage("Manual import requires a title.");
+      return;
+    }
+    const manual = buildManualOpportunity(input);
+    setGovDealsOpportunities((prev) => upsertOpportunities(prev, [manual]));
+    setScannerStatusMessage("Manual listing imported.");
+  };
+
+  const handleScannerPreview = async (opportunity: GovDealsOpportunity): Promise<void> => {
+    setScannerBusyOpportunityId(opportunity.id);
+    clearScannerMessages();
+    try {
+      const payload = buildCreateDealRequestFromOpportunity(opportunity, operatorBaseState);
+      const preview = await previewDeal(payload);
+      setScannerPreviewsByOpportunityId((prev) => ({
+        ...prev,
+        [opportunity.id]: toPreviewSnapshot(preview),
+      }));
+      setIntakePreviewDeal(preview);
+      setSelectedDealId(preview.deal.id);
+      setRightPanelMode("detail");
+      setScannerStatusMessage("Opportunity preview computed using backend enrichment.");
+    } catch (previewError) {
+      const message = previewError instanceof Error ? previewError.message : "Failed opportunity preview";
+      setScannerErrorMessage(message);
+    } finally {
+      setScannerBusyOpportunityId(null);
+    }
+  };
+
+  const handleScannerWatch = (opportunityId: string): void => {
+    clearScannerMessages();
+    setGovDealsOpportunities((prev) => setOpportunityStatus(prev, opportunityId, "watch"));
+    setScannerStatusMessage("Opportunity added to watch.");
+  };
+
+  const handleScannerPass = (opportunityId: string): void => {
+    clearScannerMessages();
+    setGovDealsOpportunities((prev) => setOpportunityStatus(prev, opportunityId, "passed"));
+    setScannerStatusMessage("Opportunity passed.");
+  };
+
+  const handleScannerCreateDeal = async (opportunity: GovDealsOpportunity): Promise<void> => {
+    setScannerBusyOpportunityId(opportunity.id);
+    clearScannerMessages();
+    try {
+      const payload = buildCreateDealRequestFromOpportunity(opportunity, operatorBaseState);
+      const created = await createDeal(payload);
+      setSelectedDealId(created.deal.id);
+      setIntakePreviewDeal(null);
+      setActivePage("pipeline");
+      setRightPanelMode("detail");
+      setGovDealsOpportunities((prev) => setOpportunityStatus(prev, opportunity.id, "watch"));
+      await loadData();
+      setScannerStatusMessage("Deal created from opportunity.");
+    } catch (createError) {
+      const message =
+        createError instanceof Error ? createError.message : "Failed to create deal from opportunity";
+      setScannerErrorMessage(message);
+    } finally {
+      setScannerBusyOpportunityId(null);
+    }
+  };
+
   const step2Ready =
     intakeForm.title.trim().length > 0 &&
     intakeForm.acquisition_state.trim().length > 0 &&
@@ -900,6 +1092,13 @@ function App() {
             onClick={() => setActivePage("dashboard")}
           >
             Dashboard
+          </button>
+          <button
+            type="button"
+            className={activePage === "opportunities" ? "active" : ""}
+            onClick={() => setActivePage("opportunities")}
+          >
+            Opportunities
           </button>
           <button
             type="button"
@@ -1051,6 +1250,29 @@ function App() {
                 )}
               </div>
             </section>
+          ) : null}
+
+          {activePage === "opportunities" ? (
+            <GovDealsScannerPanel
+              opportunities={govDealsOpportunities}
+              operatorBaseState={operatorBaseState}
+              filters={scannerFilters}
+              sortMode={scannerSortMode}
+              previewsByOpportunityId={scannerPreviewsByOpportunityId}
+              busyOpportunityId={scannerBusyOpportunityId}
+              statusMessage={scannerStatusMessage}
+              errorMessage={scannerErrorMessage}
+              onOperatorBaseStateChange={setOperatorBaseState}
+              onFiltersChange={setScannerFilters}
+              onSortModeChange={setScannerSortMode}
+              onImportUrl={handleScannerImportUrl}
+              onKeywordSearch={handleScannerKeywordSearch}
+              onManualImport={handleScannerManualImport}
+              onPreview={handleScannerPreview}
+              onWatch={handleScannerWatch}
+              onCreateDeal={handleScannerCreateDeal}
+              onPass={handleScannerPass}
+            />
           ) : null}
 
           {activePage === "pipeline" ? (
