@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   createDeal,
   listDeals,
+  overrideDealValues,
   previewDeal,
   recordDealDecision,
   updateDealStage,
@@ -68,6 +69,18 @@ dealsRouter.post("/:id/decision", (req, res) => {
     res.status(201).json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to record decision";
+    const status = message === "Deal not found" ? 404 : 400;
+    res.status(status).json({ error: message });
+  }
+});
+
+dealsRouter.patch("/:id/override", (req, res) => {
+  try {
+    const id = req.params.id;
+    const updated = overrideDealValues(id, req.body);
+    res.status(200).json(updated);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to override deal values";
     const status = message === "Deal not found" ? 404 : 400;
     res.status(status).json({ error: message });
   }

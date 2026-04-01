@@ -84,7 +84,9 @@ export const initializeDatabase = (): void => {
     CREATE TABLE IF NOT EXISTS opportunities (
       id TEXT PRIMARY KEY,
       source TEXT NOT NULL,
+      listing_id TEXT,
       listing_url TEXT NOT NULL,
+      canonical_url TEXT NOT NULL DEFAULT '',
       title TEXT NOT NULL,
       category TEXT NOT NULL,
       current_bid REAL NOT NULL,
@@ -97,10 +99,20 @@ export const initializeDatabase = (): void => {
       title_status TEXT NOT NULL,
       relisted INTEGER NOT NULL DEFAULT 0,
       condition_raw TEXT NOT NULL,
+      description TEXT,
+      attachment_links TEXT NOT NULL DEFAULT '[]',
+      seller_contact TEXT,
       estimated_resale_value REAL NOT NULL,
+      estimated_transport_override REAL,
       estimated_repair_cost REAL NOT NULL,
       quantity_purchased INTEGER,
       quantity_broken INTEGER,
+      import_status TEXT NOT NULL DEFAULT 'active',
+      import_confidence REAL NOT NULL DEFAULT 100,
+      import_missing_fields TEXT NOT NULL DEFAULT '[]',
+      raw_import_data TEXT,
+      operator_overrides TEXT,
+      imported_at TEXT,
       status TEXT NOT NULL,
       interest TEXT NOT NULL,
       created_at TEXT NOT NULL
@@ -117,6 +129,17 @@ export const initializeDatabase = (): void => {
       decided_at TEXT NOT NULL,
       opportunity_snapshot TEXT NOT NULL,
       FOREIGN KEY (opportunity_id) REFERENCES opportunities(id) ON DELETE CASCADE
+    );
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS deal_override_events (
+      id TEXT PRIMARY KEY,
+      deal_id TEXT NOT NULL,
+      overridden_at TEXT NOT NULL,
+      previous_values TEXT NOT NULL,
+      override_values TEXT NOT NULL,
+      FOREIGN KEY (deal_id) REFERENCES deals(id) ON DELETE CASCADE
     );
   `);
 
@@ -184,4 +207,45 @@ export const initializeDatabase = (): void => {
   if (!hasTitleStatus) {
     db.exec(`ALTER TABLE metadata ADD COLUMN title_status TEXT NOT NULL DEFAULT 'unknown';`);
   }
+
+  const opportunityColumns = db.prepare(`PRAGMA table_info(opportunities)`).all() as Array<{
+    name: string;
+  }>;
+  const ensureOpportunityColumn = (columnName: string, alterSql: string): void => {
+    const exists = opportunityColumns.some((column) => column.name === columnName);
+    if (!exists) {
+      db.exec(alterSql);
+    }
+  };
+
+  ensureOpportunityColumn("listing_id", `ALTER TABLE opportunities ADD COLUMN listing_id TEXT;`);
+  ensureOpportunityColumn(
+    "canonical_url",
+    `ALTER TABLE opportunities ADD COLUMN canonical_url TEXT NOT NULL DEFAULT '';`
+  );
+  ensureOpportunityColumn("description", `ALTER TABLE opportunities ADD COLUMN description TEXT;`);
+  ensureOpportunityColumn(
+    "attachment_links",
+    `ALTER TABLE opportunities ADD COLUMN attachment_links TEXT NOT NULL DEFAULT '[]';`
+  );
+  ensureOpportunityColumn("seller_contact", `ALTER TABLE opportunities ADD COLUMN seller_contact TEXT;`);
+  ensureOpportunityColumn(
+    "estimated_transport_override",
+    `ALTER TABLE opportunities ADD COLUMN estimated_transport_override REAL;`
+  );
+  ensureOpportunityColumn(
+    "import_status",
+    `ALTER TABLE opportunities ADD COLUMN import_status TEXT NOT NULL DEFAULT 'active';`
+  );
+  ensureOpportunityColumn(
+    "import_confidence",
+    `ALTER TABLE opportunities ADD COLUMN import_confidence REAL NOT NULL DEFAULT 100;`
+  );
+  ensureOpportunityColumn(
+    "import_missing_fields",
+    `ALTER TABLE opportunities ADD COLUMN import_missing_fields TEXT NOT NULL DEFAULT '[]';`
+  );
+  ensureOpportunityColumn("raw_import_data", `ALTER TABLE opportunities ADD COLUMN raw_import_data TEXT;`);
+  ensureOpportunityColumn("operator_overrides", `ALTER TABLE opportunities ADD COLUMN operator_overrides TEXT;`);
+  ensureOpportunityColumn("imported_at", `ALTER TABLE opportunities ADD COLUMN imported_at TEXT;`);
 };

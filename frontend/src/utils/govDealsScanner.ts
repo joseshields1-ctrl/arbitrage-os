@@ -4,6 +4,13 @@ import type { DealView } from "../types";
 export type OpportunityCategory = "vehicle" | "electronics" | "other";
 export type OpportunityStatus = "new" | "watch" | "passed" | "converted";
 export type OpportunityInterest = "undecided" | "interested" | "not_interested";
+export type OpportunityImportStatus = "active" | "needs_review";
+export type OpportunityCriticalField =
+  | "title"
+  | "current_bid"
+  | "auction_end"
+  | "location"
+  | "seller_agency";
 export type SniperPassReason = "distance" | "funds" | "coordination" | "risk" | "other";
 export type OpportunitySortMode =
   | "best_deal"
@@ -13,10 +20,66 @@ export type OpportunitySortMode =
   | "lowest_risk"
   | "time_left";
 
+export interface OpportunityEditableFields {
+  title: string;
+  current_bid: number;
+  buyer_premium_pct: number;
+  estimated_resale_value: number;
+  estimated_transport_override: number | null;
+  estimated_repair_cost: number;
+  quantity_purchased: number | null;
+  quantity_broken: number | null;
+  condition_raw: string;
+  title_status: TitleStatus;
+  removal_window_days: number;
+  seller_agency: string;
+  seller_type: "government" | "commercial" | "unknown";
+  location: string;
+  auction_end: string;
+}
+
+export interface OpportunityRawImportFields {
+  listing_id: string | null;
+  title: string | null;
+  current_bid_text: string | null;
+  auction_end_text: string | null;
+  time_remaining_text: string | null;
+  location_text: string | null;
+  seller_agency_text: string | null;
+  category_text: string | null;
+  buyer_premium_text: string | null;
+  description_text: string | null;
+  quantity_text: string | null;
+  attachment_links_text: string | null;
+  seller_contact_text: string | null;
+}
+
+export interface OpportunityImportReviewResponse {
+  listing_url: string;
+  canonical_url: string;
+  listing_id: string | null;
+  raw_fields: OpportunityRawImportFields;
+  parsed_fields: Partial<OpportunityEditableFields> & {
+    listing_id: string | null;
+    canonical_url: string;
+    category: OpportunityCategory;
+    description: string | null;
+    attachment_links: string[];
+    seller_contact: string | null;
+  };
+  missing_fields: OpportunityCriticalField[];
+  import_status: OpportunityImportStatus;
+  import_confidence: number;
+  extraction_notes: string[];
+  selector_hits: Record<string, string[]>;
+}
+
 export interface GovDealsOpportunity {
   id: string;
   source: "url_import" | "keyword_search" | "manual_import";
+  listing_id: string | null;
   listing_url: string;
+  canonical_url: string;
   title: string;
   category: OpportunityCategory;
   current_bid: number;
@@ -31,10 +94,20 @@ export interface GovDealsOpportunity {
   title_status: TitleStatus;
   relisted: boolean;
   condition_raw: string;
+  description: string | null;
+  attachment_links: string[];
+  seller_contact: string | null;
   estimated_resale_value: number;
+  estimated_transport_override: number | null;
   estimated_repair_cost: number;
   quantity_purchased: number | null;
   quantity_broken: number | null;
+  import_status: OpportunityImportStatus;
+  import_confidence: number;
+  import_missing_fields: OpportunityCriticalField[];
+  raw_import_data: OpportunityRawImportFields | null;
+  operator_overrides: Partial<OpportunityEditableFields> | null;
+  imported_at: string | null;
   status: OpportunityStatus;
   interest: OpportunityInterest;
   created_at: string;
@@ -291,10 +364,108 @@ const STATE_NAME_TO_CODE: Record<string, string> = {
   "district of columbia": "DC",
 };
 
-const withNewId = (item: Omit<GovDealsOpportunity, "id" | "created_at">): GovDealsOpportunity => ({
+const withNewId = (
+  item: Partial<Omit<GovDealsOpportunity, "id" | "created_at">>
+): GovDealsOpportunity => ({
+  source: "manual_import",
+  listing_id: null,
+  listing_url: "",
+  canonical_url: "",
+  title: "Imported opportunity",
+  category: "other",
+  current_bid: 0,
+  auction_end: "",
+  auction_state: "unknown",
+  time_left_hours: null,
+  location: "",
+  seller_agency: "",
+  seller_type: "unknown",
+  buyer_premium_pct: 0.1,
+  removal_window_days: 3,
+  title_status: "unknown",
+  relisted: false,
+  condition_raw: "",
+  description: null,
+  attachment_links: [],
+  seller_contact: null,
+  estimated_resale_value: 0,
+  estimated_transport_override: null,
+  estimated_repair_cost: 0,
+  quantity_purchased: null,
+  quantity_broken: null,
+  import_status: "needs_review",
+  import_confidence: 0,
+  import_missing_fields: ["title", "current_bid", "auction_end", "location", "seller_agency"],
+  raw_import_data: null,
+  operator_overrides: null,
+  imported_at: null,
+  status: "new",
+  interest: "undecided",
   ...item,
   id: `op-${crypto.randomUUID()}`,
   created_at: new Date().toISOString(),
+});
+
+export const emptyRawImportFields = (): OpportunityRawImportFields => ({
+  listing_id: null,
+  title: null,
+  current_bid_text: null,
+  auction_end_text: null,
+  time_remaining_text: null,
+  location_text: null,
+  seller_agency_text: null,
+  category_text: null,
+  buyer_premium_text: null,
+  description_text: null,
+  quantity_text: null,
+  attachment_links_text: null,
+  seller_contact_text: null,
+});
+
+export const computeImportMissingFields = (
+  editable: Partial<OpportunityEditableFields>
+): OpportunityCriticalField[] => {
+  const missing: OpportunityCriticalField[] = [];
+  if (!editable.title || !editable.title.trim()) {
+    missing.push("title");
+  }
+  if (!Number.isFinite(editable.current_bid ?? Number.NaN) || (editable.current_bid ?? 0) <= 0) {
+    missing.push("current_bid");
+  }
+  if (!editable.auction_end || !Number.isFinite(Date.parse(editable.auction_end))) {
+    missing.push("auction_end");
+  }
+  if (!editable.location || !editable.location.trim()) {
+    missing.push("location");
+  }
+  if (!editable.seller_agency || !editable.seller_agency.trim()) {
+    missing.push("seller_agency");
+  }
+  return missing;
+};
+
+export const buildImportReviewDraftOverrides = (
+  review: OpportunityImportReviewResponse
+): Partial<OpportunityEditableFields> => ({
+  title: review.parsed_fields.title ?? "",
+  current_bid: Number(review.parsed_fields.current_bid ?? 0),
+  buyer_premium_pct: Number(review.parsed_fields.buyer_premium_pct ?? 0.1),
+  estimated_resale_value: Number(review.parsed_fields.estimated_resale_value ?? 0),
+  estimated_transport_override:
+    review.parsed_fields.estimated_transport_override === undefined
+      ? null
+      : review.parsed_fields.estimated_transport_override,
+  estimated_repair_cost: Number(review.parsed_fields.estimated_repair_cost ?? 0),
+  quantity_purchased:
+    review.parsed_fields.quantity_purchased === undefined ? null : review.parsed_fields.quantity_purchased,
+  quantity_broken: review.parsed_fields.quantity_broken === undefined ? null : review.parsed_fields.quantity_broken,
+  condition_raw: review.parsed_fields.condition_raw ?? "",
+  title_status: review.parsed_fields.title_status ?? "unknown",
+  removal_window_days: Number(review.parsed_fields.removal_window_days ?? 3),
+  seller_agency: review.parsed_fields.seller_agency ?? "",
+  seller_type: review.parsed_fields.seller_type ?? "unknown",
+  location: review.parsed_fields.location ?? "",
+  auction_end: review.parsed_fields.auction_end ?? "",
 });
 
 export const DEFAULT_SCANNER_FILTERS: OpportunityFilters = {
@@ -791,7 +962,9 @@ const inferCategoryFromText = (value: string): OpportunityCategory => {
 const SAMPLE_OPPORTUNITIES: Array<Omit<GovDealsOpportunity, "id" | "created_at">> = [
   {
     source: "keyword_search",
+    listing_id: "11221",
     listing_url: "https://govdeals.example/listing/11221",
+    canonical_url: "https://govdeals.example/listing/11221",
     title: "2018 Ford Explorer Police Interceptor - 132k miles",
     category: "vehicle",
     current_bid: 5400,
@@ -806,16 +979,28 @@ const SAMPLE_OPPORTUNITIES: Array<Omit<GovDealsOpportunity, "id" | "created_at">
     title_status: "on_site",
     relisted: false,
     condition_raw: "Runs, minor cosmetic wear, fleet maintained.",
+    description: "Runs, minor cosmetic wear, fleet maintained.",
+    attachment_links: [],
+    seller_contact: null,
     estimated_resale_value: 10950,
+    estimated_transport_override: null,
     estimated_repair_cost: 650,
     quantity_purchased: null,
     quantity_broken: null,
+    import_status: "active",
+    import_confidence: 88,
+    import_missing_fields: [],
+    raw_import_data: null,
+    operator_overrides: null,
+    imported_at: new Date().toISOString(),
     status: "new",
     interest: "undecided",
   },
   {
     source: "keyword_search",
+    listing_id: "22911",
     listing_url: "https://govdeals.example/listing/22911",
+    canonical_url: "https://govdeals.example/listing/22911",
     title: "Mixed iPad Lot (36 Units) - untested mix",
     category: "electronics",
     current_bid: 3250,
@@ -830,16 +1015,28 @@ const SAMPLE_OPPORTUNITIES: Array<Omit<GovDealsOpportunity, "id" | "created_at">
     title_status: "unknown",
     relisted: true,
     condition_raw: "Mixed condition, some locked units expected.",
+    description: "Mixed condition, some locked units expected.",
+    attachment_links: [],
+    seller_contact: null,
     estimated_resale_value: 8450,
+    estimated_transport_override: null,
     estimated_repair_cost: 420,
     quantity_purchased: 36,
     quantity_broken: 6,
+    import_status: "active",
+    import_confidence: 80,
+    import_missing_fields: [],
+    raw_import_data: null,
+    operator_overrides: null,
+    imported_at: new Date().toISOString(),
     status: "new",
     interest: "undecided",
   },
   {
     source: "keyword_search",
+    listing_id: "37770",
     listing_url: "https://govdeals.example/listing/37770",
+    canonical_url: "https://govdeals.example/listing/37770",
     title: "2017 Chevy Tahoe - Utility Unit",
     category: "vehicle",
     current_bid: 6900,
@@ -854,16 +1051,28 @@ const SAMPLE_OPPORTUNITIES: Array<Omit<GovDealsOpportunity, "id" | "created_at">
     title_status: "delayed",
     relisted: false,
     condition_raw: "Starts and drives, check transmission response.",
+    description: "Starts and drives, check transmission response.",
+    attachment_links: [],
+    seller_contact: null,
     estimated_resale_value: 13200,
+    estimated_transport_override: null,
     estimated_repair_cost: 1200,
     quantity_purchased: null,
     quantity_broken: null,
+    import_status: "active",
+    import_confidence: 82,
+    import_missing_fields: [],
+    raw_import_data: null,
+    operator_overrides: null,
+    imported_at: new Date().toISOString(),
     status: "new",
     interest: "undecided",
   },
   {
     source: "keyword_search",
+    listing_id: "49005",
     listing_url: "https://govdeals.example/listing/49005",
+    canonical_url: "https://govdeals.example/listing/49005",
     title: "2020 Polaris Ranger 1000",
     category: "other",
     current_bid: 4700,
@@ -878,10 +1087,20 @@ const SAMPLE_OPPORTUNITIES: Array<Omit<GovDealsOpportunity, "id" | "created_at">
     title_status: "on_site",
     relisted: false,
     condition_raw: "Operational, deep detail needed.",
+    description: "Operational, deep detail needed.",
+    attachment_links: [],
+    seller_contact: null,
     estimated_resale_value: 9400,
+    estimated_transport_override: null,
     estimated_repair_cost: 550,
     quantity_purchased: null,
     quantity_broken: null,
+    import_status: "active",
+    import_confidence: 85,
+    import_missing_fields: [],
+    raw_import_data: null,
+    operator_overrides: null,
+    imported_at: new Date().toISOString(),
     status: "new",
     interest: "undecided",
   },

@@ -20,6 +20,36 @@ interface DetailPanelProps {
   onMarketIntelChange: (dealId: string, intel: VehicleMarketIntel) => void;
   onReconditioningChange: (dealId: string, next: ReconditioningRecord) => void;
   onRequestApproveDecision: (dealId: string) => void;
+  onOverrideDeal: (
+    dealId: string,
+    payload: {
+      deal?: {
+        acquisition_state?: string;
+        seller_type?: "government" | "commercial" | "unknown";
+        quantity_purchased?: number | null;
+        quantity_broken?: number | null;
+      };
+      financials?: {
+        acquisition_cost?: number;
+        buyer_premium_pct?: number;
+        tax_rate?: number | null;
+        transport_cost_actual?: number | null;
+        transport_cost_estimated?: number | null;
+        repair_cost?: number | null;
+        prep_cost?: number | null;
+        estimated_market_value?: number;
+        sale_price_actual?: number | null;
+      };
+      metadata?: {
+        condition_grade?: import("../types").ConditionGrade;
+        condition_notes?: string;
+        transport_type?: import("../types").TransportType;
+        presentation_quality?: string;
+        removal_deadline?: string | null;
+        title_status?: import("../types").TitleStatus;
+      };
+    }
+  ) => Promise<void>;
 }
 
 const formatCurrency = (value: number | null): string =>
@@ -33,6 +63,7 @@ const DetailPanel = ({
   onMarketIntelChange,
   onReconditioningChange,
   onRequestApproveDecision,
+  onOverrideDeal,
 }: DetailPanelProps) => {
   const unitBreakdown = deal.deal.unit_breakdown;
   const prepMetrics = deal.deal.prep_metrics;
@@ -42,6 +73,29 @@ const DetailPanel = ({
   const [decisionReason, setDecisionReason] = useState("");
   const [decisionSubmitting, setDecisionSubmitting] = useState(false);
   const [decisionError, setDecisionError] = useState<string | null>(null);
+  const [overrideBusy, setOverrideBusy] = useState(false);
+  const [overrideMessage, setOverrideMessage] = useState<string | null>(null);
+  const [overrideError, setOverrideError] = useState<string | null>(null);
+  const [overrideForm, setOverrideForm] = useState({
+    acquisition_state: deal.deal.acquisition_state ?? "",
+    seller_type: deal.deal.seller_type ?? "unknown",
+    current_bid: String(deal.financials.acquisition_cost ?? ""),
+    buyer_premium_pct: String(deal.financials.buyer_premium_pct ?? ""),
+    estimated_resale_value: String(deal.financials.estimated_market_value ?? ""),
+    transport_cost_estimated:
+      deal.financials.transport_cost_estimated === null ? "" : String(deal.financials.transport_cost_estimated),
+    repair_cost: deal.financials.repair_cost === null ? "" : String(deal.financials.repair_cost),
+    quantity_purchased:
+      deal.deal.quantity_purchased === null || deal.deal.quantity_purchased === undefined
+        ? ""
+        : String(deal.deal.quantity_purchased),
+    quantity_broken:
+      deal.deal.quantity_broken === null || deal.deal.quantity_broken === undefined
+        ? ""
+        : String(deal.deal.quantity_broken),
+    condition_notes: deal.metadata.condition_notes ?? "",
+    title_status: deal.metadata.title_status ?? "unknown",
+  });
   const [showPreviousDecisions, setShowPreviousDecisions] = useState(false);
   const normalizedIntel = useMemo(() => normalizeVehicleIntel(marketIntel), [marketIntel]);
   const qualityFlag = deal.calculations.source_quality_flag;
@@ -123,6 +177,67 @@ const DetailPanel = ({
       setDecisionError(message);
     } finally {
       setDecisionSubmitting(false);
+    }
+  };
+
+  const parseNullableNumber = (value: string): number | null => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const handleDealOverrideSave = async () => {
+    setOverrideError(null);
+    setOverrideMessage(null);
+    const acquisitionCost = parseNullableNumber(overrideForm.current_bid);
+    const buyerPremium = parseNullableNumber(overrideForm.buyer_premium_pct);
+    const estimatedResale = parseNullableNumber(overrideForm.estimated_resale_value);
+    const transportEstimated = parseNullableNumber(overrideForm.transport_cost_estimated);
+    const repairCost = parseNullableNumber(overrideForm.repair_cost);
+    const quantityPurchased = parseNullableNumber(overrideForm.quantity_purchased);
+    const quantityBroken = parseNullableNumber(overrideForm.quantity_broken);
+    if (acquisitionCost === null || acquisitionCost < 0) {
+      setOverrideError("Current bid must be a valid non-negative number.");
+      return;
+    }
+    if (buyerPremium === null || buyerPremium < 0) {
+      setOverrideError("Buyer premium must be a valid non-negative number.");
+      return;
+    }
+    if (estimatedResale === null || estimatedResale < 0) {
+      setOverrideError("Estimated resale must be a valid non-negative number.");
+      return;
+    }
+    setOverrideBusy(true);
+    try {
+      await onOverrideDeal(deal.deal.id, {
+        deal: {
+          acquisition_state: overrideForm.acquisition_state.trim() || deal.deal.acquisition_state,
+          seller_type: overrideForm.seller_type,
+          quantity_purchased: quantityPurchased === null ? null : Math.max(0, Math.floor(quantityPurchased)),
+          quantity_broken: quantityBroken === null ? null : Math.max(0, Math.floor(quantityBroken)),
+        },
+        financials: {
+          acquisition_cost: Math.max(0, acquisitionCost),
+          buyer_premium_pct: Math.max(0, buyerPremium),
+          estimated_market_value: Math.max(0, estimatedResale),
+          transport_cost_estimated: transportEstimated === null ? null : Math.max(0, transportEstimated),
+          repair_cost: repairCost === null ? null : Math.max(0, repairCost),
+        },
+        metadata: {
+          condition_notes: overrideForm.condition_notes,
+          title_status: overrideForm.title_status,
+        },
+      });
+      setOverrideMessage("Numbers updated.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to update numbers.";
+      setOverrideError(message);
+    } finally {
+      setOverrideBusy(false);
     }
   };
 
@@ -365,6 +480,144 @@ const DetailPanel = ({
             {deal.warnings?.includes("REMOVAL_URGENT") ? (
               <p className="warning-text">REMOVAL_URGENT — deadline is near, prioritize execution.</p>
             ) : null}
+          </div>
+          <div className="decision-section">
+            <h4>Edit Numbers</h4>
+            <div className="form-grid-two">
+              <label>
+                Acquisition State
+                <input
+                  value={overrideForm.acquisition_state}
+                  onChange={(event) =>
+                    setOverrideForm((prev) => ({ ...prev, acquisition_state: event.target.value.toUpperCase() }))
+                  }
+                />
+              </label>
+              <label>
+                Seller Type
+                <select
+                  value={overrideForm.seller_type}
+                  onChange={(event) =>
+                    setOverrideForm((prev) => ({
+                      ...prev,
+                      seller_type: event.target.value as "government" | "commercial" | "unknown",
+                    }))
+                  }
+                >
+                  <option value="government">government</option>
+                  <option value="commercial">commercial</option>
+                  <option value="unknown">unknown</option>
+                </select>
+              </label>
+              <label>
+                Current Bid
+                <input
+                  type="number"
+                  step="0.01"
+                  value={overrideForm.current_bid}
+                  onChange={(event) => setOverrideForm((prev) => ({ ...prev, current_bid: event.target.value }))}
+                />
+              </label>
+              <label>
+                Buyer Premium (decimal)
+                <input
+                  type="number"
+                  step="0.001"
+                  value={overrideForm.buyer_premium_pct}
+                  onChange={(event) =>
+                    setOverrideForm((prev) => ({ ...prev, buyer_premium_pct: event.target.value }))
+                  }
+                />
+              </label>
+              <label>
+                Estimated Resale
+                <input
+                  type="number"
+                  step="0.01"
+                  value={overrideForm.estimated_resale_value}
+                  onChange={(event) =>
+                    setOverrideForm((prev) => ({ ...prev, estimated_resale_value: event.target.value }))
+                  }
+                />
+              </label>
+              <label>
+                Transport (estimated)
+                <input
+                  type="number"
+                  step="0.01"
+                  value={overrideForm.transport_cost_estimated}
+                  onChange={(event) =>
+                    setOverrideForm((prev) => ({ ...prev, transport_cost_estimated: event.target.value }))
+                  }
+                />
+              </label>
+              <label>
+                Repair
+                <input
+                  type="number"
+                  step="0.01"
+                  value={overrideForm.repair_cost}
+                  onChange={(event) => setOverrideForm((prev) => ({ ...prev, repair_cost: event.target.value }))}
+                />
+              </label>
+              <label>
+                Title Status
+                <select
+                  value={overrideForm.title_status}
+                  onChange={(event) =>
+                    setOverrideForm((prev) => ({
+                      ...prev,
+                      title_status: event.target.value as "on_site" | "delayed" | "unknown",
+                    }))
+                  }
+                >
+                  <option value="on_site">on_site</option>
+                  <option value="delayed">delayed</option>
+                  <option value="unknown">unknown</option>
+                </select>
+              </label>
+              <label>
+                Quantity Purchased
+                <input
+                  type="number"
+                  step="1"
+                  min="0"
+                  value={overrideForm.quantity_purchased}
+                  onChange={(event) =>
+                    setOverrideForm((prev) => ({ ...prev, quantity_purchased: event.target.value }))
+                  }
+                />
+              </label>
+              <label>
+                Quantity Broken
+                <input
+                  type="number"
+                  step="1"
+                  min="0"
+                  value={overrideForm.quantity_broken}
+                  onChange={(event) =>
+                    setOverrideForm((prev) => ({ ...prev, quantity_broken: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="span-two">
+                Condition Assumptions
+                <textarea
+                  rows={3}
+                  value={overrideForm.condition_notes}
+                  onChange={(event) =>
+                    setOverrideForm((prev) => ({ ...prev, condition_notes: event.target.value }))
+                  }
+                />
+              </label>
+            </div>
+            <div className="entry-actions">
+              <button type="button" disabled={overrideBusy} onClick={() => void handleDealOverrideSave()}>
+                {overrideBusy ? "Saving..." : "Save Numbers"}
+              </button>
+            </div>
+            {overrideMessage ? <p className="decision-confirmation">{overrideMessage}</p> : null}
+            {overrideError ? <p className="warning-text">{overrideError}</p> : null}
           </div>
           {deal.alerts && deal.alerts.length > 0 ? (
             <div className="decision-section">

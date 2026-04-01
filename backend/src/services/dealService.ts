@@ -51,6 +51,34 @@ export interface DealDecisionInput {
   reason: string;
 }
 
+export interface DealOverrideInput {
+  deal?: {
+    acquisition_state?: string;
+    seller_type?: "government" | "commercial" | "unknown";
+    quantity_purchased?: number | null;
+    quantity_broken?: number | null;
+  };
+  financials?: {
+    acquisition_cost?: number;
+    buyer_premium_pct?: number;
+    tax_rate?: number | null;
+    transport_cost_actual?: number | null;
+    transport_cost_estimated?: number | null;
+    repair_cost?: number | null;
+    prep_cost?: number | null;
+    estimated_market_value?: number;
+    sale_price_actual?: number | null;
+  };
+  metadata?: {
+    condition_grade?: MetadataInput["condition_grade"];
+    condition_notes?: string;
+    transport_type?: MetadataInput["transport_type"];
+    presentation_quality?: string;
+    removal_deadline?: string | null;
+    title_status?: TitleStatus;
+  };
+}
+
 export type DealView = ReturnType<typeof enrichDeal>;
 
 export interface DashboardView {
@@ -1200,4 +1228,205 @@ export const recordDealDecision = (
       ai_recommendation_snapshot: aiRecommendationSnapshot,
     },
   };
+};
+
+export const overrideDealValues = (dealId: string, rawInput: unknown): DealView => {
+  const existing = getDealById(dealId);
+  if (!existing) {
+    throw new Error("Deal not found");
+  }
+  if (!rawInput || typeof rawInput !== "object") {
+    throw new Error("Invalid override payload");
+  }
+
+  const input = rawInput as DealOverrideInput;
+  const nextDeal = {
+    acquisition_state:
+      typeof input.deal?.acquisition_state === "string" && input.deal.acquisition_state.trim()
+        ? input.deal.acquisition_state.trim().toUpperCase()
+        : existing.deal.acquisition_state,
+    seller_type:
+      input.deal?.seller_type && validSellerTypes.has(input.deal.seller_type)
+        ? input.deal.seller_type
+        : existing.deal.seller_type,
+    quantity_purchased:
+      input.deal?.quantity_purchased === undefined
+        ? existing.deal.quantity_purchased ?? null
+        : normalizeOptionalQuantity(input.deal.quantity_purchased),
+    quantity_broken:
+      input.deal?.quantity_broken === undefined
+        ? existing.deal.quantity_broken ?? null
+        : normalizeOptionalQuantity(input.deal.quantity_broken),
+  };
+
+  const nextFinancials = {
+    acquisition_cost:
+      input.financials?.acquisition_cost === undefined
+        ? existing.financials.acquisition_cost
+        : Math.max(0, Number(input.financials.acquisition_cost)),
+    buyer_premium_pct:
+      input.financials?.buyer_premium_pct === undefined
+        ? existing.financials.buyer_premium_pct
+        : Math.max(0, Number(input.financials.buyer_premium_pct)),
+    tax_rate:
+      input.financials?.tax_rate === undefined
+        ? existing.financials.tax_rate
+        : input.financials.tax_rate === null
+          ? null
+          : Math.max(0, Number(input.financials.tax_rate)),
+    transport_cost_actual:
+      input.financials?.transport_cost_actual === undefined
+        ? existing.financials.transport_cost_actual
+        : input.financials.transport_cost_actual === null
+          ? null
+          : Math.max(0, Number(input.financials.transport_cost_actual)),
+    transport_cost_estimated:
+      input.financials?.transport_cost_estimated === undefined
+        ? existing.financials.transport_cost_estimated
+        : input.financials.transport_cost_estimated === null
+          ? null
+          : Math.max(0, Number(input.financials.transport_cost_estimated)),
+    repair_cost:
+      input.financials?.repair_cost === undefined
+        ? existing.financials.repair_cost
+        : input.financials.repair_cost === null
+          ? null
+          : Math.max(0, Number(input.financials.repair_cost)),
+    prep_cost:
+      input.financials?.prep_cost === undefined
+        ? existing.financials.prep_cost
+        : input.financials.prep_cost === null
+          ? null
+          : Math.max(0, Number(input.financials.prep_cost)),
+    estimated_market_value:
+      input.financials?.estimated_market_value === undefined
+        ? existing.financials.estimated_market_value
+        : Math.max(0, Number(input.financials.estimated_market_value)),
+    sale_price_actual:
+      input.financials?.sale_price_actual === undefined
+        ? existing.financials.sale_price_actual
+        : input.financials.sale_price_actual === null
+          ? null
+          : Math.max(0, Number(input.financials.sale_price_actual)),
+  };
+
+  const nextMetadata = {
+    condition_grade:
+      input.metadata?.condition_grade && validConditionGrades.has(input.metadata.condition_grade)
+        ? input.metadata.condition_grade
+        : existing.metadata.condition_grade,
+    condition_notes:
+      typeof input.metadata?.condition_notes === "string"
+        ? input.metadata.condition_notes
+        : existing.metadata.condition_notes,
+    transport_type:
+      input.metadata?.transport_type && validTransportTypes.has(input.metadata.transport_type)
+        ? input.metadata.transport_type
+        : existing.metadata.transport_type,
+    presentation_quality:
+      typeof input.metadata?.presentation_quality === "string" && input.metadata.presentation_quality.trim()
+        ? input.metadata.presentation_quality
+        : existing.metadata.presentation_quality,
+    removal_deadline:
+      input.metadata?.removal_deadline === undefined
+        ? existing.metadata.removal_deadline
+        : input.metadata.removal_deadline,
+    title_status:
+      input.metadata?.title_status && validTitleStatuses.has(input.metadata.title_status)
+        ? input.metadata.title_status
+        : existing.metadata.title_status,
+  };
+
+  validateOptionalIsoDate(nextMetadata.removal_deadline, "metadata.removal_deadline");
+
+  db.transaction(() => {
+    db.prepare(
+      `UPDATE deals
+       SET acquisition_state = ?, seller_type = ?, quantity_purchased = ?, quantity_broken = ?
+       WHERE id = ?`
+    ).run(
+      nextDeal.acquisition_state,
+      nextDeal.seller_type,
+      nextDeal.quantity_purchased,
+      nextDeal.quantity_broken,
+      dealId
+    );
+
+    db.prepare(
+      `UPDATE financials
+       SET acquisition_cost = ?, buyer_premium_pct = ?, tax_rate = ?, transport_cost_actual = ?, transport_cost_estimated = ?,
+           repair_cost = ?, prep_cost = ?, estimated_market_value = ?, sale_price_actual = ?
+       WHERE deal_id = ?`
+    ).run(
+      nextFinancials.acquisition_cost,
+      nextFinancials.buyer_premium_pct,
+      nextFinancials.tax_rate,
+      nextFinancials.transport_cost_actual,
+      nextFinancials.transport_cost_estimated,
+      nextFinancials.repair_cost,
+      nextFinancials.prep_cost,
+      nextFinancials.estimated_market_value,
+      nextFinancials.sale_price_actual,
+      dealId
+    );
+
+    db.prepare(
+      `UPDATE metadata
+       SET condition_grade = ?, condition_notes = ?, transport_type = ?, presentation_quality = ?,
+           removal_deadline = ?, title_status = ?
+       WHERE deal_id = ?`
+    ).run(
+      nextMetadata.condition_grade,
+      nextMetadata.condition_notes,
+      nextMetadata.transport_type,
+      nextMetadata.presentation_quality,
+      nextMetadata.removal_deadline,
+      nextMetadata.title_status,
+      dealId
+    );
+
+    db.prepare(
+      `INSERT INTO deal_override_events (id, deal_id, overridden_at, previous_values, override_values)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(
+      crypto.randomUUID(),
+      dealId,
+      nowIso(),
+      JSON.stringify({
+        deal: {
+          acquisition_state: existing.deal.acquisition_state,
+          seller_type: existing.deal.seller_type,
+          quantity_purchased: existing.deal.quantity_purchased ?? null,
+          quantity_broken: existing.deal.quantity_broken ?? null,
+        },
+        financials: {
+          acquisition_cost: existing.financials.acquisition_cost,
+          buyer_premium_pct: existing.financials.buyer_premium_pct,
+          tax_rate: existing.financials.tax_rate,
+          transport_cost_actual: existing.financials.transport_cost_actual,
+          transport_cost_estimated: existing.financials.transport_cost_estimated,
+          repair_cost: existing.financials.repair_cost,
+          prep_cost: existing.financials.prep_cost,
+          estimated_market_value: existing.financials.estimated_market_value,
+          sale_price_actual: existing.financials.sale_price_actual,
+        },
+        metadata: {
+          condition_grade: existing.metadata.condition_grade,
+          condition_notes: existing.metadata.condition_notes,
+          transport_type: existing.metadata.transport_type,
+          presentation_quality: existing.metadata.presentation_quality,
+          removal_deadline: existing.metadata.removal_deadline,
+          title_status: existing.metadata.title_status,
+        },
+      }),
+      JSON.stringify(rawInput)
+    );
+  })();
+
+  computeAndPersistFinancials(dealId);
+  const updated = getDealById(dealId);
+  if (!updated) {
+    throw new Error("Failed to load updated deal");
+  }
+  return updated;
 };

@@ -1,14 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  confirmOpportunityImport,
   createDeal,
   fetchOpportunitiesFeed,
   fetchDashboard,
   fetchDeals,
+  overrideDealValues,
+  overrideOpportunityValues,
+  parseGovDealsListing,
   previewDeal,
   queryAssistant,
   saveOpportunityDecision,
   submitDealDecision,
-  syncOpportunities,
+  updateOpportunityInterest,
   updateDealStage,
 } from "./api";
 import DashboardPanels, { computeCapitalPanel, computeDecisionQueue } from "./components/DashboardPanels";
@@ -52,20 +56,20 @@ import {
 import {
   buildCreateDealRequestFromOpportunity,
   buildCreateDealRequestFromWonIntake,
-  buildKeywordOpportunities,
+  buildImportReviewDraftOverrides,
   buildManualOpportunity,
-  buildOpportunityFromUrl,
   buildSniperAIPicks,
   computeSniperDashboardSummary,
   DEFAULT_OPPORTUNITY_SORT_MODE,
   DEFAULT_SCANNER_FILTERS,
   toPreviewSnapshot,
-  upsertOpportunities,
 } from "./utils/govDealsScanner";
 import type {
   GovDealsOpportunity,
   ManualOpportunityInput,
+  OpportunityEditableFields,
   OpportunityFilters,
+  OpportunityImportReviewResponse,
   OpportunityPreviewSnapshot,
   OpportunitySortMode,
   InterestSignalRecord,
@@ -396,6 +400,10 @@ function App() {
   >({});
   const [sniperDecisionHistory, setSniperDecisionHistory] = useState<SniperDecisionRecord[]>([]);
   const [interestSignalHistory, setInterestSignalHistory] = useState<InterestSignalRecord[]>([]);
+  const [importReviewState, setImportReviewState] = useState<{
+    review: OpportunityImportReviewResponse;
+    draftOverrides: Partial<OpportunityEditableFields>;
+  } | null>(null);
 
   const isElectronicsCategory = intakeCategory === "electronics";
   const isVehicleCategory = intakeCategory === "vehicle";
@@ -487,7 +495,9 @@ function App() {
         {
           id: decision.opportunity_id,
           source: "manual_import",
+          listing_id: null,
           listing_url: "",
+          canonical_url: "",
           title: "Unknown opportunity",
           category: "other",
           current_bid: 0,
@@ -502,10 +512,26 @@ function App() {
           title_status: "unknown" as TitleStatus,
           relisted: false,
           condition_raw: "",
+          description: null,
+          attachment_links: [],
+          seller_contact: null,
           estimated_resale_value: 0,
+          estimated_transport_override: null,
           estimated_repair_cost: 0,
           quantity_purchased: null,
           quantity_broken: null,
+          import_status: "needs_review" as const,
+          import_confidence: 0,
+          import_missing_fields: [
+            "title",
+            "current_bid",
+            "auction_end",
+            "location",
+            "seller_agency",
+          ],
+          raw_import_data: null,
+          operator_overrides: null,
+          imported_at: null,
           status: "new",
           interest: "undecided",
           created_at: new Date().toISOString(),
@@ -611,32 +637,24 @@ function App() {
     );
   }, [operatorBaseState, scannerFilters, scannerSortMode]);
 
-  const persistOpportunitySet = async (
-    next: GovDealsOpportunity[],
-    successMessage?: string
-  ): Promise<boolean> => {
-    const previous = govDealsOpportunities;
-    setGovDealsOpportunities(next);
-    try {
-      const result = await syncOpportunities(next);
-      applyFeedState(result.feed);
-      if (successMessage) {
-        setScannerStatusMessage(successMessage);
-      }
-      return true;
-    } catch (saveError) {
-      setGovDealsOpportunities(previous);
-      const message = saveError instanceof Error ? saveError.message : "Failed to persist opportunities.";
-      setScannerErrorMessage(message);
-      return false;
-    }
-  };
-
   const selectedDeal =
     deals.find((deal) => deal.deal.id === selectedDealId) ??
     (selectedDealId?.startsWith("preview-") ? intakePreviewDeal : null) ??
     deals[0] ??
     null;
+
+  const selectedOpportunityForAssistant = useMemo(() => {
+    if (!selectedDeal) {
+      return null;
+    }
+    const title = selectedDeal.deal.label.trim().toLowerCase();
+    if (!title) {
+      return null;
+    }
+    return (
+      govDealsOpportunities.find((opportunity) => opportunity.title.trim().toLowerCase() === title) ?? null
+    );
+  }, [govDealsOpportunities, selectedDeal]);
 
   const selectedDealMarketIntel = selectedDeal
     ? inferVehicleMarketIntel(selectedDeal, marketIntelMap)
@@ -772,11 +790,34 @@ function App() {
     if (!assistantRequiredFields.hasWarnings) {
       return "Assistant disabled: warnings context is missing.";
     }
-    if (selectedDeal.calculations.data_confidence < 55) {
+    if (selectedOpportunityForAssistant) {
+      const missing = selectedOpportunityForAssistant.import_missing_fields ?? [];
+      if (selectedOpportunityForAssistant.import_status === "needs_review") {
+        if (missing.includes("title")) {
+          return "Assistant disabled: missing title in imported opportunity.";
+        }
+        if (missing.includes("current_bid")) {
+          return "Assistant disabled: missing bid in imported opportunity.";
+        }
+        if (missing.includes("seller_agency")) {
+          return "Assistant disabled: missing seller in imported opportunity.";
+        }
+        if (missing.includes("location")) {
+          return "Assistant disabled: missing location in imported opportunity.";
+        }
+        if (missing.includes("auction_end")) {
+          return "Assistant disabled: missing close time in imported opportunity.";
+        }
+        return "Assistant disabled: imported opportunity needs review before AI grounding.";
+      }
+      if (selectedOpportunityForAssistant.import_confidence < 55) {
+        return `Assistant disabled: import_confidence ${selectedOpportunityForAssistant.import_confidence} is below 55.`;
+      }
+    } else if (selectedDeal.calculations.data_confidence < 55) {
       return `Assistant disabled: data_confidence ${selectedDeal.calculations.data_confidence} is below 55.`;
     }
     return null;
-  }, [assistantRequiredFields, selectedDeal]);
+  }, [assistantRequiredFields, selectedDeal, selectedOpportunityForAssistant]);
   const assistantReadinessState: AssistantReadinessState = assistantLoading
     ? "loading"
     : assistantError
@@ -1330,6 +1371,13 @@ function App() {
     setScannerErrorMessage(null);
   };
 
+  const applyOpportunityFeed = (feed: OpportunitiesFeedContract, message?: string): void => {
+    applyFeedState(feed);
+    if (message) {
+      setScannerStatusMessage(message);
+    }
+  };
+
   const handleScannerImportUrl = async (listingUrl: string, keywordHint: string): Promise<void> => {
     clearScannerMessages();
     if (!scannerFeedRehydrateDone) {
@@ -1341,25 +1389,31 @@ function App() {
       setScannerErrorMessage("Listing URL is required.");
       return;
     }
-    const opportunity = buildOpportunityFromUrl(trimmed, keywordHint);
-    const next = upsertOpportunities(govDealsOpportunities, [opportunity]);
-    await persistOpportunitySet(next, "URL imported into opportunities.");
+    try {
+      const review = await parseGovDealsListing({
+        listing_url: trimmed,
+        keyword_hint: keywordHint.trim() || undefined,
+      });
+      setImportReviewState({
+        review,
+        draftOverrides: buildImportReviewDraftOverrides(review),
+      });
+      setScannerStatusMessage(
+        review.import_status === "needs_review"
+          ? "Import parsed. Review required before opportunity activation."
+          : "Import parsed. Review and confirm to activate."
+      );
+    } catch (parseError) {
+      const message = parseError instanceof Error ? parseError.message : "Failed to parse GovDeals listing";
+      setScannerErrorMessage(message);
+    }
   };
 
-  const handleScannerKeywordSearch = async (keyword: string): Promise<void> => {
+  const handleScannerKeywordSearch = async (_keyword: string): Promise<void> => {
     clearScannerMessages();
-    if (!scannerFeedRehydrateDone) {
-      setScannerErrorMessage("Feed rehydration in progress. Please wait.");
-      return;
-    }
-    const trimmed = keyword.trim();
-    if (!trimmed) {
-      setScannerErrorMessage("Keyword is required.");
-      return;
-    }
-    const results = buildKeywordOpportunities(trimmed);
-    const next = upsertOpportunities(govDealsOpportunities, results);
-    await persistOpportunitySet(next, `Keyword search added ${results.length} opportunity result(s).`);
+    setScannerStatusMessage(
+      "Keyword search is future-ready only in this pass. Import specific GovDeals listing URLs for reliable data."
+    );
   };
 
   const handleScannerManualImport = async (input: ManualOpportunityInput): Promise<void> => {
@@ -1372,12 +1426,140 @@ function App() {
       setScannerErrorMessage("Manual import requires a title.");
       return;
     }
-    const manual = buildManualOpportunity(input);
-    const next = upsertOpportunities(govDealsOpportunities, [manual]);
-    await persistOpportunitySet(next, "Manual listing imported.");
+    try {
+      const manual = buildManualOpportunity(input);
+      const payloadReview: OpportunityImportReviewResponse = {
+        listing_url: manual.listing_url,
+        canonical_url: manual.canonical_url,
+        listing_id: manual.listing_id,
+        raw_fields: manual.raw_import_data ?? {
+          listing_id: manual.listing_id,
+          title: manual.title,
+          current_bid_text: String(manual.current_bid),
+          auction_end_text: manual.auction_end,
+          time_remaining_text: null,
+          location_text: manual.location,
+          seller_agency_text: manual.seller_agency,
+          category_text: manual.category,
+          buyer_premium_text: String(manual.buyer_premium_pct),
+          description_text: manual.description ?? manual.condition_raw,
+          quantity_text:
+            manual.quantity_purchased === null || manual.quantity_purchased === undefined
+              ? null
+              : String(manual.quantity_purchased),
+          attachment_links_text: manual.attachment_links.join(", "),
+          seller_contact_text: manual.seller_contact,
+        },
+        parsed_fields: {
+          listing_id: manual.listing_id,
+          canonical_url: manual.canonical_url,
+          category: manual.category,
+          description: manual.description,
+          attachment_links: manual.attachment_links,
+          seller_contact: manual.seller_contact,
+          title: manual.title,
+          current_bid: manual.current_bid,
+          auction_end: manual.auction_end,
+          location: manual.location,
+          seller_agency: manual.seller_agency,
+          seller_type: manual.seller_type,
+          buyer_premium_pct: manual.buyer_premium_pct,
+          removal_window_days: manual.removal_window_days,
+          title_status: manual.title_status,
+          estimated_resale_value: manual.estimated_resale_value,
+          estimated_transport_override: manual.estimated_transport_override,
+          estimated_repair_cost: manual.estimated_repair_cost,
+          quantity_purchased: manual.quantity_purchased,
+          quantity_broken: manual.quantity_broken,
+          condition_raw: manual.condition_raw,
+        },
+        missing_fields: manual.import_missing_fields,
+        import_status: manual.import_status,
+        import_confidence: manual.import_confidence,
+        extraction_notes: ["Manual import"],
+        selector_hits: {},
+      };
+      const result = await confirmOpportunityImport({
+        review: payloadReview,
+        source: "manual_import",
+      });
+      applyOpportunityFeed(result.feed, "Manual listing imported.");
+    } catch (manualError) {
+      const message = manualError instanceof Error ? manualError.message : "Failed manual import";
+      setScannerErrorMessage(message);
+    }
+  };
+
+  const handleScannerConfirmImport = async (): Promise<void> => {
+    clearScannerMessages();
+    if (!importReviewState) {
+      setScannerErrorMessage("No import review is active.");
+      return;
+    }
+    try {
+      const result = await confirmOpportunityImport({
+        review: importReviewState.review,
+        operator_overrides: importReviewState.draftOverrides,
+        source: "url_import",
+      });
+      applyOpportunityFeed(
+        result.feed,
+        result.dedupe_action === "updated_existing"
+          ? "Import confirmed and existing opportunity updated."
+          : "Import confirmed and opportunity created."
+      );
+      setImportReviewState(null);
+    } catch (confirmError) {
+      const message = confirmError instanceof Error ? confirmError.message : "Failed to confirm import";
+      setScannerErrorMessage(message);
+    }
+  };
+
+  const handleScannerUpdateImportReviewField = (
+    field: keyof OpportunityEditableFields,
+    value: OpportunityEditableFields[keyof OpportunityEditableFields]
+  ): void => {
+    setImportReviewState((current) => {
+      if (!current) {
+        return current;
+      }
+      return {
+        ...current,
+        draftOverrides: {
+          ...current.draftOverrides,
+          [field]: value,
+        },
+      };
+    });
+  };
+
+  const handleScannerOverrideOpportunity = async (
+    opportunityId: string,
+    overrides: Partial<OpportunityEditableFields>
+  ): Promise<void> => {
+    clearScannerMessages();
+    if (!scannerFeedRehydrateDone) {
+      setScannerErrorMessage("Decision state not ready. Wait for rehydration.");
+      return;
+    }
+    setScannerSaveInFlightByOpportunityId((prev) => ({ ...prev, [opportunityId]: true }));
+    try {
+      const result = await overrideOpportunityValues(opportunityId, overrides);
+      applyOpportunityFeed(result.feed, "Opportunity values updated.");
+    } catch (overrideError) {
+      const message =
+        overrideError instanceof Error ? overrideError.message : "Failed to override opportunity values.";
+      setScannerErrorMessage(message);
+    } finally {
+      setScannerSaveInFlightByOpportunityId((prev) => ({ ...prev, [opportunityId]: false }));
+    }
   };
 
   const handleScannerPreview = async (opportunity: GovDealsOpportunity): Promise<void> => {
+    if (opportunity.import_status === "needs_review") {
+      setScannerErrorMessage("Opportunity needs review before preview.");
+      return;
+    }
     setScannerBusyOpportunityId(opportunity.id);
     clearScannerMessages();
     try {
@@ -1400,66 +1582,63 @@ function App() {
   };
 
   const saveOpportunityDecisionAction = async (
-    opportunityId: string,
+    opportunity: GovDealsOpportunity,
     action: "watch" | "must_buy" | "pass",
     reason?: string | null,
     note?: string | null
   ): Promise<boolean> => {
-    const previous = govDealsOpportunities;
-    const next =
-      action === "pass"
-        ? govDealsOpportunities.map((item) =>
-            item.id === opportunityId ? { ...item, status: "passed" as const } : item
-          )
-        : govDealsOpportunities.map((item) =>
-            item.id === opportunityId ? { ...item, status: "watch" as const } : item
-          );
-    setGovDealsOpportunities(next);
-    setScannerSaveInFlightByOpportunityId((prev) => ({ ...prev, [opportunityId]: true }));
+    if (opportunity.import_status === "needs_review") {
+      setScannerErrorMessage("Opportunity needs review before actions.");
+      return false;
+    }
+    setScannerSaveInFlightByOpportunityId((prev) => ({ ...prev, [opportunity.id]: true }));
     try {
-      const response = await saveOpportunityDecision(opportunityId, {
+      const response = await saveOpportunityDecision(opportunity.id, {
         action,
         reason: reason ?? null,
         note: note ?? null,
       });
-      applyFeedState(response.feed);
+      applyOpportunityFeed(response.feed);
       return true;
     } catch (saveError) {
-      setGovDealsOpportunities(previous);
       const message =
         saveError instanceof Error ? saveError.message : "Failed to save opportunity action.";
       setScannerErrorMessage(message);
       return false;
     } finally {
-      setScannerSaveInFlightByOpportunityId((prev) => ({ ...prev, [opportunityId]: false }));
+      setScannerSaveInFlightByOpportunityId((prev) => ({ ...prev, [opportunity.id]: false }));
     }
   };
 
-  const handleScannerWatch = async (opportunityId: string): Promise<void> => {
+  const handleScannerWatch = async (opportunity: GovDealsOpportunity): Promise<void> => {
     clearScannerMessages();
     if (!scannerFeedRehydrateDone) {
       setScannerErrorMessage("Decision state not ready. Wait for rehydration.");
       return;
     }
-    const ok = await saveOpportunityDecisionAction(opportunityId, "watch");
+    const ok = await saveOpportunityDecisionAction(opportunity, "watch");
     if (ok) {
       setScannerStatusMessage("Opportunity added to watch.");
     }
   };
 
-  const handleScannerPass = async (opportunityId: string): Promise<void> => {
+  const handleScannerPass = async (opportunity: GovDealsOpportunity): Promise<void> => {
     clearScannerMessages();
     if (!scannerFeedRehydrateDone) {
       setScannerErrorMessage("Decision state not ready. Wait for rehydration.");
       return;
     }
-    const ok = await saveOpportunityDecisionAction(opportunityId, "pass", "risk");
+    const ok = await saveOpportunityDecisionAction(opportunity, "pass", "risk");
     if (ok) {
       setScannerStatusMessage("Opportunity passed.");
     }
   };
 
   const handleScannerCreateDeal = async (opportunity: GovDealsOpportunity): Promise<void> => {
+    if (opportunity.import_status === "needs_review") {
+      setScannerErrorMessage("Opportunity needs review before deal creation.");
+      return;
+    }
     setScannerBusyOpportunityId(opportunity.id);
     clearScannerMessages();
     try {
@@ -1470,11 +1649,12 @@ function App() {
       setActivePage("pipeline");
       setRightPanelMode("detail");
       setRightPanelDetailTab("decision");
-      await persistOpportunitySet(
-        govDealsOpportunities.map((item) =>
-          item.id === opportunity.id ? { ...item, status: "converted" } : item
-        )
-      );
+      const response = await saveOpportunityDecision(opportunity.id, {
+        action: "must_buy",
+        reason: "converted_to_deal",
+        note: "status=converted",
+      });
+      applyOpportunityFeed(response.feed);
       await loadData();
       setScannerStatusMessage("Deal created from opportunity.");
     } catch (createError) {
@@ -1495,11 +1675,14 @@ function App() {
       setScannerErrorMessage("Decision state not ready. Wait for rehydration.");
       return;
     }
-    const next = govDealsOpportunities.map((item) =>
-      item.id === opportunityId ? { ...item, interest } : item
-    );
-    const ok = await persistOpportunitySet(next);
-    if (ok) {
+    const target = govDealsOpportunities.find((item) => item.id === opportunityId);
+    if (!target) {
+      setScannerErrorMessage("Opportunity not found.");
+      return;
+    }
+    try {
+      const response = await updateOpportunityInterest(opportunityId, interest);
+      applyOpportunityFeed(response.feed);
       setScannerStatusMessage(
         interest === "interested"
           ? "Marked as interested for pattern tracking."
@@ -1507,6 +1690,10 @@ function App() {
             ? "Marked as not interested for pattern tracking."
             : "Interest reset to undecided."
       );
+    } catch (interestError) {
+      const message =
+        interestError instanceof Error ? interestError.message : "Failed to persist interest signal.";
+      setScannerErrorMessage(message);
     }
   };
 
@@ -1514,6 +1701,10 @@ function App() {
     opportunity: GovDealsOpportunity,
     intake: WonDealIntakeInput
   ): Promise<void> => {
+    if (opportunity.import_status === "needs_review") {
+      setScannerErrorMessage("Opportunity needs review before won-deal intake.");
+      return;
+    }
     setScannerBusyOpportunityId(opportunity.id);
     clearScannerMessages();
     try {
@@ -1524,11 +1715,12 @@ function App() {
       setActivePage("pipeline");
       setRightPanelMode("detail");
       setRightPanelDetailTab("decision");
-      await persistOpportunitySet(
-        govDealsOpportunities.map((item) =>
-          item.id === opportunity.id ? { ...item, status: "converted" } : item
-        )
-      );
+      const response = await saveOpportunityDecision(opportunity.id, {
+        action: "must_buy",
+        reason: "converted_won_intake",
+        note: "status=converted",
+      });
+      applyOpportunityFeed(response.feed);
       await loadData();
       setScannerStatusMessage("Won deal imported and calculated using final numbers.");
     } catch (createError) {
@@ -1553,9 +1745,14 @@ function App() {
       return;
     }
     setScannerSaveInFlightByOpportunityId((prev) => ({ ...prev, [opportunity.id]: true }));
+    if (opportunity.import_status === "needs_review") {
+      setScannerErrorMessage("Opportunity needs review before sniper action.");
+      setScannerSaveInFlightByOpportunityId((prev) => ({ ...prev, [opportunity.id]: false }));
+      return;
+    }
     const action = decision === "approved" ? "must_buy" : "pass";
     const reason = decision === "approved" ? "approved" : passReason ?? "risk";
-    const ok = await saveOpportunityDecisionAction(opportunity.id, action, reason, note);
+    const ok = await saveOpportunityDecisionAction(opportunity, action, reason, note);
     if (!ok) {
       return;
     }
@@ -1640,6 +1837,18 @@ function App() {
               onMarketIntelChange={handleMarketIntelChange}
               onReconditioningChange={handleReconditioningChange}
               onRequestApproveDecision={handleRequestApproveDecision}
+              onOverrideDeal={async (dealId, payload) => {
+                try {
+                  const updated = await overrideDealValues(dealId, payload);
+                  setDeals((prev) => prev.map((item) => (item.deal.id === dealId ? updated : item)));
+                  setSelectedDealId(updated.deal.id);
+                  await loadData();
+                } catch (overrideError) {
+                  const message =
+                    overrideError instanceof Error ? overrideError.message : "Failed to override deal values.";
+                  setError(message);
+                }
+              }}
             />
           </>
         ) : (
@@ -2018,11 +2227,16 @@ function App() {
               onImportUrl={handleScannerImportUrl}
               onKeywordSearch={handleScannerKeywordSearch}
               onManualImport={handleScannerManualImport}
+              importReviewState={importReviewState}
+              onImportReviewFieldChange={handleScannerUpdateImportReviewField}
+              onConfirmImport={handleScannerConfirmImport}
+              onCancelImportReview={() => setImportReviewState(null)}
               onPreview={handleScannerPreview}
               onWatch={handleScannerWatch}
               onCreateDeal={handleScannerCreateDeal}
               onPass={handleScannerPass}
               onSetInterest={handleScannerSetInterest}
+              onOverrideOpportunity={handleScannerOverrideOpportunity}
               onCreateFromWonDeal={handleScannerCreateFromWonDeal}
               sniperPicks={sniperPicks}
               sniperDashboardSummary={sniperDashboardSummary}

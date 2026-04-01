@@ -412,7 +412,11 @@ export interface OpportunitiesFeedContract {
   last_polled_at: string | null;
   generated_at: string;
   opportunities: import("./utils/govDealsScanner").GovDealsOpportunity[];
-  decisions: OpportunityDecisionRecord[];
+  decisions: Array<
+    OpportunityDecisionRecord & {
+      opportunity_snapshot: import("./utils/govDealsScanner").GovDealsOpportunity;
+    }
+  >;
   message: string;
   error: string | null;
 }

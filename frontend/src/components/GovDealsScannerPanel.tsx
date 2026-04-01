@@ -3,8 +3,10 @@ import type { TitleStatus } from "../types";
 import type {
   GovDealsOpportunity,
   ManualOpportunityInput,
+  OpportunityEditableFields,
   OpportunityCategory,
   OpportunityFilters,
+  OpportunityImportReviewResponse,
   OpportunityPreviewSnapshot,
   OpportunitySortMode,
   SniperAIPick,
@@ -44,14 +46,28 @@ interface GovDealsScannerPanelProps {
   onImportUrl: (listingUrl: string, keywordHint: string) => void;
   onKeywordSearch: (keyword: string) => void;
   onManualImport: (input: ManualOpportunityInput) => void;
+  importReviewState: {
+    review: OpportunityImportReviewResponse;
+    draftOverrides: Partial<OpportunityEditableFields>;
+  } | null;
+  onImportReviewFieldChange: (
+    field: keyof OpportunityEditableFields,
+    value: OpportunityEditableFields[keyof OpportunityEditableFields]
+  ) => void;
+  onConfirmImport: () => Promise<void>;
+  onCancelImportReview: () => void;
   onPreview: (opportunity: GovDealsOpportunity) => Promise<void>;
-  onWatch: (opportunityId: string) => void;
+  onWatch: (opportunity: GovDealsOpportunity) => void;
   onCreateDeal: (opportunity: GovDealsOpportunity) => Promise<void>;
-  onPass: (opportunityId: string) => void;
+  onPass: (opportunity: GovDealsOpportunity) => void;
   onSetInterest: (
     opportunityId: string,
     interest: "interested" | "not_interested" | "undecided"
   ) => void;
+  onOverrideOpportunity: (
+    opportunityId: string,
+    overrides: Partial<OpportunityEditableFields>
+  ) => Promise<void>;
   onCreateFromWonDeal: (
     opportunity: GovDealsOpportunity,
     intake: WonDealIntakeInput
@@ -179,11 +195,16 @@ function GovDealsScannerPanel({
   onImportUrl,
   onKeywordSearch,
   onManualImport,
+  importReviewState,
+  onImportReviewFieldChange,
+  onConfirmImport,
+  onCancelImportReview,
   onPreview,
   onWatch,
   onCreateDeal,
   onPass,
   onSetInterest,
+  onOverrideOpportunity,
   onCreateFromWonDeal,
   onSniperApprove,
   onSniperPass,
@@ -194,6 +215,9 @@ function GovDealsScannerPanel({
   const [manualInput, setManualInput] = useState<ManualOpportunityInput>(createDefaultManualInput());
   const [expandedOpportunityId, setExpandedOpportunityId] = useState<string | null>(null);
   const [wonDealIntakeMap, setWonDealIntakeMap] = useState<Record<string, WonDealIntakeInput>>({});
+  const [editDraftsByOpportunityId, setEditDraftsByOpportunityId] = useState<
+    Record<string, Partial<OpportunityEditableFields>>
+  >({});
   const [sniperPassDrafts, setSniperPassDrafts] = useState<Record<string, { reason: SniperPassReason; note: string }>>(
     {}
   );
@@ -247,6 +271,54 @@ function GovDealsScannerPanel({
       },
     }));
   };
+
+  const updateOpportunityEditDraft = (
+    opportunity: GovDealsOpportunity,
+    field: keyof OpportunityEditableFields,
+    value: OpportunityEditableFields[keyof OpportunityEditableFields]
+  ): void => {
+    setEditDraftsByOpportunityId((prev) => ({
+      ...prev,
+      [opportunity.id]: {
+        title: opportunity.title,
+        current_bid: opportunity.current_bid,
+        buyer_premium_pct: opportunity.buyer_premium_pct,
+        estimated_resale_value: opportunity.estimated_resale_value,
+        estimated_transport_override: opportunity.estimated_transport_override,
+        estimated_repair_cost: opportunity.estimated_repair_cost,
+        quantity_purchased: opportunity.quantity_purchased,
+        quantity_broken: opportunity.quantity_broken,
+        condition_raw: opportunity.condition_raw,
+        title_status: opportunity.title_status,
+        removal_window_days: opportunity.removal_window_days,
+        seller_agency: opportunity.seller_agency,
+        seller_type: opportunity.seller_type,
+        location: opportunity.location,
+        auction_end: opportunity.auction_end,
+        ...(prev[opportunity.id] ?? {}),
+        [field]: value,
+      },
+    }));
+  };
+
+  const getOpportunityEditDraft = (opportunity: GovDealsOpportunity): Partial<OpportunityEditableFields> =>
+    editDraftsByOpportunityId[opportunity.id] ?? {
+      title: opportunity.title,
+      current_bid: opportunity.current_bid,
+      buyer_premium_pct: opportunity.buyer_premium_pct,
+      estimated_resale_value: opportunity.estimated_resale_value,
+      estimated_transport_override: opportunity.estimated_transport_override,
+      estimated_repair_cost: opportunity.estimated_repair_cost,
+      quantity_purchased: opportunity.quantity_purchased,
+      quantity_broken: opportunity.quantity_broken,
+      condition_raw: opportunity.condition_raw,
+      title_status: opportunity.title_status,
+      removal_window_days: opportunity.removal_window_days,
+      seller_agency: opportunity.seller_agency,
+      seller_type: opportunity.seller_type,
+      location: opportunity.location,
+      auction_end: opportunity.auction_end,
+    };
 
   const updateSniperPassDraft = (
     opportunityId: string,
@@ -710,6 +782,115 @@ function GovDealsScannerPanel({
         </article>
       </div>
 
+      {importReviewState ? (
+        <section className="scanner-card import-review-card">
+          <h3>Import Review — Confirm Before Activate</h3>
+          <p className="muted">
+            This listing is parsed from source HTML. Review raw values, parsed values, and missing fields
+            before confirming.
+          </p>
+          <div className="pipeline-risk-flags">
+            <span className={`risk-chip ${importReviewState.review.import_status === "needs_review" ? "warning" : ""}`}>
+              Status: {importReviewState.review.import_status}
+            </span>
+            <span className="risk-chip">Confidence: {importReviewState.review.import_confidence}</span>
+            {importReviewState.review.missing_fields.map((field) => (
+              <span key={`missing-${field}`} className="risk-chip warning">
+                Missing: {field}
+              </span>
+            ))}
+          </div>
+          <div className="form-grid-two">
+            <label>
+              Title
+              <input
+                value={String(importReviewState.draftOverrides.title ?? "")}
+                onChange={(event) => onImportReviewFieldChange("title", event.target.value)}
+              />
+            </label>
+            <label>
+              Current Bid
+              <input
+                type="number"
+                step="0.01"
+                value={String(importReviewState.draftOverrides.current_bid ?? "")}
+                onChange={(event) =>
+                  onImportReviewFieldChange("current_bid", Number(event.target.value) || 0)
+                }
+              />
+            </label>
+            <label>
+              Auction End
+              <input
+                type="datetime-local"
+                value={toDateTimeLocalInput(String(importReviewState.draftOverrides.auction_end ?? ""))}
+                onChange={(event) =>
+                  onImportReviewFieldChange(
+                    "auction_end",
+                    toIsoOrNull(event.target.value) ?? String(importReviewState.draftOverrides.auction_end ?? "")
+                  )
+                }
+              />
+            </label>
+            <label>
+              Location
+              <input
+                value={String(importReviewState.draftOverrides.location ?? "")}
+                onChange={(event) => onImportReviewFieldChange("location", event.target.value)}
+              />
+            </label>
+            <label>
+              Seller / Agency
+              <input
+                value={String(importReviewState.draftOverrides.seller_agency ?? "")}
+                onChange={(event) => onImportReviewFieldChange("seller_agency", event.target.value)}
+              />
+            </label>
+            <label>
+              Buyer Premium (decimal)
+              <input
+                type="number"
+                step="0.001"
+                value={String(importReviewState.draftOverrides.buyer_premium_pct ?? "")}
+                onChange={(event) =>
+                  onImportReviewFieldChange("buyer_premium_pct", Number(event.target.value) || 0)
+                }
+              />
+            </label>
+          </div>
+          <div className="decision-section">
+            <h4>Raw Source Fields</h4>
+            <pre className="raw-json-preview">
+              {JSON.stringify(importReviewState.review.raw_fields, null, 2)}
+            </pre>
+          </div>
+          <div className="decision-section">
+            <h4>Parsed Structured Fields</h4>
+            <pre className="raw-json-preview">
+              {JSON.stringify(importReviewState.review.parsed_fields, null, 2)}
+            </pre>
+          </div>
+          {importReviewState.review.extraction_notes.length > 0 ? (
+            <div className="decision-section">
+              <h4>Extraction Notes</h4>
+              <ul>
+                {importReviewState.review.extraction_notes.map((note) => (
+                  <li key={note}>{note}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          <div className="entry-actions">
+            <button type="button" className="primary-button" onClick={() => void onConfirmImport()}>
+              Confirm + Save
+            </button>
+            <button type="button" className="ghost-button" onClick={onCancelImportReview}>
+              Cancel
+            </button>
+          </div>
+        </section>
+      ) : null}
+
       <section className="sniper-picks-section priority-medium">
         <div className="scanner-results-header">
           <h3>Sniper AI Picks</h3>
@@ -931,6 +1112,7 @@ function GovDealsScannerPanel({
       ) : (
         <div className="opportunity-grid">
           {ranked.map(({ opportunity, metrics }) => {
+            const editDraft = getOpportunityEditDraft(opportunity);
             const preview = previewsByOpportunityId[opportunity.id];
             const isBusy = busyOpportunityId === opportunity.id;
             const statusClass =
@@ -1043,6 +1225,16 @@ function GovDealsScannerPanel({
                   Seller: {opportunity.seller_type} · Relisted: {opportunity.relisted ? "yes" : "no"} ·
                   Source: {opportunity.source}
                 </p>
+                <p className="muted">
+                  Import: {opportunity.import_status} · Confidence: {opportunity.import_confidence}
+                </p>
+                {opportunity.import_status === "needs_review" ? (
+                  <p className="warning-text">
+                    Needs Review — {opportunity.import_missing_fields.length > 0
+                      ? `missing ${opportunity.import_missing_fields.join(", ")}`
+                      : "critical fields"}
+                  </p>
+                ) : null}
                 {metrics.risk_flags.length > 0 ? (
                   <div className="pipeline-risk-flags">
                     {metrics.risk_flags.map((flag) => (
@@ -1092,7 +1284,7 @@ function GovDealsScannerPanel({
                   <button
                     type="button"
                     className="secondary-button"
-                    disabled={disableDecisionActions}
+                    disabled={disableDecisionActions || opportunity.import_status === "needs_review"}
                     onClick={() => void onPreview(opportunity)}
                   >
                     {isBusy ? "Working..." : "Preview"}
@@ -1100,15 +1292,15 @@ function GovDealsScannerPanel({
                   <button
                     type="button"
                     className="ghost-button"
-                    disabled={disableDecisionActions}
-                    onClick={() => onWatch(opportunity.id)}
+                    disabled={disableDecisionActions || opportunity.import_status === "needs_review"}
+                    onClick={() => onWatch(opportunity)}
                   >
                     Add to Watch
                   </button>
                   <button
                     type="button"
                     className="primary-button"
-                    disabled={disableDecisionActions}
+                    disabled={disableDecisionActions || opportunity.import_status === "needs_review"}
                     onClick={() => void onCreateDeal(opportunity)}
                   >
                     Create Deal
@@ -1116,11 +1308,178 @@ function GovDealsScannerPanel({
                   <button
                     type="button"
                     className="ghost-button"
-                    disabled={disableDecisionActions}
-                    onClick={() => onPass(opportunity.id)}
+                    disabled={disableDecisionActions || opportunity.import_status === "needs_review"}
+                    onClick={() => onPass(opportunity)}
                   >
                     Pass
                   </button>
+                </div>
+                <div className="decision-section">
+                  <h4>Edit Numbers</h4>
+                  <div className="form-grid-two">
+                    <label>
+                      Current Bid
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={String(editDraft.current_bid ?? "")}
+                        onChange={(event) =>
+                          updateOpportunityEditDraft(
+                            opportunity,
+                            "current_bid",
+                            Number(event.target.value) || 0
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      Buyer Premium (decimal)
+                      <input
+                        type="number"
+                        step="0.001"
+                        value={String(editDraft.buyer_premium_pct ?? "")}
+                        onChange={(event) =>
+                          updateOpportunityEditDraft(
+                            opportunity,
+                            "buyer_premium_pct",
+                            Number(event.target.value) || 0
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      Estimated Resale
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={String(editDraft.estimated_resale_value ?? "")}
+                        onChange={(event) =>
+                          updateOpportunityEditDraft(
+                            opportunity,
+                            "estimated_resale_value",
+                            Number(event.target.value) || 0
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      Estimated Transport Override
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={editDraft.estimated_transport_override ?? ""}
+                        onChange={(event) =>
+                          updateOpportunityEditDraft(
+                            opportunity,
+                            "estimated_transport_override",
+                            toNumberOrNull(event.target.value)
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      Estimated Repair
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={String(editDraft.estimated_repair_cost ?? "")}
+                        onChange={(event) =>
+                          updateOpportunityEditDraft(
+                            opportunity,
+                            "estimated_repair_cost",
+                            Number(event.target.value) || 0
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      Quantity Purchased
+                      <input
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={editDraft.quantity_purchased ?? ""}
+                        onChange={(event) =>
+                          updateOpportunityEditDraft(
+                            opportunity,
+                            "quantity_purchased",
+                            toNumberOrNull(event.target.value)
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      Quantity Broken
+                      <input
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={editDraft.quantity_broken ?? ""}
+                        onChange={(event) =>
+                          updateOpportunityEditDraft(
+                            opportunity,
+                            "quantity_broken",
+                            toNumberOrNull(event.target.value)
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      Title Status
+                      <select
+                        value={String(editDraft.title_status ?? "unknown")}
+                        onChange={(event) =>
+                          updateOpportunityEditDraft(
+                            opportunity,
+                            "title_status",
+                            event.target.value as OpportunityEditableFields["title_status"]
+                          )
+                        }
+                      >
+                        <option value="on_site">on_site</option>
+                        <option value="delayed">delayed</option>
+                        <option value="unknown">unknown</option>
+                      </select>
+                    </label>
+                    <label>
+                      Seller / Agency
+                      <input
+                        value={String(editDraft.seller_agency ?? "")}
+                        onChange={(event) =>
+                          updateOpportunityEditDraft(opportunity, "seller_agency", event.target.value)
+                        }
+                      />
+                    </label>
+                    <label>
+                      Location
+                      <input
+                        value={String(editDraft.location ?? "")}
+                        onChange={(event) =>
+                          updateOpportunityEditDraft(opportunity, "location", event.target.value)
+                        }
+                      />
+                    </label>
+                    <label className="span-two">
+                      Condition Assumptions
+                      <textarea
+                        rows={2}
+                        value={String(editDraft.condition_raw ?? "")}
+                        onChange={(event) =>
+                          updateOpportunityEditDraft(opportunity, "condition_raw", event.target.value)
+                        }
+                      />
+                    </label>
+                  </div>
+                  <div className="entry-actions">
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      disabled={isBusy}
+                      onClick={() => void onOverrideOpportunity(opportunity.id, editDraft)}
+                    >
+                      Save Overrides
+                    </button>
+                  </div>
                 </div>
                 {hasEndedAuction ? (
                   <p className="warning-text">Auction ended — decision actions are disabled.</p>
