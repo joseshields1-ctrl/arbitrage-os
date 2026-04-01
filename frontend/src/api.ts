@@ -9,12 +9,13 @@ import type {
   DealView,
 } from "./types";
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/+$/, "");
+const PROD_API_FALLBACK = "https://arbitrage-os-backend.onrender.com";
+const API_BASE = (
+  import.meta.env.VITE_API_BASE_URL ??
+  (import.meta.env.PROD ? PROD_API_FALLBACK : "")
+).replace(/\/+$/, "");
 const apiUrl = (path: string): string => {
   if (!API_BASE) {
-    if (import.meta.env.PROD) {
-      throw new Error("VITE_API_BASE_URL is required for production deployments.");
-    }
     return path;
   }
 
