@@ -328,7 +328,40 @@ export default function DashboardPanels({ deals, reconditioningMap }: DashboardP
 
   return (
     <>
-      <div className="capital-panel">
+      <div className="burn-enhanced-card priority-high burn-aggressive">
+        <h3>Burn List Enhancements</h3>
+        <p className="burn-required-label">ACTION REQUIRED</p>
+        {burnEnhancements.length === 0 ? (
+          <p>No active burn candidates.</p>
+        ) : (
+          <ul>
+            {burnEnhancements.map((item) => (
+              <li key={item.id}>
+                <strong>{item.label}</strong> · {item.days_live}d live · Delta{" "}
+                {formatCurrency(item.price_vs_market_delta)} · Suggested drop{" "}
+                {formatCurrency(item.suggested_price_drop)}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="decision-queue-card priority-high">
+        <h3>Decision Queue</h3>
+        {queue.length === 0 ? (
+          <p>No urgent queued decisions.</p>
+        ) : (
+          <ul>
+            {queue.map((item) => (
+              <li key={item.id} className={priorityClass(item.priority)}>
+                <strong>{item.label}</strong> — {item.reason}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="capital-panel priority-low">
         <h3>Capital Panel</h3>
         <div className="capital-grid">
           <article>
@@ -348,38 +381,6 @@ export default function DashboardPanels({ deals, reconditioningMap }: DashboardP
             <strong>{capital.pct_locked.toFixed(1)}%</strong>
           </article>
         </div>
-      </div>
-
-      <div className="decision-queue-card">
-        <h3>Decision Queue</h3>
-        {queue.length === 0 ? (
-          <p>No urgent queued decisions.</p>
-        ) : (
-          <ul>
-            {queue.map((item) => (
-              <li key={item.id} className={priorityClass(item.priority)}>
-                <strong>{item.label}</strong> — {item.reason}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      <div className="burn-enhanced-card">
-        <h3>Burn List Enhancements</h3>
-        {burnEnhancements.length === 0 ? (
-          <p>No active burn candidates.</p>
-        ) : (
-          <ul>
-            {burnEnhancements.map((item) => (
-              <li key={item.id}>
-                <strong>{item.label}</strong> · {item.days_live}d live · Delta{" "}
-                {formatCurrency(item.price_vs_market_delta)} · Suggested drop{" "}
-                {formatCurrency(item.suggested_price_drop)}
-              </li>
-            ))}
-          </ul>
-        )}
       </div>
 
       <div className="risk-flag-card">

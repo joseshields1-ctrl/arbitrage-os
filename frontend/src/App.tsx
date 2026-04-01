@@ -8,9 +8,10 @@ import {
   submitDealDecision,
   updateDealStage,
 } from "./api";
-import DashboardPanels from "./components/DashboardPanels";
+import DashboardPanels, { computeCapitalPanel, computeDecisionQueue } from "./components/DashboardPanels";
 import DealCard from "./components/DealCard";
 import DetailPanel from "./components/DetailPanel";
+import GovDealsScannerPanel from "./components/GovDealsScannerPanel";
 import PreBidSanityModal from "./components/PreBidSanityModal";
 import {
   CONDITION_GRADE_OPTIONS,
@@ -43,11 +44,51 @@ import {
   loadReconditioningMap,
   saveReconditioningMap,
 } from "./utils/reconditioning";
+import {
+  buildCreateDealRequestFromOpportunity,
+  buildCreateDealRequestFromWonIntake,
+  buildKeywordOpportunities,
+  buildManualOpportunity,
+  buildOpportunityFromUrl,
+  buildSniperAIPicks,
+  computeSniperDashboardSummary,
+  createInterestSignalRecord,
+  createSniperDecisionRecord,
+  DEFAULT_OPPORTUNITY_SORT_MODE,
+  DEFAULT_SCANNER_FILTERS,
+  setOpportunityInterest,
+  setOpportunityStatus,
+  toPreviewSnapshot,
+  upsertOpportunities,
+} from "./utils/govDealsScanner";
+import type {
+  GovDealsOpportunity,
+  InterestSignalRecord,
+  ManualOpportunityInput,
+  OpportunityFilters,
+  OpportunityPreviewSnapshot,
+  OpportunitySortMode,
+  SniperDecisionRecord,
+  SniperPassReason,
+  WonDealIntakeInput,
+} from "./utils/govDealsScanner";
 import "./App.css";
 
 const INTAKE_QUEUE_STORAGE_KEY = "arbitrage_os_intake_queue_v1";
+const GOVDEALS_OPPORTUNITIES_STORAGE_KEY = "arbitrage_os_govdeals_opportunities_v1";
+const GOVDEALS_SCANNER_META_STORAGE_KEY = "arbitrage_os_govdeals_scanner_meta_v1";
+const SNIPER_DECISIONS_STORAGE_KEY = "arbitrage_os_sniper_decisions_v1";
+const INTEREST_SIGNALS_STORAGE_KEY = "arbitrage_os_interest_signals_v1";
 
-type ActivePage = "dashboard" | "pipeline" | "intake" | "alerts" | "archive";
+type ActivePage =
+  | "dashboard"
+  | "opportunities"
+  | "pipeline"
+  | "intake"
+  | "alerts"
+  | "archive";
+type OperatorMode = "manage" | "hunt" | "analyze";
+type RightPanelDetailTab = "decision" | "market" | "recon";
 type PipelineAlertFilter = "all" | "critical" | "warning" | "none";
 type IntakeStep = 1 | 2 | 3;
 
@@ -61,6 +102,16 @@ const CATEGORY_GROUP_OPTIONS: Record<IntakeCategory, DealCategory[]> = {
   vehicle: ["vehicle_suv", "vehicle_police_fleet"],
   electronics: ["electronics_bulk", "electronics_individual"],
   other: ["powersports"],
+};
+
+const getOperatorModeForPage = (page: ActivePage): OperatorMode => {
+  if (page === "pipeline") {
+    return "analyze";
+  }
+  if (page === "opportunities" || page === "intake") {
+    return "hunt";
+  }
+  return "manage";
 };
 
 interface MonthlyPerformancePoint {
@@ -236,6 +287,7 @@ const toVehicleIntelFromForm = (form: IntakeFormState): VehicleMarketIntel | nul
 function App() {
   const [activePage, setActivePage] = useState<ActivePage>("dashboard");
   const [rightPanelMode, setRightPanelMode] = useState<"detail" | "assistant">("detail");
+  const [rightPanelDetailTab, setRightPanelDetailTab] = useState<RightPanelDetailTab>("decision");
   const [pipelineAlertFilter, setPipelineAlertFilter] = useState<PipelineAlertFilter>("all");
   const [showAdvancedFields, setShowAdvancedFields] = useState(false);
   const [intakeStep, setIntakeStep] = useState<IntakeStep>(1);
@@ -258,6 +310,19 @@ function App() {
   const [marketIntelMap, setMarketIntelMap] = useState<Record<string, VehicleMarketIntel>>({});
   const [reconditioningMap, setReconditioningMap] = useState<Record<string, ReconditioningRecord>>({});
   const [pendingApprovalDealId, setPendingApprovalDealId] = useState<string | null>(null);
+  const [govDealsOpportunities, setGovDealsOpportunities] = useState<GovDealsOpportunity[]>([]);
+  const [scannerFilters, setScannerFilters] = useState<OpportunityFilters>(DEFAULT_SCANNER_FILTERS);
+  const [scannerSortMode, setScannerSortMode] =
+    useState<OpportunitySortMode>(DEFAULT_OPPORTUNITY_SORT_MODE);
+  const [operatorBaseState, setOperatorBaseState] = useState("TX");
+  const [scannerPreviewsByOpportunityId, setScannerPreviewsByOpportunityId] = useState<
+    Record<string, OpportunityPreviewSnapshot | undefined>
+  >({});
+  const [scannerBusyOpportunityId, setScannerBusyOpportunityId] = useState<string | null>(null);
+  const [scannerStatusMessage, setScannerStatusMessage] = useState<string | null>(null);
+  const [scannerErrorMessage, setScannerErrorMessage] = useState<string | null>(null);
+  const [sniperDecisionHistory, setSniperDecisionHistory] = useState<SniperDecisionRecord[]>([]);
+  const [interestSignalHistory, setInterestSignalHistory] = useState<InterestSignalRecord[]>([]);
 
   const isElectronicsCategory = intakeCategory === "electronics";
   const isVehicleCategory = intakeCategory === "vehicle";
@@ -331,6 +396,102 @@ function App() {
     localStorage.setItem(INTAKE_QUEUE_STORAGE_KEY, JSON.stringify(savedForLaterIntake));
   }, [savedForLaterIntake]);
 
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(GOVDEALS_OPPORTUNITIES_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+      const parsed = JSON.parse(raw) as GovDealsOpportunity[];
+      if (Array.isArray(parsed)) {
+        setGovDealsOpportunities(parsed);
+      }
+    } catch {
+      setGovDealsOpportunities([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(
+      GOVDEALS_OPPORTUNITIES_STORAGE_KEY,
+      JSON.stringify(govDealsOpportunities)
+    );
+  }, [govDealsOpportunities]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(GOVDEALS_SCANNER_META_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+      const parsed = JSON.parse(raw) as {
+        operator_base_state?: string;
+        filters?: OpportunityFilters;
+        sort_mode?: OpportunitySortMode;
+      };
+      if (typeof parsed.operator_base_state === "string" && parsed.operator_base_state.trim()) {
+        setOperatorBaseState(parsed.operator_base_state.trim().toUpperCase().slice(0, 2));
+      }
+      if (parsed.filters && typeof parsed.filters === "object") {
+        setScannerFilters(parsed.filters);
+      }
+      if (typeof parsed.sort_mode === "string") {
+        setScannerSortMode(parsed.sort_mode);
+      }
+    } catch {
+      // ignore malformed scanner meta
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(
+      GOVDEALS_SCANNER_META_STORAGE_KEY,
+      JSON.stringify({
+        operator_base_state: operatorBaseState,
+        filters: scannerFilters,
+        sort_mode: scannerSortMode,
+      })
+    );
+  }, [operatorBaseState, scannerFilters, scannerSortMode]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SNIPER_DECISIONS_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+      const parsed = JSON.parse(raw) as SniperDecisionRecord[];
+      if (Array.isArray(parsed)) {
+        setSniperDecisionHistory(parsed);
+      }
+    } catch {
+      setSniperDecisionHistory([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(SNIPER_DECISIONS_STORAGE_KEY, JSON.stringify(sniperDecisionHistory));
+  }, [sniperDecisionHistory]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(INTEREST_SIGNALS_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+      const parsed = JSON.parse(raw) as InterestSignalRecord[];
+      if (Array.isArray(parsed)) {
+        setInterestSignalHistory(parsed);
+      }
+    } catch {
+      setInterestSignalHistory([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(INTEREST_SIGNALS_STORAGE_KEY, JSON.stringify(interestSignalHistory));
+  }, [interestSignalHistory]);
+
   const selectedDeal =
     deals.find((deal) => deal.deal.id === selectedDealId) ??
     (selectedDealId?.startsWith("preview-") ? intakePreviewDeal : null) ??
@@ -366,6 +527,71 @@ function App() {
       ),
     [deals]
   );
+  const availableLiquidCash = useMemo(() => computeCapitalPanel(deals).available_capital, [deals]);
+  const capitalPanelSnapshot = useMemo(() => computeCapitalPanel(deals), [deals]);
+  const decisionQueue = useMemo(() => computeDecisionQueue(deals), [deals]);
+  const burnListUrgentCount = useMemo(() => {
+    return deals.filter((deal) => {
+      if (deal.deal.status === "completed") {
+        return false;
+      }
+      if (deal.deal.category.startsWith("vehicle")) {
+        return deal.calculations.days_in_current_stage > 14;
+      }
+      if (deal.deal.category.startsWith("electronics")) {
+        return deal.calculations.days_in_current_stage > 7;
+      }
+      return deal.calculations.days_in_current_stage > 10;
+    }).length;
+  }, [deals]);
+  const capitalLockWarningCount = useMemo(
+    () =>
+      deals.filter((deal) => {
+        const warnings = deal.warnings ?? [];
+        return warnings.includes("TITLE_DELAY") || warnings.includes("CAPITAL_LOCK");
+      }).length,
+    [deals]
+  );
+  const operatorMode = getOperatorModeForPage(activePage);
+  const sniperPicks = useMemo(
+    () =>
+      buildSniperAIPicks(
+        govDealsOpportunities,
+        operatorBaseState,
+        scannerPreviewsByOpportunityId,
+        sniperDecisionHistory,
+        availableLiquidCash
+      ),
+    [
+      govDealsOpportunities,
+      operatorBaseState,
+      scannerPreviewsByOpportunityId,
+      sniperDecisionHistory,
+      availableLiquidCash,
+    ]
+  );
+  const sniperDashboardSummary = useMemo(
+    () => computeSniperDashboardSummary(sniperPicks, govDealsOpportunities, sniperDecisionHistory),
+    [sniperPicks, govDealsOpportunities, sniperDecisionHistory]
+  );
+  const sniperLast10 = useMemo(() => sniperDecisionHistory.slice(0, 10), [sniperDecisionHistory]);
+  const sniperAccuracyLast10 = useMemo(() => {
+    if (sniperLast10.length === 0) {
+      return 0;
+    }
+    const approved = sniperLast10.filter((item) => item.decision === "approved").length;
+    return Math.round((approved / sniperLast10.length) * 100);
+  }, [sniperLast10]);
+  const operatorAgreementRate = useMemo(() => {
+    if (sniperLast10.length === 0) {
+      return 0;
+    }
+    const aligned = sniperLast10.filter((item) => {
+      const recommendation = item.opportunity_snapshot.interest === "interested" ? "approved" : "passed";
+      return recommendation === item.decision;
+    }).length;
+    return Math.round((aligned / sniperLast10.length) * 100);
+  }, [sniperLast10]);
 
   const pipelineDeals = useMemo(() => {
     if (pipelineAlertFilter === "all") {
@@ -609,6 +835,7 @@ function App() {
       setIntakePreviewDeal(null);
       setActivePage("pipeline");
       setRightPanelMode("detail");
+      setRightPanelDetailTab("decision");
       setIntakeStatusMessage("Deal created from intake.");
       saveIntelForDeal(created.deal.id, payload.market_intel ?? null);
       resetIntakeForm();
@@ -863,6 +1090,169 @@ function App() {
     }));
   };
 
+  const clearScannerMessages = (): void => {
+    setScannerStatusMessage(null);
+    setScannerErrorMessage(null);
+  };
+
+  const handleScannerImportUrl = (listingUrl: string, keywordHint: string): void => {
+    clearScannerMessages();
+    const trimmed = listingUrl.trim();
+    if (!trimmed) {
+      setScannerErrorMessage("Listing URL is required.");
+      return;
+    }
+    const opportunity = buildOpportunityFromUrl(trimmed, keywordHint);
+    setGovDealsOpportunities((prev) => upsertOpportunities(prev, [opportunity]));
+    setScannerStatusMessage("URL imported into opportunities.");
+  };
+
+  const handleScannerKeywordSearch = (keyword: string): void => {
+    clearScannerMessages();
+    const trimmed = keyword.trim();
+    if (!trimmed) {
+      setScannerErrorMessage("Keyword is required.");
+      return;
+    }
+    const results = buildKeywordOpportunities(trimmed);
+    setGovDealsOpportunities((prev) => upsertOpportunities(prev, results));
+    setScannerStatusMessage(`Keyword search added ${results.length} opportunity result(s).`);
+  };
+
+  const handleScannerManualImport = (input: ManualOpportunityInput): void => {
+    clearScannerMessages();
+    if (!input.title.trim()) {
+      setScannerErrorMessage("Manual import requires a title.");
+      return;
+    }
+    const manual = buildManualOpportunity(input);
+    setGovDealsOpportunities((prev) => upsertOpportunities(prev, [manual]));
+    setScannerStatusMessage("Manual listing imported.");
+  };
+
+  const handleScannerPreview = async (opportunity: GovDealsOpportunity): Promise<void> => {
+    setScannerBusyOpportunityId(opportunity.id);
+    clearScannerMessages();
+    try {
+      const payload = buildCreateDealRequestFromOpportunity(opportunity, operatorBaseState);
+      const preview = await previewDeal(payload);
+      setScannerPreviewsByOpportunityId((prev) => ({
+        ...prev,
+        [opportunity.id]: toPreviewSnapshot(preview),
+      }));
+      setIntakePreviewDeal(preview);
+      setSelectedDealId(preview.deal.id);
+      setRightPanelMode("detail");
+      setScannerStatusMessage("Opportunity preview computed using backend enrichment.");
+    } catch (previewError) {
+      const message = previewError instanceof Error ? previewError.message : "Failed opportunity preview";
+      setScannerErrorMessage(message);
+    } finally {
+      setScannerBusyOpportunityId(null);
+    }
+  };
+
+  const handleScannerWatch = (opportunityId: string): void => {
+    clearScannerMessages();
+    setGovDealsOpportunities((prev) => setOpportunityStatus(prev, opportunityId, "watch"));
+    setScannerStatusMessage("Opportunity added to watch.");
+  };
+
+  const handleScannerPass = (opportunityId: string): void => {
+    clearScannerMessages();
+    setGovDealsOpportunities((prev) => setOpportunityStatus(prev, opportunityId, "passed"));
+    setScannerStatusMessage("Opportunity passed.");
+  };
+
+  const handleScannerCreateDeal = async (opportunity: GovDealsOpportunity): Promise<void> => {
+    setScannerBusyOpportunityId(opportunity.id);
+    clearScannerMessages();
+    try {
+      const payload = buildCreateDealRequestFromOpportunity(opportunity, operatorBaseState);
+      const created = await createDeal(payload);
+      setSelectedDealId(created.deal.id);
+      setIntakePreviewDeal(null);
+      setActivePage("pipeline");
+      setRightPanelMode("detail");
+      setRightPanelDetailTab("decision");
+      setGovDealsOpportunities((prev) => setOpportunityStatus(prev, opportunity.id, "converted"));
+      await loadData();
+      setScannerStatusMessage("Deal created from opportunity.");
+    } catch (createError) {
+      const message =
+        createError instanceof Error ? createError.message : "Failed to create deal from opportunity";
+      setScannerErrorMessage(message);
+    } finally {
+      setScannerBusyOpportunityId(null);
+    }
+  };
+
+  const handleScannerSetInterest = (
+    opportunityId: string,
+    interest: "interested" | "not_interested" | "undecided"
+  ): void => {
+    clearScannerMessages();
+    const priorSnapshot = govDealsOpportunities.find((item) => item.id === opportunityId) ?? null;
+    setGovDealsOpportunities((prev) => {
+      return setOpportunityInterest(prev, opportunityId, interest);
+    });
+    if (priorSnapshot) {
+      setInterestSignalHistory((prev) => [createInterestSignalRecord(priorSnapshot, interest), ...prev]);
+    }
+    setScannerStatusMessage(
+      interest === "interested"
+        ? "Marked as interested for pattern tracking."
+        : interest === "not_interested"
+          ? "Marked as not interested for pattern tracking."
+          : "Interest reset to undecided."
+    );
+  };
+
+  const handleScannerCreateFromWonDeal = async (
+    opportunity: GovDealsOpportunity,
+    intake: WonDealIntakeInput
+  ): Promise<void> => {
+    setScannerBusyOpportunityId(opportunity.id);
+    clearScannerMessages();
+    try {
+      const payload = buildCreateDealRequestFromWonIntake(opportunity, intake, operatorBaseState);
+      const created = await createDeal(payload);
+      setSelectedDealId(created.deal.id);
+      setIntakePreviewDeal(null);
+      setActivePage("pipeline");
+      setRightPanelMode("detail");
+      setRightPanelDetailTab("decision");
+      setGovDealsOpportunities((prev) => setOpportunityStatus(prev, opportunity.id, "converted"));
+      await loadData();
+      setScannerStatusMessage("Won deal imported and calculated using final numbers.");
+    } catch (createError) {
+      const message =
+        createError instanceof Error ? createError.message : "Failed to import won deal details";
+      setScannerErrorMessage(message);
+    } finally {
+      setScannerBusyOpportunityId(null);
+    }
+  };
+
+  const handleSniperDecision = (
+    opportunity: GovDealsOpportunity,
+    score: number,
+    decision: "approved" | "passed",
+    passReason: SniperPassReason | null,
+    note: string | null
+  ): void => {
+    clearScannerMessages();
+    const nextRecord = createSniperDecisionRecord(opportunity, score, decision, passReason, note);
+    setSniperDecisionHistory((prev) => [nextRecord, ...prev]);
+    if (decision === "approved") {
+      setGovDealsOpportunities((prev) => setOpportunityStatus(prev, opportunity.id, "watch"));
+      setScannerStatusMessage("Sniper pick approved.");
+    } else {
+      setGovDealsOpportunities((prev) => setOpportunityStatus(prev, opportunity.id, "passed"));
+      setScannerStatusMessage(`Sniper pick passed (${passReason ?? "unspecified"}).`);
+    }
+  };
+
   const step2Ready =
     intakeForm.title.trim().length > 0 &&
     intakeForm.acquisition_state.trim().length > 0 &&
@@ -870,8 +1260,18 @@ function App() {
   const step3Ready = (toOptionalNumber(intakeForm.estimated_market_value) ?? 0) > 0;
 
   return (
-    <main className="operator-shell">
+    <main className={`operator-shell mode-${operatorMode}`}>
       <header className="top-bar">
+        <div className="top-bar-title">
+          <h2>Operator Command Surface</h2>
+          <div className="mode-switcher">
+            <span className={`mode-pill ${operatorMode === "hunt" ? "active" : ""}`}>Hunt Mode</span>
+            <span className={`mode-pill ${operatorMode === "analyze" ? "active" : ""}`}>
+              Analyze Mode
+            </span>
+            <span className={`mode-pill ${operatorMode === "manage" ? "active" : ""}`}>Manage Mode</span>
+          </div>
+        </div>
         <div className="kpi-card primary">
           <span>Realized Profit</span>
           <strong>${(dashboard?.realized_profit_total ?? 0).toFixed(2)}</strong>
@@ -888,18 +1288,90 @@ function App() {
           <span>Alerts</span>
           <strong>{alertsCount}</strong>
         </div>
+        <div className="kpi-card">
+          <span>Sniper AI Picks</span>
+          <strong>{sniperDashboardSummary.picks_count}</strong>
+        </div>
+        <div className="kpi-card">
+          <span>Approved Not Acted On</span>
+          <strong>{sniperDashboardSummary.approved_not_acted_on}</strong>
+        </div>
+        <div className="kpi-card">
+          <span>Passed: Distance / Funds</span>
+          <strong>
+            {sniperDashboardSummary.passed_breakdown.distance} /{" "}
+            {sniperDashboardSummary.passed_breakdown.funds}
+          </strong>
+        </div>
+        <div className="kpi-card">
+          <span>Passed: Coordination / Risk</span>
+          <strong>
+            {sniperDashboardSummary.passed_breakdown.coordination} /{" "}
+            {sniperDashboardSummary.passed_breakdown.risk}
+          </strong>
+        </div>
+        <div className="kpi-card">
+          <span>Sniper Accuracy (last 10)</span>
+          <strong>{sniperAccuracyLast10}%</strong>
+        </div>
+        <div className="kpi-card">
+          <span>Operator Agreement Rate</span>
+          <strong>{operatorAgreementRate}%</strong>
+        </div>
       </header>
+      <section className="next-action-bar">
+        <div className="next-action-mode">
+          <span>Mode</span>
+          <strong>
+            {operatorMode === "manage"
+              ? "Manage Mode"
+              : operatorMode === "hunt"
+                ? "Hunt Mode"
+                : "Analyze Mode"}
+          </strong>
+        </div>
+        <div className="next-action-item priority-high">
+          <span>Deals needing decision</span>
+          <strong>{decisionQueue.length}</strong>
+        </div>
+        <div className="next-action-item priority-high">
+          <span>Burn list alerts</span>
+          <strong>{burnListUrgentCount}</strong>
+        </div>
+        <div className="next-action-item priority-medium">
+          <span>Capital locked warnings</span>
+          <strong>{capitalLockWarningCount}</strong>
+        </div>
+        <div className="next-action-item priority-low">
+          <span>Available capital</span>
+          <strong>${capitalPanelSnapshot.available_capital.toFixed(0)}</strong>
+        </div>
+      </section>
 
       <div className="workspace-layout">
         <aside className="left-nav">
           <h1>Arbitrage OS</h1>
           <p>Operator Console</p>
+          <p className="mode-chip">
+            {operatorMode === "manage"
+              ? "Manage Mode"
+              : operatorMode === "hunt"
+                ? "Hunt Mode"
+                : "Analyze Mode"}
+          </p>
           <button
             type="button"
             className={activePage === "dashboard" ? "active" : ""}
             onClick={() => setActivePage("dashboard")}
           >
             Dashboard
+          </button>
+          <button
+            type="button"
+            className={activePage === "opportunities" ? "active" : ""}
+            onClick={() => setActivePage("opportunities")}
+          >
+            Opportunities
           </button>
           <button
             type="button"
@@ -935,7 +1407,7 @@ function App() {
           {error ? <p className="error-banner">{error}</p> : null}
 
           {activePage === "dashboard" ? (
-            <section className="panel">
+            <section className="panel priority-low">
               <h2 className="page-title">Decision Dashboard</h2>
               <div className="dashboard-grid">
                 <article className="dashboard-stat-card">
@@ -958,7 +1430,7 @@ function App() {
 
               <DashboardPanels deals={deals} reconditioningMap={reconditioningMap} />
 
-              <div className="dashboard-chart-card">
+              <div className="dashboard-chart-card low-emphasis">
                 <h3>Monthly Revenue + Net + EHR</h3>
                 <p className="chart-subtitle">
                   Revenue/net from completed deals, projected net from active deals, EHR from prep
@@ -1051,6 +1523,39 @@ function App() {
                 )}
               </div>
             </section>
+          ) : null}
+
+          {activePage === "opportunities" ? (
+            <GovDealsScannerPanel
+              opportunities={govDealsOpportunities}
+              operatorBaseState={operatorBaseState}
+              filters={scannerFilters}
+              sortMode={scannerSortMode}
+              previewsByOpportunityId={scannerPreviewsByOpportunityId}
+              busyOpportunityId={scannerBusyOpportunityId}
+              statusMessage={scannerStatusMessage}
+              errorMessage={scannerErrorMessage}
+              onOperatorBaseStateChange={setOperatorBaseState}
+              onFiltersChange={setScannerFilters}
+              onSortModeChange={setScannerSortMode}
+              onImportUrl={handleScannerImportUrl}
+              onKeywordSearch={handleScannerKeywordSearch}
+              onManualImport={handleScannerManualImport}
+              onPreview={handleScannerPreview}
+              onWatch={handleScannerWatch}
+              onCreateDeal={handleScannerCreateDeal}
+              onPass={handleScannerPass}
+              onSetInterest={handleScannerSetInterest}
+              onCreateFromWonDeal={handleScannerCreateFromWonDeal}
+              sniperPicks={sniperPicks}
+              sniperDashboardSummary={sniperDashboardSummary}
+              onSniperApprove={(pick) =>
+                handleSniperDecision(pick.opportunity, pick.score, "approved", null, null)
+              }
+              onSniperPass={(pick, reason, note) =>
+                handleSniperDecision(pick.opportunity, pick.score, "passed", reason, note)
+              }
+            />
           ) : null}
 
           {activePage === "pipeline" ? (
@@ -1694,6 +2199,7 @@ function App() {
                   onClick={() => {
                     setActivePage("dashboard");
                     setRightPanelMode("detail");
+                    setRightPanelDetailTab("decision");
                   }}
                 >
                   Go to Burn List
@@ -1772,10 +2278,34 @@ function App() {
                     <p className="preview-banner">Preview — Not Yet Created</p>
                   </div>
                 ) : null}
+                <div className="detail-tab-row">
+                  <button
+                    type="button"
+                    className={rightPanelDetailTab === "decision" ? "active" : ""}
+                    onClick={() => setRightPanelDetailTab("decision")}
+                  >
+                    Decision
+                  </button>
+                  <button
+                    type="button"
+                    className={rightPanelDetailTab === "market" ? "active" : ""}
+                    onClick={() => setRightPanelDetailTab("market")}
+                  >
+                    Market
+                  </button>
+                  <button
+                    type="button"
+                    className={rightPanelDetailTab === "recon" ? "active" : ""}
+                    onClick={() => setRightPanelDetailTab("recon")}
+                  >
+                    Recon
+                  </button>
+                </div>
                 <DetailPanel
                   deal={selectedDeal}
                   marketIntel={selectedDealMarketIntel}
                   reconditioning={selectedDealReconditioning}
+                  activeTab={rightPanelDetailTab}
                   onMarketIntelChange={handleMarketIntelChange}
                   onReconditioningChange={handleReconditioningChange}
                   onRequestApproveDecision={handleRequestApproveDecision}
