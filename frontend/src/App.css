@@ -237,6 +237,99 @@
   gap: 10px;
 }
 
+.mobile-hidden {
+  display: none;
+}
+
+.right-panel-surface {
+  display: grid;
+  gap: 10px;
+}
+
+.mobile-context-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 66px;
+  z-index: 40;
+  background: #0f172a;
+  border-top: 1px solid #334155;
+  border-top-left-radius: 14px;
+  border-top-right-radius: 14px;
+  box-shadow: 0 -12px 28px rgba(2, 6, 23, 0.45);
+  max-height: 72vh;
+  overflow: auto;
+  transform: translateY(102%);
+  transition: transform 0.2s ease;
+}
+
+.mobile-context-sheet.open {
+  transform: translateY(0);
+}
+
+.mobile-context-header {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #334155;
+  background: #111827;
+  color: #e2e8f0;
+  z-index: 1;
+}
+
+.mobile-bottom-nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 45;
+  display: none;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 8px;
+  background: #0b1220;
+  border-top: 1px solid #334155;
+}
+
+.mobile-bottom-nav button {
+  white-space: nowrap;
+  min-height: 40px;
+  min-width: 84px;
+  font: inherit;
+  border: 1px solid #334155;
+  border-radius: 999px;
+  background: #111827;
+  color: #cbd5e1;
+  padding: 0 12px;
+}
+
+.mobile-bottom-nav button.active {
+  border-color: #60a5fa;
+  background: #1e3a8a;
+  color: #dbeafe;
+  font-weight: 700;
+}
+
+.mobile-context-sheet .right-panel-toggle {
+  display: none;
+}
+
+.mobile-context-sheet .assistant-panel,
+.mobile-context-sheet .detail-tab-content,
+.mobile-context-sheet .panel,
+.mobile-context-sheet .detail-panel {
+  border-radius: 0;
+}
+
+.next-action-item small {
+  color: #94a3b8;
+  font-size: 0.72rem;
+}
+
 .right-panel-toggle {
   display: flex;
   gap: 8px;
@@ -1593,13 +1686,20 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .workspace-layout {
+  .workspace-layout,
+  .workspace-layout.mobile-one-pane {
     grid-template-columns: 1fr;
+    padding-bottom: 120px;
   }
 
   .left-nav,
-  .right-panel {
-    position: static;
+  .right-panel,
+  .left-nav.mobile-hidden {
+    display: none;
+  }
+
+  .mobile-bottom-nav {
+    display: flex;
   }
 
   .dashboard-grid {

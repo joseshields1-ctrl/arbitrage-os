@@ -80,6 +80,46 @@ export const initializeDatabase = (): void => {
     );
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS opportunities (
+      id TEXT PRIMARY KEY,
+      source TEXT NOT NULL,
+      listing_url TEXT NOT NULL,
+      title TEXT NOT NULL,
+      category TEXT NOT NULL,
+      current_bid REAL NOT NULL,
+      auction_end TEXT NOT NULL,
+      location TEXT NOT NULL,
+      seller_agency TEXT NOT NULL,
+      seller_type TEXT NOT NULL,
+      buyer_premium_pct REAL NOT NULL,
+      removal_window_days INTEGER NOT NULL,
+      title_status TEXT NOT NULL,
+      relisted INTEGER NOT NULL DEFAULT 0,
+      condition_raw TEXT NOT NULL,
+      estimated_resale_value REAL NOT NULL,
+      estimated_repair_cost REAL NOT NULL,
+      quantity_purchased INTEGER,
+      quantity_broken INTEGER,
+      status TEXT NOT NULL,
+      interest TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS opportunity_decisions (
+      id TEXT PRIMARY KEY,
+      opportunity_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      reason TEXT,
+      note TEXT,
+      decided_at TEXT NOT NULL,
+      opportunity_snapshot TEXT NOT NULL,
+      FOREIGN KEY (opportunity_id) REFERENCES opportunities(id) ON DELETE CASCADE
+    );
+  `);
+
   // Migration-safe additions for optional unit breakdown support.
   const dealColumns = db.prepare(`PRAGMA table_info(deals)`).all() as Array<{
     name: string;

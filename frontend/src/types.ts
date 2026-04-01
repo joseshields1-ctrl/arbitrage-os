@@ -388,6 +388,35 @@ export interface DealDecisionResponse {
   stored_decision: OperatorDecisionRecord;
 }
 
+export type OpportunitiesFeedStatus =
+  | "loading"
+  | "valid_empty"
+  | "backend_error"
+  | "timeout"
+  | "feed_offline";
+
+export type OpportunityDecisionAction = "watch" | "must_buy" | "pass";
+
+export interface OpportunityDecisionRecord {
+  id: string;
+  opportunity_id: string;
+  action: OpportunityDecisionAction;
+  reason: string | null;
+  note: string | null;
+  decided_at: string;
+}
+
+export interface OpportunitiesFeedContract {
+  status: OpportunitiesFeedStatus;
+  feed_mode: "manual_persisted" | null;
+  last_polled_at: string | null;
+  generated_at: string;
+  opportunities: import("./utils/govDealsScanner").GovDealsOpportunity[];
+  decisions: OpportunityDecisionRecord[];
+  message: string;
+  error: string | null;
+}
+
 export const CATEGORY_OPTIONS: DealCategory[] = [
   "vehicle_suv",
   "vehicle_police_fleet",

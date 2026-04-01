@@ -21,6 +21,8 @@ export interface GovDealsOpportunity {
   category: OpportunityCategory;
   current_bid: number;
   auction_end: string;
+  auction_state?: "active" | "ended" | "unknown";
+  time_left_hours?: number | null;
   location: string;
   seller_agency: string;
   seller_type: "government" | "commercial" | "unknown";
@@ -349,18 +351,10 @@ export const estimateDistanceMiles = (operatorBaseState: string, location: strin
   return Math.round(haversineMiles(origin, destination));
 };
 
-const hoursUntil = (iso: string): number | null => {
-  const timestamp = Date.parse(iso);
-  if (!Number.isFinite(timestamp)) {
-    return null;
-  }
-  return (timestamp - Date.now()) / (1000 * 60 * 60);
-};
-
 export const estimateTransportCost = (
   distanceMiles: number | null,
   category: OpportunityCategory,
-  auctionEndIso: string
+  timeLeftHours: number | null
 ): number | null => {
   if (distanceMiles === null) {
     return null;
@@ -368,8 +362,7 @@ export const estimateTransportCost = (
   if (category === "other") {
     return Math.round(Math.max(90, distanceMiles * 0.45));
   }
-  const hoursLeft = hoursUntil(auctionEndIso);
-  const urgentRate = hoursLeft !== null && hoursLeft <= 24 ? 1.0 : 0.7;
+  const urgentRate = timeLeftHours !== null && timeLeftHours <= 24 ? 1.0 : 0.7;
   const minimum = category === "vehicle" ? 150 : 90;
   return Math.round(Math.max(minimum, distanceMiles * urgentRate));
 };
@@ -456,8 +449,16 @@ export const computeOpportunityDerivedMetrics = (
   preview?: OpportunityPreviewSnapshot,
   availableLiquidCash = Number.POSITIVE_INFINITY
 ): OpportunityDerivedMetrics => {
+  const backendTimeLeft =
+    typeof opportunity.time_left_hours === "number" && Number.isFinite(opportunity.time_left_hours)
+      ? opportunity.time_left_hours
+      : null;
   const estimatedDistance = estimateDistanceMiles(operatorBaseState, opportunity.location);
-  const estimatedTransportCost = estimateTransportCost(estimatedDistance, opportunity.category, opportunity.auction_end);
+  const estimatedTransportCost = estimateTransportCost(
+    estimatedDistance,
+    opportunity.category,
+    backendTimeLeft
+  );
   const conditionLower = opportunity.condition_raw.toLowerCase();
   const missingKey = conditionLower.includes("missing key") || conditionLower.includes("no key");
   const nonRunner =
@@ -474,7 +475,7 @@ export const computeOpportunityDerivedMetrics = (
     keyNonRunnerCost;
   const rawUpside = opportunity.estimated_resale_value - estimatedTotalInvestment;
   const rawRoi = estimatedTotalInvestment > 0 ? (rawUpside / estimatedTotalInvestment) * 100 : 0;
-  const timeLeft = hoursUntil(opportunity.auction_end);
+  const timeLeft = backendTimeLeft;
   const confidence = preview?.data_confidence ?? estimateConfidence(opportunity, estimatedDistance);
   const riskFlags = new Set<string>();
   if (opportunity.title_status !== "on_site") {
@@ -795,6 +796,8 @@ const SAMPLE_OPPORTUNITIES: Array<Omit<GovDealsOpportunity, "id" | "created_at">
     category: "vehicle",
     current_bid: 5400,
     auction_end: new Date(Date.now() + 13 * 60 * 60 * 1000).toISOString(),
+    auction_state: "unknown",
+    time_left_hours: null,
     location: "Austin, TX",
     seller_agency: "City of Austin Fleet",
     seller_type: "government",
@@ -817,6 +820,8 @@ const SAMPLE_OPPORTUNITIES: Array<Omit<GovDealsOpportunity, "id" | "created_at">
     category: "electronics",
     current_bid: 3250,
     auction_end: new Date(Date.now() + 22 * 60 * 60 * 1000).toISOString(),
+    auction_state: "unknown",
+    time_left_hours: null,
     location: "Baton Rouge, LA",
     seller_agency: "Parish IT Department",
     seller_type: "government",
@@ -839,6 +844,8 @@ const SAMPLE_OPPORTUNITIES: Array<Omit<GovDealsOpportunity, "id" | "created_at">
     category: "vehicle",
     current_bid: 6900,
     auction_end: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
+    auction_state: "unknown",
+    time_left_hours: null,
     location: "Tulsa, OK",
     seller_agency: "County Asset Disposal",
     seller_type: "government",
@@ -861,6 +868,8 @@ const SAMPLE_OPPORTUNITIES: Array<Omit<GovDealsOpportunity, "id" | "created_at">
     category: "other",
     current_bid: 4700,
     auction_end: new Date(Date.now() + 28 * 60 * 60 * 1000).toISOString(),
+    auction_state: "unknown",
+    time_left_hours: null,
     location: "Raleigh, NC",
     seller_agency: "State Parks Division",
     seller_type: "government",
@@ -905,6 +914,8 @@ export const buildKeywordOpportunities = (keyword: string): GovDealsOpportunity[
       category: inferCategoryFromText(keyword),
       current_bid: 0,
       auction_end: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      auction_state: "unknown",
+      time_left_hours: null,
       location: "Unknown, TX",
       seller_agency: "Unknown agency",
       seller_type: "unknown",
@@ -942,6 +953,8 @@ export const buildOpportunityFromUrl = (listingUrl: string, keywordHint = ""): G
     category: inferCategoryFromText(`${titleFromUrl} ${keywordHint}`),
     current_bid: 0,
     auction_end: new Date(now + 24 * 60 * 60 * 1000).toISOString(),
+    auction_state: "unknown",
+    time_left_hours: null,
     location: "Unknown, TX",
     seller_agency: "Unknown agency",
     seller_type: "unknown",
@@ -967,6 +980,8 @@ export const buildManualOpportunity = (input: ManualOpportunityInput): GovDealsO
     category: input.category,
     current_bid: Math.max(0, input.current_bid),
     auction_end: input.auction_end || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    auction_state: "unknown",
+    time_left_hours: null,
     location: input.location.trim() || "Unknown, TX",
     seller_agency: input.seller_agency.trim() || "Unknown agency",
     seller_type: input.seller_type,

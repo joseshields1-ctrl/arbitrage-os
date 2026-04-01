@@ -7,6 +7,8 @@ import type {
   DealDecisionResponse,
   DealStage,
   DealView,
+  OpportunitiesFeedContract,
+  OpportunityDecisionAction,
 } from "./types";
 
 const PROD_API_FALLBACK = "https://arbitrage-os-backend.onrender.com";
@@ -72,12 +74,14 @@ export const fetchDashboard = async (): Promise<DashboardResponse> => {
 };
 
 export const queryAssistant = async (
-  payload: AssistantQueryRequest
+  payload: AssistantQueryRequest,
+  signal?: AbortSignal
 ): Promise<AssistantQueryResponse> => {
   const response = await fetch(apiUrl("/api/assistant/query"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal,
   });
   return handleResponse<AssistantQueryResponse>(response);
 };
@@ -101,4 +105,40 @@ export const submitDealDecision = async (
     body: JSON.stringify(payload),
   });
   return handleResponse<DealDecisionResponse>(response);
+};
+
+export const fetchOpportunitiesFeed = async (
+  signal?: AbortSignal
+): Promise<OpportunitiesFeedContract> => {
+  const response = await fetch(apiUrl("/api/opportunities/feed"), { signal });
+  return handleResponse<OpportunitiesFeedContract>(response);
+};
+
+export const syncOpportunities = async (
+  opportunities: OpportunitiesFeedContract["opportunities"]
+): Promise<{ saved_count: number; feed: OpportunitiesFeedContract }> => {
+  const response = await fetch(apiUrl("/api/opportunities/sync"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ opportunities }),
+  });
+  return handleResponse<{ saved_count: number; feed: OpportunitiesFeedContract }>(response);
+};
+
+export const saveOpportunityDecision = async (
+  opportunityId: string,
+  payload: { action: OpportunityDecisionAction; reason?: string | null; note?: string | null }
+): Promise<{
+  stored_decision: OpportunitiesFeedContract["decisions"][number];
+  feed: OpportunitiesFeedContract;
+}> => {
+  const response = await fetch(apiUrl(`/api/opportunities/${opportunityId}/decision`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<{
+    stored_decision: OpportunitiesFeedContract["decisions"][number];
+    feed: OpportunitiesFeedContract;
+  }>(response);
 };

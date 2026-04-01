@@ -11,6 +11,7 @@ import testDecisionLoopRouter from "./routes/testDecisionLoop";
 import assistantRouter from "./routes/assistant";
 import dealsRouter from "./routes/deals";
 import dashboardRouter from "./routes/dashboard";
+import opportunitiesRouter from "./routes/opportunities";
 
 const app = express();
 
@@ -51,5 +52,6 @@ app.use("/test-decision-loop", testDecisionLoopRouter);
 app.use("/api/assistant", assistantRouter);
 app.use("/api/deals", dealsRouter);
 app.use("/api/dashboard", dashboardRouter);
+app.use("/api/opportunities", opportunitiesRouter);
 
 export default app;

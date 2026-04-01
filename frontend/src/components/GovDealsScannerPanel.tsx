@@ -21,6 +21,14 @@ import {
 
 interface GovDealsScannerPanelProps {
   opportunities: GovDealsOpportunity[];
+  opportunitiesState: "live" | "stale" | "fallback" | "disabled";
+  opportunitiesStatus:
+    | "loading"
+    | "valid_empty"
+    | "backend_error"
+    | "timeout"
+    | "feed_offline";
+  opportunitiesStatusMessage: string;
   operatorBaseState: string;
   filters: OpportunityFilters;
   sortMode: OpportunitySortMode;
@@ -153,6 +161,9 @@ const createWonIntakeFromOpportunity = (opportunity: GovDealsOpportunity): WonDe
 
 function GovDealsScannerPanel({
   opportunities,
+  opportunitiesState,
+  opportunitiesStatus,
+  opportunitiesStatusMessage,
   operatorBaseState,
   filters,
   sortMode,
@@ -258,6 +269,15 @@ function GovDealsScannerPanel({
         Search/import opportunities, rank by upside-risk-distance, then preview/create with the existing
         backend deal engine.
       </p>
+      <div className="opportunities-feed-state-row">
+        <span className={`risk-chip ${opportunitiesState === "live" ? "info" : "warning"}`}>
+          Feed State: {opportunitiesState}
+        </span>
+        <span className={`risk-chip ${opportunitiesStatus === "feed_offline" ? "warning" : ""}`}>
+          Feed Status: {opportunitiesStatus}
+        </span>
+        <span className="muted">{opportunitiesStatusMessage}</span>
+      </div>
 
       <div className="scanner-layout">
         <article className="scanner-card">
@@ -898,7 +918,15 @@ function GovDealsScannerPanel({
         </div>
       </div>
 
-      {ranked.length === 0 ? (
+      {opportunitiesStatus === "loading" ? (
+        <p>Loading opportunities feed...</p>
+      ) : opportunitiesStatus === "backend_error" ? (
+        <p className="warning-text">Opportunities feed unavailable: backend error.</p>
+      ) : opportunitiesStatus === "timeout" ? (
+        <p className="warning-text">Opportunities feed request timed out.</p>
+      ) : opportunitiesStatus === "valid_empty" ? (
+        <p>No opportunities stored yet.</p>
+      ) : ranked.length === 0 ? (
         <p>No opportunities match current filters.</p>
       ) : (
         <div className="opportunity-grid">
@@ -921,6 +949,10 @@ function GovDealsScannerPanel({
                 : opportunity.interest === "not_interested"
                   ? "not-interested"
                   : "undecided";
+            const hasEndedAuction =
+              opportunity.auction_state === "ended" ||
+              (metrics.time_left_hours !== null && metrics.time_left_hours <= 0);
+            const disableDecisionActions = isBusy || hasEndedAuction;
             return (
               <article className="opportunity-card" key={opportunity.id}>
                 <div className="opportunity-head">
@@ -1060,7 +1092,7 @@ function GovDealsScannerPanel({
                   <button
                     type="button"
                     className="secondary-button"
-                    disabled={isBusy}
+                    disabled={disableDecisionActions}
                     onClick={() => void onPreview(opportunity)}
                   >
                     {isBusy ? "Working..." : "Preview"}
@@ -1068,7 +1100,7 @@ function GovDealsScannerPanel({
                   <button
                     type="button"
                     className="ghost-button"
-                    disabled={isBusy}
+                    disabled={disableDecisionActions}
                     onClick={() => onWatch(opportunity.id)}
                   >
                     Add to Watch
@@ -1076,7 +1108,7 @@ function GovDealsScannerPanel({
                   <button
                     type="button"
                     className="primary-button"
-                    disabled={isBusy}
+                    disabled={disableDecisionActions}
                     onClick={() => void onCreateDeal(opportunity)}
                   >
                     Create Deal
@@ -1084,12 +1116,15 @@ function GovDealsScannerPanel({
                   <button
                     type="button"
                     className="ghost-button"
-                    disabled={isBusy}
+                    disabled={disableDecisionActions}
                     onClick={() => onPass(opportunity.id)}
                   >
                     Pass
                   </button>
                 </div>
+                {hasEndedAuction ? (
+                  <p className="warning-text">Auction ended — decision actions are disabled.</p>
+                ) : null}
                 <div className="won-intake-panel">
                   <div className="entry-actions">
                     <button
