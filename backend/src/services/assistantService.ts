@@ -14,6 +14,37 @@ export interface AssistantQueryResponse {
   suggested_action: string;
 }
 
+const resolveSuggestedAction = (context: EnrichedDeal["assistant_context"]): string => {
+  const recommendation = context.ai_recommendation;
+  if (
+    recommendation &&
+    (recommendation.suggested_action === "buy" ||
+      recommendation.suggested_action === "pass" ||
+      recommendation.suggested_action === "investigate")
+  ) {
+    return recommendation.suggested_action;
+  }
+  const engineAction = context.engine?.recommended_action;
+  if (
+    engineAction === "pass" ||
+    engineAction === "do_not_acquire" ||
+    engineAction === "liquidate_now" ||
+    engineAction === "reduce_price"
+  ) {
+    return "pass";
+  }
+  if (engineAction === "review_only") {
+    return "investigate";
+  }
+  return "investigate";
+};
+
+const resolveWarnings = (context: EnrichedDeal["assistant_context"]): string[] =>
+  Array.isArray(context.warnings) ? context.warnings : [];
+
+const resolveNumber = (value: unknown, fallback = 0): number =>
+  typeof value === "number" && Number.isFinite(value) ? value : fallback;
+
 const ensureQuestion = (value: unknown): string => {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error("question is required");
@@ -38,13 +69,16 @@ const ensureAssistantContext = (
 };
 
 const resolveRiskLevel = (context: EnrichedDeal["assistant_context"]): "low" | "medium" | "high" => {
-  const criticalAlerts = context.warnings.filter((item) =>
+  const warnings = resolveWarnings(context);
+  const dataConfidence = resolveNumber(context.calculations?.data_confidence, 0);
+  const projectedProfit = resolveNumber(context.calculations?.projected_profit, 0);
+  const criticalAlerts = warnings.filter((item) =>
     ["FORCE_LIQUIDATION", "STAGE_CRITICAL", "PROFIT_DRIFT_HIGH"].includes(item)
   ).length;
-  if (criticalAlerts > 0 || context.calculations.data_confidence <= 50) {
+  if (criticalAlerts > 0 || dataConfidence <= 50) {
     return "high";
   }
-  if (context.calculations.data_confidence <= 70 || context.calculations.projected_profit < 0) {
+  if (dataConfidence <= 70 || projectedProfit < 0) {
     return "medium";
   }
   return "low";
@@ -54,10 +88,13 @@ const buildRecommendationExplanation = (
   context: EnrichedDeal["assistant_context"],
   suggestedAction: string
 ): string => {
-  const alerts = context.warnings.length > 0 ? context.warnings.join(", ") : "none";
-  const tax = context.engine.cost_basis.cost_basis_breakdown.tax;
-  const transport = context.engine.cost_basis.cost_basis_breakdown.transport;
-  const totalCostBasis = context.calculations.total_cost_basis;
+  const warnings = resolveWarnings(context);
+  const alerts = warnings.length > 0 ? warnings.join(", ") : "none";
+  const tax = resolveNumber(context.engine?.cost_basis?.cost_basis_breakdown?.tax, 0);
+  const transport = resolveNumber(context.engine?.cost_basis?.cost_basis_breakdown?.transport, 0);
+  const totalCostBasis = resolveNumber(context.calculations?.total_cost_basis, 0);
+  const projectedProfit = resolveNumber(context.calculations?.projected_profit, 0);
+  const dataConfidence = resolveNumber(context.calculations?.data_confidence, 0);
   const marginDragPct =
     totalCostBasis > 0 ? Math.round(((tax + transport) / totalCostBasis) * 100) : 0;
   const bidCapHint =
@@ -66,9 +103,9 @@ const buildRecommendationExplanation = (
       : "Bid cap guidance: keep bid limits conservative until risks are reduced.";
   return [
     `Recommendation: ${suggestedAction}.`,
-    `Projected profit is ${context.calculations.projected_profit.toFixed(2)}.`,
+    `Projected profit is ${projectedProfit.toFixed(2)}.`,
     `Tax and transport impact is ${marginDragPct}% of current cost basis.`,
-    `Data confidence is ${context.calculations.data_confidence}.`,
+    `Data confidence is ${dataConfidence}.`,
     `Active alerts: ${alerts}.`,
     bidCapHint,
   ].join(" ");
@@ -78,29 +115,38 @@ const buildHeuristicAdvice = (
   context: EnrichedDeal["assistant_context"],
   question: string
 ): AssistantQueryResponse => {
+  const warnings = resolveWarnings(context);
   const keyPoints: string[] = [];
-  const projected = context.calculations.projected_profit;
-  const realized = context.calculations.realized_profit;
-  const alerts = context.warnings;
+  const projected = resolveNumber(context.calculations?.projected_profit, 0);
+  const realized =
+    typeof context.calculations?.realized_profit === "number" &&
+    Number.isFinite(context.calculations.realized_profit)
+      ? context.calculations.realized_profit
+      : null;
+  const dataConfidence = resolveNumber(context.calculations?.data_confidence, 0);
+  const alerts = warnings;
 
   keyPoints.push(`Projected profit: ${projected.toFixed(2)}`);
   keyPoints.push(
     realized === null ? "Realized profit: unavailable" : `Realized profit: ${realized.toFixed(2)}`
   );
-  keyPoints.push(`Data confidence: ${context.calculations.data_confidence}`);
+  keyPoints.push(`Data confidence: ${dataConfidence}`);
   if (alerts.length > 0) {
     keyPoints.push(`Flags: ${alerts.join(", ")}`);
   }
 
   const riskLevel = resolveRiskLevel(context);
-  const suggestedAction = context.ai_recommendation.suggested_action;
+  const suggestedAction = resolveSuggestedAction(context);
   const recommendationExplanation = buildRecommendationExplanation(context, suggestedAction);
-  const latestDecision = context.operator_decision_history[0] ?? null;
+  const latestDecision =
+    Array.isArray(context.operator_decision_history) && context.operator_decision_history.length > 0
+      ? context.operator_decision_history[0]
+      : null;
   const response = [
     "Advisory analysis based only on provided deal context.",
     `Question: ${question}`,
     recommendationExplanation,
-    context.recommendation_summary,
+    context.recommendation_summary ?? "No recommendation summary was provided.",
     `Risk level: ${riskLevel}. Suggested action: ${suggestedAction}.`,
     latestDecision?.decision === "rejected"
       ? "You previously rejected this recommendation. Please capture your operator reasoning for continuous improvement."
@@ -171,15 +217,18 @@ const buildOpenAIAdvice = async (
 
   const responseText = openaiResponse.output_text?.trim() || "No assistant response generated.";
   const riskLevel = resolveRiskLevel(context);
-  const suggestedAction = context.ai_recommendation.suggested_action;
+  const warnings = resolveWarnings(context);
+  const suggestedAction = resolveSuggestedAction(context);
   const recommendationExplanation = buildRecommendationExplanation(context, suggestedAction);
+  const projectedProfit = resolveNumber(context.calculations?.projected_profit, 0);
+  const dataConfidence = resolveNumber(context.calculations?.data_confidence, 0);
 
   return {
     response: `${recommendationExplanation} ${responseText}`.trim(),
     key_points: [
-      `Projected profit: ${context.calculations.projected_profit.toFixed(2)}`,
-      `Data confidence: ${context.calculations.data_confidence}`,
-      `Warnings: ${context.warnings.join(", ") || "none"}`,
+      `Projected profit: ${projectedProfit.toFixed(2)}`,
+      `Data confidence: ${dataConfidence}`,
+      `Warnings: ${warnings.join(", ") || "none"}`,
     ],
     risk_level: riskLevel,
     suggested_action: suggestedAction,
