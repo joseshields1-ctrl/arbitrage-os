@@ -1097,6 +1097,9 @@ export const saveOpportunityDecision = (
   }
 
   const opportunity = mapOpportunityRow(row);
+  if (opportunity.import_status === "needs_review") {
+    throw new Error("Opportunity needs review before actions");
+  }
   const decisionId = crypto.randomUUID();
   const decidedAt = nowIso();
 
