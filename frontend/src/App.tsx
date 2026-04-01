@@ -799,6 +799,22 @@ function App() {
     return Math.round((aligned / sniperLast10.length) * 100);
   }, [sniperLast10]);
 
+  const sniperPicksDisplay = scannerFeedRehydrateDone ? sniperDashboardSummary.picks_count : "...";
+  const sniperApprovedDisplay = scannerFeedRehydrateDone
+    ? sniperDashboardSummary.approved_not_acted_on
+    : "...";
+  const sniperPassDistanceFundsDisplay = scannerFeedRehydrateDone
+    ? `${sniperDashboardSummary.passed_breakdown.distance} / ${sniperDashboardSummary.passed_breakdown.funds}`
+    : "Rehydrating...";
+  const sniperPassCoordRiskDisplay = scannerFeedRehydrateDone
+    ? `${sniperDashboardSummary.passed_breakdown.coordination} / ${sniperDashboardSummary.passed_breakdown.risk}`
+    : "Rehydrating...";
+  const sniperAccuracyDisplay = scannerFeedRehydrateDone ? `${sniperAccuracyLast10}%` : "Rehydrating...";
+  const operatorAgreementDisplay = scannerFeedRehydrateDone ? `${operatorAgreementRate}%` : "Rehydrating...";
+  const decisionSignalDisplay = scannerFeedRehydrateDone
+    ? `${persistedDecisionCount} / ${interestSignalCount}`
+    : "Rehydrating...";
+
   const pipelineDeals = useMemo(() => {
     if (pipelineAlertFilter === "all") {
       return deals;
@@ -1739,33 +1755,31 @@ function App() {
         </div>
         <div className="kpi-card">
           <span>Sniper AI Picks</span>
-          <strong>{sniperDashboardSummary.picks_count}</strong>
+          <strong>{sniperPicksDisplay}</strong>
         </div>
         <div className="kpi-card">
           <span>Approved Not Acted On</span>
-          <strong>{sniperDashboardSummary.approved_not_acted_on}</strong>
+          <strong>{sniperApprovedDisplay}</strong>
         </div>
         <div className="kpi-card">
           <span>Passed: Distance / Funds</span>
           <strong>
-            {sniperDashboardSummary.passed_breakdown.distance} /{" "}
-            {sniperDashboardSummary.passed_breakdown.funds}
+            {sniperPassDistanceFundsDisplay}
           </strong>
         </div>
         <div className="kpi-card">
           <span>Passed: Coordination / Risk</span>
           <strong>
-            {sniperDashboardSummary.passed_breakdown.coordination} /{" "}
-            {sniperDashboardSummary.passed_breakdown.risk}
+            {sniperPassCoordRiskDisplay}
           </strong>
         </div>
         <div className="kpi-card">
           <span>Sniper Accuracy (last 10)</span>
-          <strong>{sniperAccuracyLast10}%</strong>
+          <strong>{sniperAccuracyDisplay}</strong>
         </div>
         <div className="kpi-card">
           <span>Operator Agreement Rate</span>
-          <strong>{operatorAgreementRate}%</strong>
+          <strong>{operatorAgreementDisplay}</strong>
         </div>
       </header>
       <section className="next-action-bar">
@@ -1803,7 +1817,7 @@ function App() {
         <div className="next-action-item priority-low">
           <span>Decisions / Interest Signals</span>
           <strong>
-            {persistedDecisionCount} / {interestSignalCount}
+            {decisionSignalDisplay}
           </strong>
         </div>
       </section>
