@@ -3,11 +3,26 @@ import type {
   OpportunityCategory,
   OpportunityCriticalField,
   OpportunityEditableFields,
+  OpportunityGuardrailFlag,
   OpportunityImportReviewResponse,
+  OpportunityImportStatus,
   OpportunityRawImportFields,
 } from "../models/opportunities";
 
 const GOVDEALS_HOST_RE = /(^|\.)govdeals\.com$/i;
+const GOVDEALS_BLOCK_MARKERS = [
+  "captcha",
+  "attention required",
+  "access denied",
+  "request unsuccessful",
+  "are you a robot",
+];
+const REQUEST_HEADERS: OpportunityImportReviewResponse["request_headers"] = {
+  "User-Agent":
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 ArbitrageOS/1.0",
+  "Accept-Language": "en-US,en;q=0.9",
+  Referer: "https://www.govdeals.com/",
+};
 
 const normalizeText = (value: string): string => value.replace(/\s+/g, " ").trim();
 
@@ -45,11 +60,27 @@ const parseDate = (value: string | null): string | null => {
   return new Date(timestamp).toISOString();
 };
 
+const parseDigits = (value: string | null): string | null => {
+  if (!value) {
+    return null;
+  }
+  const digits = value.replace(/\D+/g, "").trim();
+  return digits.length > 0 ? digits : null;
+};
+
 const canonicalizeGovDealsUrl = (rawUrl: string): string => {
   const parsed = new URL(rawUrl);
   const host = parsed.hostname.toLowerCase();
   const pathname = parsed.pathname.replace(/\/+$/, "");
-  const itemId = parsed.searchParams.get("itemid")?.trim() ?? "";
+  const accountId =
+    parseDigits(parsed.searchParams.get("accountid")) ??
+    parseDigits(parsed.searchParams.get("account_id")) ??
+    parseDigits(parsed.searchParams.get("acctid")) ??
+    parseDigits(parsed.searchParams.get("account"));
+  const itemId = parseDigits(parsed.searchParams.get("itemid"));
+  if (accountId && itemId) {
+    return `https://${host}${pathname}?accountid=${encodeURIComponent(accountId)}&itemid=${encodeURIComponent(itemId)}`;
+  }
   if (itemId) {
     return `https://${host}${pathname}?itemid=${encodeURIComponent(itemId)}`;
   }
@@ -123,15 +154,30 @@ const pickByRegex = (
 };
 
 const parseListingIdFromUrl = (listingUrl: string): string | null => {
+  const parsed = parseGovDealsIdsFromUrl(listingUrl);
+  if (parsed.accountId && parsed.itemId) {
+    return `govdeals_${parsed.accountId}_${parsed.itemId}`;
+  }
+  return null;
+};
+
+const parseGovDealsIdsFromUrl = (
+  listingUrl: string
+): {
+  accountId: string | null;
+  itemId: string | null;
+} => {
   try {
     const parsed = new URL(listingUrl);
-    const itemId = parsed.searchParams.get("itemid");
-    if (itemId && /^\d{2,}$/.test(itemId.trim())) {
-      return itemId.trim();
-    }
-    return null;
+    const accountId =
+      parseDigits(parsed.searchParams.get("accountid")) ??
+      parseDigits(parsed.searchParams.get("account_id")) ??
+      parseDigits(parsed.searchParams.get("acctid")) ??
+      parseDigits(parsed.searchParams.get("account"));
+    const itemId = parseDigits(parsed.searchParams.get("itemid"));
+    return { accountId, itemId };
   } catch {
-    return null;
+    return { accountId: null, itemId: null };
   }
 };
 
@@ -162,6 +208,71 @@ export interface ParseGovDealsInput {
   keyword_hint?: string;
 }
 
+const buildFailureResponse = (input: {
+  listingUrl: string;
+  canonicalUrl: string;
+  accountId: string | null;
+  itemId: string | null;
+  listingId: string | null;
+  parseStatus: OpportunityImportStatus;
+  blockedReason?: string | null;
+  parserError?: string | null;
+  notes?: string[];
+}): OpportunityImportReviewResponse => {
+  const rawFields: OpportunityRawImportFields = {
+    account_id: input.accountId,
+    item_id: input.itemId,
+    listing_id: input.listingId,
+    title: null,
+    current_bid_text: null,
+    auction_end_text: null,
+    time_remaining_text: null,
+    location_text: null,
+    seller_agency_text: null,
+    category_text: null,
+    buyer_premium_text: null,
+    description_text: null,
+    quantity_text: null,
+    attachment_links_text: null,
+    seller_contact_text: null,
+  };
+  const guardrailFlags: OpportunityGuardrailFlag[] = [];
+  if (input.parseStatus === "blocked") {
+    guardrailFlags.push("IMPORT_BLOCKED");
+  }
+  if (input.parseStatus === "failed") {
+    guardrailFlags.push("IMPORT_FETCH_FAILED");
+  }
+  return {
+    listing_url: input.listingUrl,
+    canonical_url: input.canonicalUrl,
+    account_id: input.accountId,
+    item_id: input.itemId,
+    listing_id: input.listingId,
+    raw_fields: rawFields,
+    parsed_fields: {
+      listing_id: input.listingId,
+      canonical_url: input.canonicalUrl,
+      category: "other",
+      buyer_premium_explicit: false,
+      description: null,
+      attachment_links: [],
+      seller_contact: null,
+      buyer_premium_pct: null,
+    },
+    missing_fields: ["title", "current_bid", "auction_end", "location", "seller_agency"],
+    import_status: input.parseStatus,
+    parse_status: input.parseStatus,
+    import_confidence: null,
+    guardrail_flags: guardrailFlags,
+    blocked_reason: input.blockedReason ?? null,
+    parser_error: input.parserError ?? null,
+    request_headers: REQUEST_HEADERS,
+    extraction_notes: input.notes ?? [],
+    selector_hits: {},
+  };
+};
+
 export const parseGovDealsListingForReview = async (
   payload: ParseGovDealsInput
 ): Promise<OpportunityImportReviewResponse> => {
@@ -180,31 +291,96 @@ export const parseGovDealsListingForReview = async (
   }
 
   const canonicalUrl = canonicalizeGovDealsUrl(listingUrl);
+  const idsFromUrl = parseGovDealsIdsFromUrl(listingUrl);
+  const listingIdFromUrl = parseListingIdFromUrl(listingUrl);
   const selectorHits: Record<string, string[]> = {};
   const extractionNotes: string[] = [];
 
   let html = "";
+  let fetchStatus: number | null = null;
   try {
     const response = await fetch(listingUrl, {
-      headers: {
-        "User-Agent": "ArbitrageOS/1.0 (+opportunity-import)",
-      },
+      headers: REQUEST_HEADERS,
     });
+    fetchStatus = response.status;
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      const parseStatus: OpportunityImportStatus =
+        response.status === 403 || response.status === 429 ? "blocked" : "failed";
+      return buildFailureResponse({
+        listingUrl,
+        canonicalUrl,
+        accountId: idsFromUrl.accountId,
+        itemId: idsFromUrl.itemId,
+        listingId: listingIdFromUrl,
+        parseStatus,
+        blockedReason: parseStatus === "blocked" ? `HTTP ${response.status}` : null,
+        parserError: parseStatus === "failed" ? `HTTP ${response.status}` : null,
+        notes: [`GovDeals fetch returned non-OK response: ${response.status}`],
+      });
     }
     html = await response.text();
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown error";
-    throw new Error(`Failed to fetch GovDeals listing page: ${message}`);
+    return buildFailureResponse({
+      listingUrl,
+      canonicalUrl,
+      accountId: idsFromUrl.accountId,
+      itemId: idsFromUrl.itemId,
+      listingId: listingIdFromUrl,
+      parseStatus: "failed",
+      parserError: `Failed to fetch GovDeals listing page: ${message}`,
+      notes: [`GovDeals fetch failed: ${message}`],
+    });
   }
 
   const $ = load(html);
   const pageText = normalizeText($("body").text());
+  const lowerHtml = html.toLowerCase();
+  if (GOVDEALS_BLOCK_MARKERS.some((marker) => lowerHtml.includes(marker))) {
+    return buildFailureResponse({
+      listingUrl,
+      canonicalUrl,
+      accountId: idsFromUrl.accountId,
+      itemId: idsFromUrl.itemId,
+      listingId: listingIdFromUrl,
+      parseStatus: "blocked",
+      blockedReason: "Anti-bot/interstitial response detected",
+      notes: [`Blocked marker detected in response body. HTTP status: ${fetchStatus ?? "unknown"}.`],
+    });
+  }
 
   const listingId =
     parseListingIdFromUrl(listingUrl) ??
-    pickByRegex(pageText, [/(?:Lot|Listing|Item)\s*(?:ID|#)?\s*[:#]?\s*([0-9]{2,})/i], selectorHits, "listing_id");
+    pickByRegex(
+      pageText,
+      [
+        /(?:Lot|Listing|Item)\s*(?:ID|#)?\s*[:#]?\s*([0-9]{2,})/i,
+        /(?:Item\s*#)\s*([0-9]{2,})/i,
+      ],
+      selectorHits,
+      "listing_id"
+    );
+  const accountId =
+    idsFromUrl.accountId ??
+    parseDigits(
+      pickByRegex(
+        pageText,
+        [/(?:Account\s*(?:ID|#)?|Seller\s*Account)\s*[:#]?\s*([0-9]{1,10})/i],
+        selectorHits,
+        "account_id"
+      )
+    );
+  const itemId =
+    idsFromUrl.itemId ??
+    parseDigits(
+      pickByRegex(
+        pageText,
+        [/(?:Item\s*(?:ID|#)?|Lot\s*(?:ID|#)?)\s*[:#]?\s*([0-9]{1,12})/i],
+        selectorHits,
+        "item_id"
+      )
+    );
+  const compositeListingId = accountId && itemId ? `govdeals_${accountId}_${itemId}` : listingId;
   const title =
     pickFirstText(
       $,
@@ -348,6 +524,7 @@ export const parseGovDealsListingForReview = async (
   const closeIso = parseDate(closeDateText);
   const parsedCurrentBid = parseNumber(currentBidText);
   const parsedBuyerPremium = parsePercentDecimal(buyerPremiumText);
+  const buyerPremiumExplicit = parsedBuyerPremium !== null;
   const parsedQuantity = (() => {
     const value = parseNumber(quantityText);
     if (value === null) {
@@ -356,15 +533,16 @@ export const parseGovDealsListingForReview = async (
     return Math.max(0, Math.floor(value));
   })();
   const parsedFields: OpportunityImportReviewResponse["parsed_fields"] = {
-    listing_id: listingId,
+    listing_id: compositeListingId,
     canonical_url: canonicalUrl,
     title: title ?? "",
-    current_bid: parsedCurrentBid ?? 0,
-    auction_end: closeIso ?? "",
+    current_bid: parsedCurrentBid ?? undefined,
+    auction_end: closeIso ?? undefined,
     location: locationText ?? "",
     seller_agency: sellerAgencyText ?? "",
     category: inferCategory(categoryText, title),
-    buyer_premium_pct: parsedBuyerPremium ?? 0.1,
+    buyer_premium_pct: parsedBuyerPremium,
+    buyer_premium_explicit: buyerPremiumExplicit,
     estimated_resale_value: 0,
     estimated_transport_override: null,
     estimated_repair_cost: 0,
@@ -380,8 +558,41 @@ export const parseGovDealsListingForReview = async (
   };
 
   const missingFields = buildMissingFields(parsedFields);
-  const importConfidence = Math.max(0, 100 - missingFields.length * 18 - (attachmentLinks.length === 0 ? 4 : 0));
-  const importStatus = missingFields.length > 0 ? "needs_review" : "active";
+  const requiredFieldCoverage = Math.max(0, 5 - missingFields.length);
+  const importConfidence = Math.round((requiredFieldCoverage / 5) * 100);
+  const guardrailFlags: OpportunityGuardrailFlag[] = [];
+  if (!parsedFields.title) {
+    guardrailFlags.push("MISSING_TITLE");
+  }
+  if (!Number.isFinite(parsedFields.current_bid ?? Number.NaN) || (parsedFields.current_bid ?? 0) <= 0) {
+    guardrailFlags.push("MISSING_CURRENT_BID");
+  }
+  if (!parsedFields.auction_end) {
+    guardrailFlags.push("MISSING_AUCTION_END");
+  } else if (!Number.isFinite(Date.parse(parsedFields.auction_end))) {
+    guardrailFlags.push("MALFORMED_AUCTION_END");
+  }
+  if (!parsedFields.location) {
+    guardrailFlags.push("MISSING_LOCATION");
+  }
+  if (!parsedFields.seller_agency) {
+    guardrailFlags.push("MISSING_SELLER_AGENCY");
+  }
+  if (!buyerPremiumExplicit) {
+    guardrailFlags.push("BUYER_PREMIUM_NOT_EXPLICIT");
+  }
+  let parseStatus: OpportunityImportStatus = "valid";
+  if (missingFields.length > 0 && missingFields.length < 5) {
+    parseStatus = "partial";
+  } else if (missingFields.length === 5) {
+    parseStatus = "failed";
+  } else if (!buyerPremiumExplicit) {
+    parseStatus = "needs_review";
+  }
+  const importStatus: OpportunityImportStatus = parseStatus;
+  if (parseStatus === "partial") {
+    guardrailFlags.push("PARTIAL_PARSE_NOT_ACTIONABLE");
+  }
 
   if (payload.keyword_hint?.trim()) {
     extractionNotes.push(`Keyword hint provided: ${payload.keyword_hint.trim()}`);
@@ -398,7 +609,9 @@ export const parseGovDealsListingForReview = async (
   }
 
   const rawFields: OpportunityRawImportFields = {
-    listing_id: listingId,
+    account_id: accountId,
+    item_id: itemId,
+    listing_id: compositeListingId,
     title,
     current_bid_text: currentBidText,
     auction_end_text: closeDateText,
@@ -416,12 +629,19 @@ export const parseGovDealsListingForReview = async (
   return {
     listing_url: listingUrl,
     canonical_url: canonicalUrl,
-    listing_id: listingId,
+    account_id: accountId,
+    item_id: itemId,
+    listing_id: compositeListingId,
     raw_fields: rawFields,
     parsed_fields: parsedFields,
     missing_fields: missingFields,
     import_status: importStatus,
-    import_confidence: importConfidence,
+    parse_status: parseStatus,
+    import_confidence: parseStatus === "failed" ? null : importConfidence,
+    guardrail_flags: guardrailFlags,
+    blocked_reason: null,
+    parser_error: null,
+    request_headers: REQUEST_HEADERS,
     extraction_notes: extractionNotes,
     selector_hits: selectorHits,
   };

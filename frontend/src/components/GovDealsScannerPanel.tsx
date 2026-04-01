@@ -162,7 +162,7 @@ const createWonIntakeFromOpportunity = (opportunity: GovDealsOpportunity): WonDe
   label: opportunity.title,
   acquisition_state: "",
   final_bid: opportunity.current_bid,
-  buyer_premium_pct: opportunity.buyer_premium_pct,
+  buyer_premium_pct: opportunity.buyer_premium_pct ?? 0,
   transport_cost_actual: null,
   transport_cost_estimated: null,
   repair_cost: opportunity.estimated_repair_cost,
@@ -790,13 +790,36 @@ function GovDealsScannerPanel({
             before confirming.
           </p>
           <div className="pipeline-risk-flags">
-            <span className={`risk-chip ${importReviewState.review.import_status === "needs_review" ? "warning" : ""}`}>
+            <span
+              className={`risk-chip ${
+                importReviewState.review.import_status === "valid" ? "info" : "warning"
+              }`}
+            >
               Status: {importReviewState.review.import_status}
             </span>
-            <span className="risk-chip">Confidence: {importReviewState.review.import_confidence}</span>
+            <span className="risk-chip">
+              Confidence:{" "}
+              {importReviewState.review.import_confidence === null
+                ? "missing"
+                : importReviewState.review.import_confidence}
+            </span>
+            <span className="risk-chip">
+              Listing ID: {importReviewState.review.listing_id ?? "missing"}
+            </span>
+            {importReviewState.review.blocked_reason ? (
+              <span className="risk-chip warning">Blocked: {importReviewState.review.blocked_reason}</span>
+            ) : null}
+            {importReviewState.review.parser_error ? (
+              <span className="risk-chip warning">Parser Error: {importReviewState.review.parser_error}</span>
+            ) : null}
             {importReviewState.review.missing_fields.map((field) => (
               <span key={`missing-${field}`} className="risk-chip warning">
                 Missing: {field}
+              </span>
+            ))}
+            {importReviewState.review.guardrail_flags.map((flag) => (
+              <span key={`guardrail-${flag}`} className="risk-chip warning">
+                {flag}
               </span>
             ))}
           </div>
@@ -868,6 +891,12 @@ function GovDealsScannerPanel({
             <h4>Parsed Structured Fields</h4>
             <pre className="raw-json-preview">
               {JSON.stringify(importReviewState.review.parsed_fields, null, 2)}
+            </pre>
+          </div>
+          <div className="decision-section">
+            <h4>Request Headers Used</h4>
+            <pre className="raw-json-preview">
+              {JSON.stringify(importReviewState.review.request_headers, null, 2)}
             </pre>
           </div>
           {importReviewState.review.extraction_notes.length > 0 ? (
@@ -1167,22 +1196,34 @@ function GovDealsScannerPanel({
                 </div>
                 <div className="opportunity-grid-fields">
                   <div>
+                    <span>Listing ID</span>
+                    <strong>{opportunity.listing_id ?? "Needs Review"}</strong>
+                  </div>
+                  <div>
                     <span>Current Bid</span>
                     <strong>{formatCurrency(opportunity.current_bid)}</strong>
                   </div>
                   <div>
                     <span>Auction End</span>
-                    <strong>{new Date(opportunity.auction_end).toLocaleString()}</strong>
+                    <strong>
+                      {opportunity.auction_end && Number.isFinite(Date.parse(opportunity.auction_end))
+                        ? new Date(opportunity.auction_end).toLocaleString()
+                        : "Needs Review"}
+                    </strong>
                   </div>
                   <div>
                     <span>Time Left</span>
-                    <strong className={`urgency-indicator ${getUrgencyClass(metrics.time_left_hours)}`}>
-                      {getUrgencyLabel(metrics.time_left_hours)}
+                    <strong className={`urgency-indicator ${getUrgencyClass(opportunity.time_left_hours ?? null)}`}>
+                      {getUrgencyLabel(opportunity.time_left_hours ?? null)}
                     </strong>
                   </div>
                   <div>
                     <span>Buyer Premium</span>
-                    <strong>{(opportunity.buyer_premium_pct * 100).toFixed(1)}%</strong>
+                    <strong>
+                      {opportunity.buyer_premium_pct === null
+                        ? "Needs Review"
+                        : `${(opportunity.buyer_premium_pct * 100).toFixed(1)}%`}
+                    </strong>
                   </div>
                   <div>
                     <span>Removal Window</span>
@@ -1226,9 +1267,10 @@ function GovDealsScannerPanel({
                   Source: {opportunity.source}
                 </p>
                 <p className="muted">
-                  Import: {opportunity.import_status} · Confidence: {opportunity.import_confidence}
+                  Import: {opportunity.import_status} · Confidence:{" "}
+                  {opportunity.import_confidence === null ? "Needs Review" : opportunity.import_confidence}
                 </p>
-                {opportunity.import_status === "needs_review" ? (
+                {opportunity.import_status !== "valid" ? (
                   <p className="warning-text">
                     Needs Review — {opportunity.import_missing_fields.length > 0
                       ? `missing ${opportunity.import_missing_fields.join(", ")}`
@@ -1284,7 +1326,7 @@ function GovDealsScannerPanel({
                   <button
                     type="button"
                     className="secondary-button"
-                    disabled={disableDecisionActions || opportunity.import_status === "needs_review"}
+                    disabled={disableDecisionActions || opportunity.import_status !== "valid"}
                     onClick={() => void onPreview(opportunity)}
                   >
                     {isBusy ? "Working..." : "Preview"}
@@ -1292,7 +1334,7 @@ function GovDealsScannerPanel({
                   <button
                     type="button"
                     className="ghost-button"
-                    disabled={disableDecisionActions || opportunity.import_status === "needs_review"}
+                    disabled={disableDecisionActions || opportunity.import_status !== "valid"}
                     onClick={() => onWatch(opportunity)}
                   >
                     Add to Watch
@@ -1300,7 +1342,7 @@ function GovDealsScannerPanel({
                   <button
                     type="button"
                     className="primary-button"
-                    disabled={disableDecisionActions || opportunity.import_status === "needs_review"}
+                    disabled={disableDecisionActions || opportunity.import_status !== "valid"}
                     onClick={() => void onCreateDeal(opportunity)}
                   >
                     Create Deal
@@ -1308,7 +1350,7 @@ function GovDealsScannerPanel({
                   <button
                     type="button"
                     className="ghost-button"
-                    disabled={disableDecisionActions || opportunity.import_status === "needs_review"}
+                    disabled={disableDecisionActions || opportunity.import_status !== "valid"}
                     onClick={() => onPass(opportunity)}
                   >
                     Pass
@@ -1316,6 +1358,79 @@ function GovDealsScannerPanel({
                 </div>
                 <div className="decision-section">
                   <h4>Edit Numbers</h4>
+                  {opportunity.value_layers ? (
+                    <div className="preview-box">
+                      <p>
+                        <strong>Value Layers</strong> (Imported vs Override vs Effective)
+                      </p>
+                      <ul>
+                        <li>
+                          Current Bid:{" "}
+                          {JSON.stringify(opportunity.value_layers.current_bid.imported_value)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.current_bid.operator_override)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.current_bid.effective_value)}
+                        </li>
+                        <li>
+                          Buyer Premium:{" "}
+                          {JSON.stringify(opportunity.value_layers.buyer_premium_pct.imported_value)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.buyer_premium_pct.operator_override)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.buyer_premium_pct.effective_value)}
+                        </li>
+                        <li>
+                          Estimated Resale:{" "}
+                          {JSON.stringify(opportunity.value_layers.estimated_resale_value.imported_value)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.estimated_resale_value.operator_override)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.estimated_resale_value.effective_value)}
+                        </li>
+                        <li>
+                          Transport Cost:{" "}
+                          {JSON.stringify(opportunity.value_layers.estimated_transport_override.imported_value)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.estimated_transport_override.operator_override)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.estimated_transport_override.effective_value)}
+                        </li>
+                        <li>
+                          Repair Cost:{" "}
+                          {JSON.stringify(opportunity.value_layers.estimated_repair_cost.imported_value)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.estimated_repair_cost.operator_override)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.estimated_repair_cost.effective_value)}
+                        </li>
+                        <li>
+                          Quantity Purchased:{" "}
+                          {JSON.stringify(opportunity.value_layers.quantity_purchased.imported_value)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.quantity_purchased.operator_override)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.quantity_purchased.effective_value)}
+                        </li>
+                        <li>
+                          Quantity Broken:{" "}
+                          {JSON.stringify(opportunity.value_layers.quantity_broken.imported_value)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.quantity_broken.operator_override)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.quantity_broken.effective_value)}
+                        </li>
+                        <li>
+                          Title Status:{" "}
+                          {JSON.stringify(opportunity.value_layers.title_status.imported_value)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.title_status.operator_override)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.title_status.effective_value)}
+                        </li>
+                        <li>
+                          Seller / Agency:{" "}
+                          {JSON.stringify(opportunity.value_layers.seller_agency.imported_value)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.seller_agency.operator_override)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.seller_agency.effective_value)}
+                        </li>
+                        <li>
+                          Location: {JSON.stringify(opportunity.value_layers.location.imported_value)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.location.operator_override)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.location.effective_value)}
+                        </li>
+                        <li>
+                          Condition: {JSON.stringify(opportunity.value_layers.condition_raw.imported_value)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.condition_raw.operator_override)} /{" "}
+                          {JSON.stringify(opportunity.value_layers.condition_raw.effective_value)}
+                        </li>
+                      </ul>
+                    </div>
+                  ) : null}
                   <div className="form-grid-two">
                     <label>
                       Current Bid

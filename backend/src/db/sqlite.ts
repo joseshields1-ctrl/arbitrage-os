@@ -84,6 +84,8 @@ export const initializeDatabase = (): void => {
     CREATE TABLE IF NOT EXISTS opportunities (
       id TEXT PRIMARY KEY,
       source TEXT NOT NULL,
+      account_id TEXT,
+      item_id TEXT,
       listing_id TEXT,
       listing_url TEXT NOT NULL,
       canonical_url TEXT NOT NULL DEFAULT '',
@@ -94,7 +96,8 @@ export const initializeDatabase = (): void => {
       location TEXT NOT NULL,
       seller_agency TEXT NOT NULL,
       seller_type TEXT NOT NULL,
-      buyer_premium_pct REAL NOT NULL,
+      buyer_premium_pct REAL,
+      buyer_premium_explicit INTEGER NOT NULL DEFAULT 0,
       removal_window_days INTEGER NOT NULL,
       title_status TEXT NOT NULL,
       relisted INTEGER NOT NULL DEFAULT 0,
@@ -111,7 +114,13 @@ export const initializeDatabase = (): void => {
       import_confidence REAL NOT NULL DEFAULT 100,
       import_missing_fields TEXT NOT NULL DEFAULT '[]',
       raw_import_data TEXT,
+      imported_values TEXT,
       operator_overrides TEXT,
+      value_layers TEXT,
+      parse_status TEXT NOT NULL DEFAULT 'failed',
+      guardrail_flags TEXT NOT NULL DEFAULT '[]',
+      blocked_reason TEXT,
+      parser_error TEXT,
       imported_at TEXT,
       status TEXT NOT NULL,
       interest TEXT NOT NULL,
@@ -219,6 +228,8 @@ export const initializeDatabase = (): void => {
   };
 
   ensureOpportunityColumn("listing_id", `ALTER TABLE opportunities ADD COLUMN listing_id TEXT;`);
+  ensureOpportunityColumn("account_id", `ALTER TABLE opportunities ADD COLUMN account_id TEXT;`);
+  ensureOpportunityColumn("item_id", `ALTER TABLE opportunities ADD COLUMN item_id TEXT;`);
   ensureOpportunityColumn(
     "canonical_url",
     `ALTER TABLE opportunities ADD COLUMN canonical_url TEXT NOT NULL DEFAULT '';`
@@ -246,6 +257,22 @@ export const initializeDatabase = (): void => {
     `ALTER TABLE opportunities ADD COLUMN import_missing_fields TEXT NOT NULL DEFAULT '[]';`
   );
   ensureOpportunityColumn("raw_import_data", `ALTER TABLE opportunities ADD COLUMN raw_import_data TEXT;`);
+  ensureOpportunityColumn("imported_values", `ALTER TABLE opportunities ADD COLUMN imported_values TEXT;`);
   ensureOpportunityColumn("operator_overrides", `ALTER TABLE opportunities ADD COLUMN operator_overrides TEXT;`);
+  ensureOpportunityColumn("value_layers", `ALTER TABLE opportunities ADD COLUMN value_layers TEXT;`);
+  ensureOpportunityColumn(
+    "parse_status",
+    `ALTER TABLE opportunities ADD COLUMN parse_status TEXT NOT NULL DEFAULT 'failed';`
+  );
+  ensureOpportunityColumn(
+    "guardrail_flags",
+    `ALTER TABLE opportunities ADD COLUMN guardrail_flags TEXT NOT NULL DEFAULT '[]';`
+  );
+  ensureOpportunityColumn("blocked_reason", `ALTER TABLE opportunities ADD COLUMN blocked_reason TEXT;`);
+  ensureOpportunityColumn("parser_error", `ALTER TABLE opportunities ADD COLUMN parser_error TEXT;`);
+  ensureOpportunityColumn(
+    "buyer_premium_explicit",
+    `ALTER TABLE opportunities ADD COLUMN buyer_premium_explicit INTEGER NOT NULL DEFAULT 0;`
+  );
   ensureOpportunityColumn("imported_at", `ALTER TABLE opportunities ADD COLUMN imported_at TEXT;`);
 };

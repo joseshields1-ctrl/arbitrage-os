@@ -5,6 +5,7 @@ import type {
   OpportunityDecisionAction,
   OpportunityDecisionRecord,
   OpportunityEditableFields,
+  OpportunityGuardrailFlag,
   OpportunityImportReviewResponse,
   OpportunityImportStatus,
   OpportunityInterest,
@@ -12,6 +13,8 @@ import type {
   OpportunityRawImportFields,
   OpportunityStatus,
   OpportunityTitleStatus,
+  OpportunityValueLayer,
+  OpportunityValueLayers,
 } from "../models/opportunities";
 
 const nowIso = (): string => new Date().toISOString();
@@ -20,6 +23,8 @@ type OpportunityImportSource = OpportunityRecord["source"];
 
 interface ConfirmImportPayload {
   source?: OpportunityImportSource;
+  account_id?: string | null;
+  item_id?: string | null;
   listing_url?: string;
   canonical_url?: string;
   listing_id?: string | null;
@@ -27,14 +32,19 @@ interface ConfirmImportPayload {
   parsed_fields?: OpportunityImportReviewResponse["parsed_fields"];
   missing_fields?: OpportunityCriticalField[];
   import_status?: OpportunityImportStatus;
-  import_confidence?: number;
+  parse_status?: OpportunityImportStatus;
+  import_confidence?: number | null;
+  guardrail_flags?: OpportunityGuardrailFlag[];
+  blocked_reason?: string | null;
+  parser_error?: string | null;
   operator_overrides?: Partial<OpportunityEditableFields>;
 }
 
-const OPPORTUNITY_SELECT_COLUMNS = `id, source, listing_id, listing_url, canonical_url, title, category, current_bid, auction_end, location, seller_agency,
+const OPPORTUNITY_SELECT_COLUMNS = `id, source, account_id, item_id, listing_id, listing_url, canonical_url, title, category, current_bid, auction_end, location, seller_agency,
         seller_type, buyer_premium_pct, removal_window_days, title_status, relisted, condition_raw, description, attachment_links, seller_contact,
         estimated_resale_value, estimated_transport_override, estimated_repair_cost, quantity_purchased, quantity_broken, import_status,
-        import_confidence, import_missing_fields, raw_import_data, operator_overrides, imported_at, status, interest, created_at`;
+        import_confidence, import_missing_fields, raw_import_data, operator_overrides, value_layers, parse_status, guardrail_flags,
+        blocked_reason, parser_error, buyer_premium_explicit, imported_at, status, interest, created_at`;
 
 const CRITICAL_IMPORT_FIELDS: OpportunityCriticalField[] = [
   "title",
@@ -42,6 +52,21 @@ const CRITICAL_IMPORT_FIELDS: OpportunityCriticalField[] = [
   "auction_end",
   "location",
   "seller_agency",
+];
+
+const GUARDRAIL_FLAGS: OpportunityGuardrailFlag[] = [
+  "MISSING_TITLE",
+  "MISSING_CURRENT_BID",
+  "MISSING_AUCTION_END",
+  "MISSING_LOCATION",
+  "MISSING_SELLER_AGENCY",
+  "MALFORMED_AUCTION_END",
+  "BID_PARSE_MISMATCH",
+  "BUYER_PREMIUM_NOT_EXPLICIT",
+  "DUPLICATE_LISTING_ID_COLLISION",
+  "PARTIAL_PARSE_NOT_ACTIONABLE",
+  "IMPORT_BLOCKED",
+  "IMPORT_FETCH_FAILED",
 ];
 
 const normalizeNullableInteger = (value: unknown): number | null => {
@@ -118,6 +143,8 @@ const parseRawImportData = (value: unknown): OpportunityRawImportFields | null =
     return null;
   }
   return {
+    account_id: normalizeNullableString(record.account_id),
+    item_id: normalizeNullableString(record.item_id),
     listing_id: normalizeNullableString(record.listing_id),
     title: normalizeNullableString(record.title),
     current_bid_text: normalizeNullableString(record.current_bid_text),
@@ -142,8 +169,9 @@ const parseEditableOverrides = (value: unknown): Partial<OpportunityEditableFiel
   const parsed: Partial<OpportunityEditableFields> = {};
   if (typeof record.title === "string") parsed.title = record.title;
   if (Number.isFinite(Number(record.current_bid))) parsed.current_bid = Math.max(0, Number(record.current_bid));
-  if (Number.isFinite(Number(record.buyer_premium_pct))) {
-    parsed.buyer_premium_pct = Math.max(0, Number(record.buyer_premium_pct));
+  if (record.buyer_premium_pct === null || Number.isFinite(Number(record.buyer_premium_pct))) {
+    parsed.buyer_premium_pct =
+      record.buyer_premium_pct === null ? null : Math.max(0, Number(record.buyer_premium_pct));
   }
   if (Number.isFinite(Number(record.estimated_resale_value))) {
     parsed.estimated_resale_value = Math.max(0, Number(record.estimated_resale_value));
@@ -185,6 +213,227 @@ const parseEditableOverrides = (value: unknown): Partial<OpportunityEditableFiel
   return Object.keys(parsed).length > 0 ? parsed : null;
 };
 
+const parseImportStatus = (value: unknown): OpportunityImportStatus => {
+  if (
+    value === "valid" ||
+    value === "needs_review" ||
+    value === "blocked" ||
+    value === "partial" ||
+    value === "failed"
+  ) {
+    return value;
+  }
+  return "failed";
+};
+
+const parseBuyerPremiumExplicit = (value: unknown, buyerPremiumPct: number | null): boolean => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (value === 1 || value === "1") {
+    return true;
+  }
+  if (value === 0 || value === "0") {
+    return false;
+  }
+  return buyerPremiumPct !== null;
+};
+
+const parseGuardrailFlags = (value: unknown): OpportunityGuardrailFlag[] =>
+  parseStringArray(value).filter((item): item is OpportunityGuardrailFlag =>
+    GUARDRAIL_FLAGS.includes(item as OpportunityGuardrailFlag)
+  );
+
+const parseValueLayer = <T>(record: Record<string, unknown>): OpportunityValueLayer<T> | null => {
+  const source = record.source;
+  if (source !== "imported" && source !== "override" && source !== "missing") {
+    return null;
+  }
+  return {
+    imported_value: (record.imported_value as T | null) ?? null,
+    operator_override: (record.operator_override as T | null) ?? null,
+    effective_value: (record.effective_value as T | null) ?? null,
+    source,
+  };
+};
+
+const parseValueLayers = (value: unknown): OpportunityValueLayers | null => {
+  const record = parseJsonRecord(value);
+  if (!record) {
+    return null;
+  }
+  const currentBid = parseValueLayer<number>((record.current_bid as Record<string, unknown>) ?? {});
+  const buyerPremium = parseValueLayer<number>((record.buyer_premium_pct as Record<string, unknown>) ?? {});
+  const estimatedResale = parseValueLayer<number>((record.estimated_resale_value as Record<string, unknown>) ?? {});
+  const estimatedTransport = parseValueLayer<number>(
+    (record.estimated_transport_override as Record<string, unknown>) ?? {}
+  );
+  const estimatedRepair = parseValueLayer<number>((record.estimated_repair_cost as Record<string, unknown>) ?? {});
+  const quantityPurchased = parseValueLayer<number>((record.quantity_purchased as Record<string, unknown>) ?? {});
+  const quantityBroken = parseValueLayer<number>((record.quantity_broken as Record<string, unknown>) ?? {});
+  const titleStatus = parseValueLayer<OpportunityTitleStatus>(
+    (record.title_status as Record<string, unknown>) ?? {}
+  );
+  const sellerAgency = parseValueLayer<string>((record.seller_agency as Record<string, unknown>) ?? {});
+  const location = parseValueLayer<string>((record.location as Record<string, unknown>) ?? {});
+  const conditionRaw = parseValueLayer<string>((record.condition_raw as Record<string, unknown>) ?? {});
+  if (
+    !currentBid ||
+    !buyerPremium ||
+    !estimatedResale ||
+    !estimatedTransport ||
+    !estimatedRepair ||
+    !quantityPurchased ||
+    !quantityBroken ||
+    !titleStatus ||
+    !sellerAgency ||
+    !location ||
+    !conditionRaw
+  ) {
+    return null;
+  }
+  return {
+    current_bid: currentBid,
+    buyer_premium_pct: buyerPremium,
+    estimated_resale_value: estimatedResale,
+    estimated_transport_override: estimatedTransport,
+    estimated_repair_cost: estimatedRepair,
+    quantity_purchased: quantityPurchased,
+    quantity_broken: quantityBroken,
+    title_status: titleStatus,
+    seller_agency: sellerAgency,
+    location,
+    condition_raw: conditionRaw,
+  };
+};
+
+const buildValueLayer = <T>(input: {
+  importedValue: T | null;
+  operatorOverride: T | null;
+}): OpportunityValueLayer<T> => {
+  const hasOverride = input.operatorOverride !== null && input.operatorOverride !== undefined;
+  const hasImported = input.importedValue !== null && input.importedValue !== undefined;
+  return {
+    imported_value: input.importedValue,
+    operator_override: input.operatorOverride,
+    effective_value: hasOverride ? input.operatorOverride : hasImported ? input.importedValue : null,
+    source: hasOverride ? "override" : hasImported ? "imported" : "missing",
+  };
+};
+
+const buildValueLayers = (
+  imported: Partial<OpportunityEditableFields>,
+  overrides: Partial<OpportunityEditableFields> | null
+): OpportunityValueLayers => ({
+  current_bid: buildValueLayer<number>({
+    importedValue:
+      imported.current_bid === undefined || imported.current_bid === null ? null : Number(imported.current_bid),
+    operatorOverride:
+      overrides?.current_bid === undefined || overrides.current_bid === null ? null : Number(overrides.current_bid),
+  }),
+  buyer_premium_pct: buildValueLayer<number>({
+    importedValue:
+      imported.buyer_premium_pct === undefined || imported.buyer_premium_pct === null
+        ? null
+        : Number(imported.buyer_premium_pct),
+    operatorOverride:
+      overrides?.buyer_premium_pct === undefined || overrides.buyer_premium_pct === null
+        ? null
+        : Number(overrides.buyer_premium_pct),
+  }),
+  estimated_resale_value: buildValueLayer<number>({
+    importedValue:
+      imported.estimated_resale_value === undefined || imported.estimated_resale_value === null
+        ? null
+        : Number(imported.estimated_resale_value),
+    operatorOverride:
+      overrides?.estimated_resale_value === undefined || overrides.estimated_resale_value === null
+        ? null
+        : Number(overrides.estimated_resale_value),
+  }),
+  estimated_transport_override: buildValueLayer<number>({
+    importedValue:
+      imported.estimated_transport_override === undefined || imported.estimated_transport_override === null
+        ? null
+        : Number(imported.estimated_transport_override),
+    operatorOverride:
+      overrides?.estimated_transport_override === undefined || overrides.estimated_transport_override === null
+        ? null
+        : Number(overrides.estimated_transport_override),
+  }),
+  estimated_repair_cost: buildValueLayer<number>({
+    importedValue:
+      imported.estimated_repair_cost === undefined || imported.estimated_repair_cost === null
+        ? null
+        : Number(imported.estimated_repair_cost),
+    operatorOverride:
+      overrides?.estimated_repair_cost === undefined || overrides.estimated_repair_cost === null
+        ? null
+        : Number(overrides.estimated_repair_cost),
+  }),
+  quantity_purchased: buildValueLayer<number>({
+    importedValue:
+      imported.quantity_purchased === undefined || imported.quantity_purchased === null
+        ? null
+        : Number(imported.quantity_purchased),
+    operatorOverride:
+      overrides?.quantity_purchased === undefined || overrides.quantity_purchased === null
+        ? null
+        : Number(overrides.quantity_purchased),
+  }),
+  quantity_broken: buildValueLayer<number>({
+    importedValue:
+      imported.quantity_broken === undefined || imported.quantity_broken === null
+        ? null
+        : Number(imported.quantity_broken),
+    operatorOverride:
+      overrides?.quantity_broken === undefined || overrides.quantity_broken === null
+        ? null
+        : Number(overrides.quantity_broken),
+  }),
+  title_status: buildValueLayer<OpportunityTitleStatus>({
+    importedValue: (imported.title_status as OpportunityTitleStatus | undefined) ?? null,
+    operatorOverride: (overrides?.title_status as OpportunityTitleStatus | undefined) ?? null,
+  }),
+  seller_agency: buildValueLayer<string>({
+    importedValue: imported.seller_agency ?? null,
+    operatorOverride: overrides?.seller_agency ?? null,
+  }),
+  location: buildValueLayer<string>({
+    importedValue: imported.location ?? null,
+    operatorOverride: overrides?.location ?? null,
+  }),
+  condition_raw: buildValueLayer<string>({
+    importedValue: imported.condition_raw ?? null,
+    operatorOverride: overrides?.condition_raw ?? null,
+  }),
+});
+
+const hasDuplicateListingCollision = (
+  listingId: string,
+  existingId: string | null
+): boolean => {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) as count
+       FROM opportunities
+       WHERE listing_id = ?
+         AND (? IS NULL OR id != ?)`
+    )
+    .get(listingId, existingId, existingId) as { count?: number } | undefined;
+  const count = Number(row?.count ?? 0);
+  return count > 0;
+};
+
+const normalizeImportStateFromMissing = (
+  missingFields: OpportunityCriticalField[]
+): OpportunityImportStatus => {
+  if (missingFields.length === 0) {
+    return "valid";
+  }
+  return "needs_review";
+};
+
 const mapOpportunityRow = (row: Record<string, unknown>): OpportunityRecord => {
   const auctionEnd = typeof row.auction_end === "string" ? row.auction_end : "";
   const auctionEndTs = Date.parse(auctionEnd);
@@ -194,6 +443,7 @@ const mapOpportunityRow = (row: Record<string, unknown>): OpportunityRecord => {
   const parsedMissingFields = parseMissingFields(row.import_missing_fields);
   const rawImportData = parseRawImportData(row.raw_import_data);
   const operatorOverrides = parseEditableOverrides(row.operator_overrides);
+  const valueLayers = parseValueLayers(row.value_layers);
 
   return {
     id: String(row.id),
@@ -201,6 +451,8 @@ const mapOpportunityRow = (row: Record<string, unknown>): OpportunityRecord => {
       row.source === "url_import" || row.source === "keyword_search" || row.source === "manual_import"
         ? row.source
         : "manual_import",
+    account_id: normalizeNullableString(row.account_id),
+    item_id: normalizeNullableString(row.item_id),
     listing_id: normalizeNullableString(row.listing_id),
     listing_url: String(row.listing_url ?? ""),
     canonical_url: String(row.canonical_url ?? row.listing_url ?? ""),
@@ -219,7 +471,11 @@ const mapOpportunityRow = (row: Record<string, unknown>): OpportunityRecord => {
       row.seller_type === "government" || row.seller_type === "commercial" || row.seller_type === "unknown"
         ? row.seller_type
         : "unknown",
-    buyer_premium_pct: Number(row.buyer_premium_pct ?? 0),
+    buyer_premium_pct:
+      row.buyer_premium_pct === null || row.buyer_premium_pct === undefined
+        ? null
+        : Number(row.buyer_premium_pct),
+    buyer_premium_explicit: Boolean(Number(row.buyer_premium_explicit ?? 0)),
     removal_window_days: Number(row.removal_window_days ?? 0),
     title_status:
       row.title_status === "on_site" ||
@@ -246,11 +502,19 @@ const mapOpportunityRow = (row: Record<string, unknown>): OpportunityRecord => {
       row.quantity_broken === null || row.quantity_broken === undefined
         ? null
         : Number(row.quantity_broken),
-    import_status: row.import_status === "needs_review" ? "needs_review" : "active",
-    import_confidence: Math.max(0, Math.min(100, Number(row.import_confidence ?? 100))),
+    import_status: parseImportStatus(row.import_status),
+    import_confidence:
+      row.import_confidence === null || row.import_confidence === undefined
+        ? null
+        : Math.max(0, Math.min(100, Number(row.import_confidence))),
     import_missing_fields: parsedMissingFields,
     raw_import_data: rawImportData,
     operator_overrides: operatorOverrides,
+    value_layers: valueLayers,
+    parse_status: parseImportStatus(row.parse_status),
+    guardrail_flags: parseGuardrailFlags(row.guardrail_flags),
+    blocked_reason: normalizeNullableString(row.blocked_reason),
+    parser_error: normalizeNullableString(row.parser_error),
     imported_at: normalizeNullableString(row.imported_at),
     status:
       row.status === "new" || row.status === "watch" || row.status === "passed" || row.status === "converted"
@@ -286,6 +550,8 @@ const mapDecisionRow = (row: Record<string, unknown>): OpportunityDecisionRecord
     opportunity_snapshot: snapshot ?? {
       id: String(row.opportunity_id),
       source: "manual_import",
+      account_id: null,
+      item_id: null,
       listing_id: null,
       listing_url: "",
       canonical_url: "",
@@ -298,7 +564,8 @@ const mapDecisionRow = (row: Record<string, unknown>): OpportunityDecisionRecord
       location: "",
       seller_agency: "",
       seller_type: "unknown",
-      buyer_premium_pct: 0,
+      buyer_premium_pct: null,
+      buyer_premium_explicit: false,
       removal_window_days: 0,
       title_status: "unknown",
       relisted: false,
@@ -311,11 +578,16 @@ const mapDecisionRow = (row: Record<string, unknown>): OpportunityDecisionRecord
       estimated_repair_cost: 0,
       quantity_purchased: null,
       quantity_broken: null,
-      import_status: "needs_review",
-      import_confidence: 0,
+      import_status: "failed",
+      import_confidence: null,
       import_missing_fields: [...CRITICAL_IMPORT_FIELDS],
       raw_import_data: null,
       operator_overrides: null,
+      value_layers: null,
+      parse_status: "failed",
+      guardrail_flags: ["IMPORT_FETCH_FAILED"],
+      blocked_reason: null,
+      parser_error: "Decision snapshot fallback generated from missing source opportunity.",
       imported_at: null,
       status: "new",
       interest: "undecided",
@@ -434,6 +706,22 @@ const computeImportConfidence = (missingFields: OpportunityCriticalField[], atta
   return Math.max(0, Math.min(100, 100 - missingFields.length * 18 - attachmentPenalty));
 };
 
+const resolveParsedBuyerPremium = (
+  parsedBuyerPremium: number | null | undefined,
+  buyerPremiumExplicit: boolean
+): number | null => {
+  if (!buyerPremiumExplicit) {
+    return null;
+  }
+  if (parsedBuyerPremium === null || parsedBuyerPremium === undefined) {
+    return null;
+  }
+  return Math.max(0, Number(parsedBuyerPremium));
+};
+
+const isFiniteNumberish = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+
 const normalizeReviewPayload = (raw: unknown): ConfirmImportPayload => {
   if (!raw || typeof raw !== "object") {
     throw new Error("Invalid import confirmation payload");
@@ -443,6 +731,8 @@ const normalizeReviewPayload = (raw: unknown): ConfirmImportPayload => {
     const review = parsed.review as OpportunityImportReviewResponse;
     return {
       source: coerceOpportunitySource(parsed.source),
+      account_id: normalizeNullableString(review.account_id),
+      item_id: normalizeNullableString(review.item_id),
       listing_url: review.listing_url,
       canonical_url: review.canonical_url,
       listing_id: review.listing_id,
@@ -450,20 +740,32 @@ const normalizeReviewPayload = (raw: unknown): ConfirmImportPayload => {
       parsed_fields: review.parsed_fields,
       missing_fields: review.missing_fields,
       import_status: review.import_status,
+      parse_status: review.parse_status,
       import_confidence: review.import_confidence,
+      guardrail_flags: review.guardrail_flags,
+      blocked_reason: normalizeNullableString(review.blocked_reason),
+      parser_error: normalizeNullableString(review.parser_error),
       operator_overrides: sanitizeOverrides(parsed.operator_overrides) ?? undefined,
     };
   }
   return {
     source: coerceOpportunitySource(parsed.source),
+    account_id: normalizeNullableString(parsed.account_id),
+    item_id: normalizeNullableString(parsed.item_id),
     listing_url: typeof parsed.listing_url === "string" ? parsed.listing_url : undefined,
     canonical_url: typeof parsed.canonical_url === "string" ? parsed.canonical_url : undefined,
     listing_id: normalizeNullableString(parsed.listing_id),
     raw_fields: parsed.raw_fields as OpportunityRawImportFields | undefined,
     parsed_fields: parsed.parsed_fields as OpportunityImportReviewResponse["parsed_fields"] | undefined,
     missing_fields: parseMissingFields(parsed.missing_fields),
-    import_status: parsed.import_status === "needs_review" ? "needs_review" : "active",
-    import_confidence: Number(parsed.import_confidence),
+    import_status: parseImportStatus(parsed.import_status),
+    parse_status: parseImportStatus(parsed.parse_status),
+    import_confidence: Number.isFinite(Number(parsed.import_confidence))
+      ? Number(parsed.import_confidence)
+      : null,
+    guardrail_flags: parseGuardrailFlags(parsed.guardrail_flags),
+    blocked_reason: normalizeNullableString(parsed.blocked_reason),
+    parser_error: normalizeNullableString(parsed.parser_error),
     operator_overrides: sanitizeOverrides(parsed.operator_overrides) ?? undefined,
   };
 };
@@ -501,9 +803,18 @@ const normalizeOpportunityPayload = (raw: unknown): OpportunityRecord => {
   const operatorOverrides = parseEditableOverrides(parsed.operator_overrides);
   const attachmentLinks = parseStringArray(parsed.attachment_links);
 
+  const buyerPremiumExplicit = coerceBoolean(parsed.buyer_premium_explicit);
+  const resolvedBuyerPremium = buyerPremiumExplicit
+    ? parsed.buyer_premium_pct === null || parsed.buyer_premium_pct === undefined
+      ? null
+      : Math.max(0, coerceNumber(parsed.buyer_premium_pct))
+    : null;
+
   const normalized: OpportunityRecord = {
     id: idRaw,
     source,
+    account_id: normalizeNullableString(parsed.account_id),
+    item_id: normalizeNullableString(parsed.item_id),
     listing_id: normalizeNullableString(parsed.listing_id),
     listing_url: coerceString(parsed.listing_url),
     canonical_url: canonicalUrl,
@@ -516,7 +827,8 @@ const normalizeOpportunityPayload = (raw: unknown): OpportunityRecord => {
     location: coerceString(parsed.location),
     seller_agency: coerceString(parsed.seller_agency),
     seller_type: sellerType,
-    buyer_premium_pct: Math.max(0, coerceNumber(parsed.buyer_premium_pct)),
+    buyer_premium_pct: resolvedBuyerPremium,
+    buyer_premium_explicit: buyerPremiumExplicit,
     removal_window_days: Math.max(1, Math.floor(coerceNumber(parsed.removal_window_days, 3))),
     title_status: titleStatus,
     relisted: coerceBoolean(parsed.relisted),
@@ -532,11 +844,19 @@ const normalizeOpportunityPayload = (raw: unknown): OpportunityRecord => {
     estimated_repair_cost: Math.max(0, coerceNumber(parsed.estimated_repair_cost)),
     quantity_purchased: normalizeNullableInteger(parsed.quantity_purchased),
     quantity_broken: normalizeNullableInteger(parsed.quantity_broken),
-    import_status: parsed.import_status === "needs_review" ? "needs_review" : "active",
-    import_confidence: Math.max(0, Math.min(100, coerceNumber(parsed.import_confidence, 100))),
+    import_status: parseImportStatus(parsed.import_status),
+    import_confidence:
+      parsed.import_confidence === null || parsed.import_confidence === undefined
+        ? null
+        : Math.max(0, Math.min(100, coerceNumber(parsed.import_confidence, 100))),
     import_missing_fields: parseMissingFields(parsed.import_missing_fields),
     raw_import_data: rawImportData,
     operator_overrides: operatorOverrides,
+    value_layers: parseValueLayers(parsed.value_layers),
+    parse_status: parseImportStatus(parsed.parse_status),
+    guardrail_flags: parseGuardrailFlags(parsed.guardrail_flags),
+    blocked_reason: normalizeNullableString(parsed.blocked_reason),
+    parser_error: normalizeNullableString(parsed.parser_error),
     imported_at: coerceNullableIso(parsed.imported_at),
     status: coerceOpportunityStatus(parsed.status),
     interest: coerceOpportunityInterest(parsed.interest),
@@ -547,6 +867,16 @@ const normalizeOpportunityPayload = (raw: unknown): OpportunityRecord => {
     normalized.import_missing_fields = missingFields;
     normalized.import_status = "needs_review";
     normalized.import_confidence = computeImportConfidence(missingFields, normalized.attachment_links.length);
+  }
+  if (!normalized.buyer_premium_explicit) {
+    if (!normalized.guardrail_flags.includes("BUYER_PREMIUM_NOT_EXPLICIT")) {
+      normalized.guardrail_flags = [...normalized.guardrail_flags, "BUYER_PREMIUM_NOT_EXPLICIT"];
+    }
+    normalized.buyer_premium_pct = null;
+    normalized.import_status = normalized.import_status === "valid" ? "needs_review" : normalized.import_status;
+  }
+  if (!normalized.value_layers) {
+    normalized.value_layers = buildValueLayers(normalized, normalized.operator_overrides);
   }
   return normalized;
 };
@@ -567,16 +897,19 @@ export const replaceOpportunities = (
     db.prepare(`DELETE FROM opportunities`).run();
     const insert = db.prepare(
       `INSERT INTO opportunities (
-        id, source, listing_id, listing_url, canonical_url, title, category, current_bid, auction_end, location, seller_agency,
-        seller_type, buyer_premium_pct, removal_window_days, title_status, relisted, condition_raw, description, attachment_links,
+        id, source, account_id, item_id, listing_id, listing_url, canonical_url, title, category, current_bid, auction_end, location, seller_agency,
+        seller_type, buyer_premium_pct, buyer_premium_explicit, removal_window_days, title_status, relisted, condition_raw, description, attachment_links,
         seller_contact, estimated_resale_value, estimated_transport_override, estimated_repair_cost, quantity_purchased, quantity_broken,
-        import_status, import_confidence, import_missing_fields, raw_import_data, operator_overrides, imported_at, status, interest, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        import_status, import_confidence, import_missing_fields, raw_import_data, operator_overrides, value_layers, parse_status, guardrail_flags,
+        blocked_reason, parser_error, imported_at, status, interest, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     normalized.forEach((opportunity) => {
       insert.run(
         opportunity.id,
         opportunity.source,
+        opportunity.account_id,
+        opportunity.item_id,
         opportunity.listing_id,
         opportunity.listing_url,
         opportunity.canonical_url,
@@ -588,6 +921,7 @@ export const replaceOpportunities = (
         opportunity.seller_agency,
         opportunity.seller_type,
         opportunity.buyer_premium_pct,
+        opportunity.buyer_premium_explicit ? 1 : 0,
         opportunity.removal_window_days,
         opportunity.title_status,
         opportunity.relisted ? 1 : 0,
@@ -605,6 +939,11 @@ export const replaceOpportunities = (
         JSON.stringify(opportunity.import_missing_fields),
         opportunity.raw_import_data ? JSON.stringify(opportunity.raw_import_data) : null,
         opportunity.operator_overrides ? JSON.stringify(opportunity.operator_overrides) : null,
+        opportunity.value_layers ? JSON.stringify(opportunity.value_layers) : null,
+        opportunity.parse_status,
+        JSON.stringify(opportunity.guardrail_flags),
+        opportunity.blocked_reason,
+        opportunity.parser_error,
         opportunity.imported_at,
         opportunity.status,
         opportunity.interest,
@@ -619,10 +958,7 @@ export const replaceOpportunities = (
   };
 };
 
-const findExistingOpportunityByListing = (
-  canonicalUrl: string,
-  listingId: string | null
-): Record<string, unknown> | undefined => {
+const findExistingOpportunityByListing = (listingId: string | null): Record<string, unknown> | undefined => {
   if (listingId) {
     const byListingId = db
       .prepare(
@@ -636,17 +972,6 @@ const findExistingOpportunityByListing = (
     if (byListingId) {
       return byListingId;
     }
-  }
-  if (canonicalUrl.trim()) {
-    return db
-      .prepare(
-        `SELECT ${OPPORTUNITY_SELECT_COLUMNS}
-         FROM opportunities
-         WHERE canonical_url = ?
-         ORDER BY datetime(created_at) DESC
-         LIMIT 1`
-      )
-      .get(canonicalUrl.trim()) as Record<string, unknown> | undefined;
   }
   return undefined;
 };
@@ -663,17 +988,24 @@ export const confirmOpportunityImport = (
   if (!listingUrl) {
     throw new Error("listing_url is required");
   }
-  const canonicalUrl = (normalizedPayload.canonical_url ?? listingUrl).trim();
   const listingId = normalizeNullableString(normalizedPayload.listing_id);
+  if (!listingId || !/^govdeals_\d+_\d+$/.test(listingId)) {
+    throw new Error("listing_id must be govdeals_<account_id>_<item_id> for import dedupe");
+  }
   const parsedFields = normalizedPayload.parsed_fields ?? ({} as OpportunityImportReviewResponse["parsed_fields"]);
   const rawFields = normalizedPayload.raw_fields ?? null;
   const source = normalizedPayload.source ?? "url_import";
   const operatorOverrides = normalizedPayload.operator_overrides ?? null;
 
+  const buyerPremiumExplicit = Boolean(parsedFields.buyer_premium_explicit);
+  const resolvedParsedBuyerPremium = resolveParsedBuyerPremium(
+    parsedFields.buyer_premium_pct,
+    buyerPremiumExplicit
+  );
   const editableBase: Partial<OpportunityEditableFields> = {
     title: coerceString(parsedFields.title),
     current_bid: Number(parsedFields.current_bid ?? 0),
-    buyer_premium_pct: Number(parsedFields.buyer_premium_pct ?? 0.1),
+    buyer_premium_pct: resolvedParsedBuyerPremium,
     estimated_resale_value: Number(parsedFields.estimated_resale_value ?? 0),
     estimated_transport_override:
       parsedFields.estimated_transport_override === null || parsedFields.estimated_transport_override === undefined
@@ -692,13 +1024,23 @@ export const confirmOpportunityImport = (
   };
   const resolvedEditable = applyOverridesToEditable(editableBase, operatorOverrides);
   const missingFields = buildMissingFields(resolvedEditable);
-  const importStatus: OpportunityImportStatus = missingFields.length > 0 ? "needs_review" : "active";
-  const importConfidence = Number.isFinite(normalizedPayload.import_confidence)
-    ? Math.max(0, Math.min(100, Number(normalizedPayload.import_confidence)))
-    : computeImportConfidence(missingFields, parsedFields.attachment_links?.length ?? 0);
+  const importStatus: OpportunityImportStatus =
+    normalizedPayload.parse_status === "blocked" ||
+    normalizedPayload.parse_status === "failed" ||
+    normalizedPayload.parse_status === "partial"
+      ? normalizedPayload.parse_status
+      : missingFields.length > 0
+        ? "needs_review"
+        : "valid";
+  const importConfidence =
+    importStatus === "blocked" || importStatus === "failed"
+      ? null
+      : Number.isFinite(normalizedPayload.import_confidence)
+        ? Math.max(0, Math.min(100, Number(normalizedPayload.import_confidence)))
+        : computeImportConfidence(missingFields, parsedFields.attachment_links?.length ?? 0);
   const createdAt = nowIso();
   const importedAt = nowIso();
-  const existingRow = findExistingOpportunityByListing(canonicalUrl, listingId);
+  const existingRow = findExistingOpportunityByListing(listingId);
   const existing = existingRow ? mapOpportunityRow(existingRow) : null;
   const resolvedId = existing?.id ?? crypto.randomUUID();
   const category =
@@ -709,9 +1051,11 @@ export const confirmOpportunityImport = (
   const record: OpportunityRecord = {
     id: resolvedId,
     source,
+    account_id: normalizeNullableString(normalizedPayload.account_id),
+    item_id: normalizeNullableString(normalizedPayload.item_id),
     listing_id: listingId,
     listing_url: listingUrl,
-    canonical_url: canonicalUrl,
+    canonical_url: (normalizedPayload.canonical_url ?? listingUrl).trim(),
     title: resolvedEditable.title ?? "",
     category,
     current_bid: Math.max(0, Number(resolvedEditable.current_bid ?? 0)),
@@ -721,7 +1065,11 @@ export const confirmOpportunityImport = (
     location: resolvedEditable.location ?? "",
     seller_agency: resolvedEditable.seller_agency ?? "",
     seller_type: coerceSellerType(resolvedEditable.seller_type),
-    buyer_premium_pct: Math.max(0, Number(resolvedEditable.buyer_premium_pct ?? 0.1)),
+    buyer_premium_pct:
+      resolvedEditable.buyer_premium_pct === null || resolvedEditable.buyer_premium_pct === undefined
+        ? null
+        : Math.max(0, Number(resolvedEditable.buyer_premium_pct)),
+    buyer_premium_explicit: buyerPremiumExplicit,
     removal_window_days: Math.max(1, Math.floor(Number(resolvedEditable.removal_window_days ?? 3))),
     title_status: coerceTitleStatus(resolvedEditable.title_status),
     relisted: existing?.relisted ?? false,
@@ -744,6 +1092,16 @@ export const confirmOpportunityImport = (
     import_missing_fields: missingFields,
     raw_import_data: rawFields,
     operator_overrides: operatorOverrides,
+    value_layers: buildValueLayers(editableBase, operatorOverrides),
+    parse_status:
+      normalizedPayload.parse_status === "blocked" ||
+      normalizedPayload.parse_status === "failed" ||
+      normalizedPayload.parse_status === "partial"
+        ? normalizedPayload.parse_status
+        : importStatus,
+    guardrail_flags: normalizedPayload.guardrail_flags ?? [],
+    blocked_reason: normalizedPayload.blocked_reason ?? null,
+    parser_error: normalizedPayload.parser_error ?? null,
     imported_at: importedAt,
     status: existing?.status ?? "new",
     interest: existing?.interest ?? "undecided",
@@ -754,14 +1112,17 @@ export const confirmOpportunityImport = (
     if (existing) {
       db.prepare(
         `UPDATE opportunities
-         SET source = ?, listing_id = ?, listing_url = ?, canonical_url = ?, title = ?, category = ?, current_bid = ?, auction_end = ?,
-             location = ?, seller_agency = ?, seller_type = ?, buyer_premium_pct = ?, removal_window_days = ?, title_status = ?, relisted = ?,
+         SET source = ?, account_id = ?, item_id = ?, listing_id = ?, listing_url = ?, canonical_url = ?, title = ?, category = ?, current_bid = ?, auction_end = ?,
+             location = ?, seller_agency = ?, seller_type = ?, buyer_premium_pct = ?, buyer_premium_explicit = ?, removal_window_days = ?, title_status = ?, relisted = ?,
              condition_raw = ?, description = ?, attachment_links = ?, seller_contact = ?, estimated_resale_value = ?,
-             estimated_transport_override = ?, estimated_repair_cost = ?, quantity_purchased = ?, quantity_broken = ?, import_status = ?,
-             import_confidence = ?, import_missing_fields = ?, raw_import_data = ?, operator_overrides = ?, imported_at = ?, status = ?, interest = ?
+             estimated_transport_override = ?, estimated_repair_cost = ?, quantity_purchased = ?, quantity_broken = ?, import_status = ?, parse_status = ?,
+             import_confidence = ?, import_missing_fields = ?, raw_import_data = ?, operator_overrides = ?, value_layers = ?, guardrail_flags = ?,
+             blocked_reason = ?, parser_error = ?, imported_at = ?, status = ?, interest = ?
          WHERE id = ?`
       ).run(
         record.source,
+        record.account_id,
+        record.item_id,
         record.listing_id,
         record.listing_url,
         record.canonical_url,
@@ -773,6 +1134,7 @@ export const confirmOpportunityImport = (
         record.seller_agency,
         record.seller_type,
         record.buyer_premium_pct,
+        record.buyer_premium_explicit ? 1 : 0,
         record.removal_window_days,
         record.title_status,
         record.relisted ? 1 : 0,
@@ -786,10 +1148,15 @@ export const confirmOpportunityImport = (
         record.quantity_purchased,
         record.quantity_broken,
         record.import_status,
+        record.parse_status,
         record.import_confidence,
         JSON.stringify(record.import_missing_fields),
         record.raw_import_data ? JSON.stringify(record.raw_import_data) : null,
         record.operator_overrides ? JSON.stringify(record.operator_overrides) : null,
+        record.value_layers ? JSON.stringify(record.value_layers) : null,
+        JSON.stringify(record.guardrail_flags),
+        record.blocked_reason,
+        record.parser_error,
         record.imported_at,
         record.status,
         record.interest,
@@ -799,14 +1166,17 @@ export const confirmOpportunityImport = (
     }
     db.prepare(
       `INSERT INTO opportunities (
-        id, source, listing_id, listing_url, canonical_url, title, category, current_bid, auction_end, location, seller_agency,
-        seller_type, buyer_premium_pct, removal_window_days, title_status, relisted, condition_raw, description, attachment_links, seller_contact,
-        estimated_resale_value, estimated_transport_override, estimated_repair_cost, quantity_purchased, quantity_broken, import_status,
-        import_confidence, import_missing_fields, raw_import_data, operator_overrides, imported_at, status, interest, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        id, source, account_id, item_id, listing_id, listing_url, canonical_url, title, category, current_bid, auction_end, location, seller_agency,
+        seller_type, buyer_premium_pct, buyer_premium_explicit, removal_window_days, title_status, relisted, condition_raw, description, attachment_links, seller_contact,
+        estimated_resale_value, estimated_transport_override, estimated_repair_cost, quantity_purchased, quantity_broken, import_status, parse_status,
+        import_confidence, import_missing_fields, raw_import_data, operator_overrides, value_layers, guardrail_flags, blocked_reason, parser_error,
+        imported_at, status, interest, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       record.id,
       record.source,
+      record.account_id,
+      record.item_id,
       record.listing_id,
       record.listing_url,
       record.canonical_url,
@@ -818,6 +1188,7 @@ export const confirmOpportunityImport = (
       record.seller_agency,
       record.seller_type,
       record.buyer_premium_pct,
+      record.buyer_premium_explicit ? 1 : 0,
       record.removal_window_days,
       record.title_status,
       record.relisted ? 1 : 0,
@@ -831,10 +1202,15 @@ export const confirmOpportunityImport = (
       record.quantity_purchased,
       record.quantity_broken,
       record.import_status,
+      record.parse_status,
       record.import_confidence,
       JSON.stringify(record.import_missing_fields),
       record.raw_import_data ? JSON.stringify(record.raw_import_data) : null,
       record.operator_overrides ? JSON.stringify(record.operator_overrides) : null,
+      record.value_layers ? JSON.stringify(record.value_layers) : null,
+      JSON.stringify(record.guardrail_flags),
+      record.blocked_reason,
+      record.parser_error,
       record.imported_at,
       record.status,
       record.interest,
@@ -893,7 +1269,7 @@ export const overrideOpportunityValues = (
   const editableBase: Partial<OpportunityEditableFields> = {
     title: existing.title,
     current_bid: existing.current_bid,
-    buyer_premium_pct: existing.buyer_premium_pct,
+    buyer_premium_pct: existing.buyer_premium_pct ?? null,
     estimated_resale_value: existing.estimated_resale_value,
     estimated_transport_override: existing.estimated_transport_override,
     estimated_repair_cost: existing.estimated_repair_cost,
@@ -913,19 +1289,22 @@ export const overrideOpportunityValues = (
     ...(existing.operator_overrides ?? {}),
     ...overrides,
   };
-  const nextImportStatus: OpportunityImportStatus = missingFields.length > 0 ? "needs_review" : "active";
+  const nextImportStatus: OpportunityImportStatus = missingFields.length > 0 ? "needs_review" : "valid";
   const nextImportConfidence = computeImportConfidence(missingFields, existing.attachment_links.length);
+  const nextValueLayers = buildValueLayers(editableBase, mergedOverrides);
 
   db.prepare(
     `UPDATE opportunities
      SET title = ?, current_bid = ?, buyer_premium_pct = ?, estimated_resale_value = ?, estimated_transport_override = ?, estimated_repair_cost = ?,
          quantity_purchased = ?, quantity_broken = ?, condition_raw = ?, title_status = ?, removal_window_days = ?, seller_agency = ?, seller_type = ?,
-         location = ?, auction_end = ?, operator_overrides = ?, import_status = ?, import_confidence = ?, import_missing_fields = ?
+         location = ?, auction_end = ?, operator_overrides = ?, value_layers = ?, import_status = ?, parse_status = ?, import_confidence = ?, import_missing_fields = ?
      WHERE id = ?`
   ).run(
     nextEditable.title ?? existing.title,
     Math.max(0, Number(nextEditable.current_bid ?? existing.current_bid)),
-    Math.max(0, Number(nextEditable.buyer_premium_pct ?? existing.buyer_premium_pct)),
+    nextEditable.buyer_premium_pct === null || nextEditable.buyer_premium_pct === undefined
+      ? null
+      : Math.max(0, Number(nextEditable.buyer_premium_pct)),
     Math.max(0, Number(nextEditable.estimated_resale_value ?? existing.estimated_resale_value)),
     nextEditable.estimated_transport_override === null || nextEditable.estimated_transport_override === undefined
       ? null
@@ -941,6 +1320,8 @@ export const overrideOpportunityValues = (
     nextEditable.location ?? existing.location,
     nextEditable.auction_end ?? existing.auction_end,
     JSON.stringify(mergedOverrides),
+    JSON.stringify(nextValueLayers),
+    nextImportStatus,
     nextImportStatus,
     nextImportConfidence,
     JSON.stringify(missingFields),
@@ -1097,7 +1478,7 @@ export const saveOpportunityDecision = (
   }
 
   const opportunity = mapOpportunityRow(row);
-  if (opportunity.import_status === "needs_review") {
+  if (opportunity.import_status !== "valid") {
     throw new Error("Opportunity needs review before actions");
   }
   const decisionId = crypto.randomUUID();

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   confirmOpportunityImport,
   createDeal,
@@ -97,7 +97,18 @@ type RightPanelDetailTab = "decision" | "market" | "recon";
 type PipelineAlertFilter = "all" | "critical" | "warning" | "none";
 type IntakeStep = 1 | 2 | 3;
 type SurfaceState = "live" | "stale" | "fallback" | "disabled";
-type AssistantReadinessState = "ready" | "loading" | "disabled" | "api_failure" | "timeout";
+type AssistantReadinessState =
+  | "ready"
+  | "loading"
+  | "success"
+  | "unavailable_missing_context"
+  | "api_failure"
+  | "deal_not_found"
+  | "preview_not_supported";
+
+const isAssistantEligibleImportStatus = (
+  status: import("./utils/govDealsScanner").OpportunityImportStatus
+): boolean => status === "valid";
 
 const normalizeOpportunitiesContract = (
   partial: Partial<OpportunitiesFeedContract> & {
@@ -165,6 +176,8 @@ const QUICK_ASSISTANT_PROMPTS = [
   "What should I do next?",
   "Why is this risky?",
 ] as const;
+
+const ASSISTANT_TIMEOUT_MS = 20000;
 
 const CATEGORY_GROUP_OPTIONS: Record<IntakeCategory, DealCategory[]> = {
   vehicle: ["vehicle_suv", "vehicle_police_fleet"],
@@ -371,6 +384,7 @@ function App() {
   const [assistantResponse, setAssistantResponse] = useState<AssistantQueryResponse | null>(null);
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantError, setAssistantError] = useState<string | null>(null);
+  const assistantRequestIdRef = useRef(0);
   const [intakeStatusMessage, setIntakeStatusMessage] = useState<string | null>(null);
   const [intakePreviewDeal, setIntakePreviewDeal] = useState<DealView | null>(null);
   const [savedForLaterIntake, setSavedForLaterIntake] = useState<IntakeQueueEntry[]>([]);
@@ -491,51 +505,10 @@ function App() {
     feed.decisions.map((decision) => {
       const opportunitySnapshot =
         feed.opportunities.find((item) => item.id === decision.opportunity_id) ??
-        govDealsOpportunities.find((item) => item.id === decision.opportunity_id) ??
-        {
-          id: decision.opportunity_id,
-          source: "manual_import",
-          listing_id: null,
-          listing_url: "",
-          canonical_url: "",
-          title: "Unknown opportunity",
-          category: "other",
-          current_bid: 0,
-          auction_end: new Date().toISOString(),
-          auction_state: "unknown",
-          time_left_hours: null,
-          location: "",
-          seller_agency: "",
-          seller_type: "unknown",
-          buyer_premium_pct: 0,
-          removal_window_days: 0,
-          title_status: "unknown" as TitleStatus,
-          relisted: false,
-          condition_raw: "",
-          description: null,
-          attachment_links: [],
-          seller_contact: null,
-          estimated_resale_value: 0,
-          estimated_transport_override: null,
-          estimated_repair_cost: 0,
-          quantity_purchased: null,
-          quantity_broken: null,
-          import_status: "needs_review" as const,
-          import_confidence: 0,
-          import_missing_fields: [
-            "title",
-            "current_bid",
-            "auction_end",
-            "location",
-            "seller_agency",
-          ],
-          raw_import_data: null,
-          operator_overrides: null,
-          imported_at: null,
-          status: "new",
-          interest: "undecided",
-          created_at: new Date().toISOString(),
-        };
+        govDealsOpportunities.find((item) => item.id === decision.opportunity_id);
+      if (!opportunitySnapshot) {
+        return null;
+      }
       return {
         id: `feed-${decision.id}`,
         opportunity_id: decision.opportunity_id,
@@ -546,7 +519,7 @@ function App() {
         score_at_decision: 0,
         opportunity_snapshot: opportunitySnapshot,
       };
-    });
+    }).filter((item): item is SniperDecisionRecord => item !== null);
 
   const mapFeedToInterestSignals = (
     feed: OpportunitiesFeedContract
@@ -642,7 +615,7 @@ function App() {
     (selectedDealId?.startsWith("preview-") ? intakePreviewDeal : null) ??
     deals[0] ??
     null;
-
+  const isPreviewSelectedRecord = Boolean(selectedDeal?.deal.id.startsWith("preview-"));
   const selectedOpportunityForAssistant = useMemo(() => {
     if (!selectedDeal) {
       return null;
@@ -779,55 +752,65 @@ function App() {
   }, [selectedDeal]);
   const assistantDisableReason = useMemo((): string | null => {
     if (!selectedDeal) {
-      return "Assistant disabled: no deal selected.";
+      return "unavailable_missing_context: no selected record.";
+    }
+    if (isPreviewSelectedRecord) {
+      return "preview_not_supported: preview records are not queryable by /api/assistant/query.";
     }
     if (!assistantRequiredFields.hasAssistantContext) {
-      return "Assistant disabled: assistant_context is missing.";
+      return "unavailable_missing_context: assistant_context missing.";
     }
     if (!assistantRequiredFields.hasEngine || !assistantRequiredFields.hasCalculations) {
-      return "Assistant disabled: required engine/calculation context is missing.";
+      return "unavailable_missing_context: missing engine/calculations.";
     }
     if (!assistantRequiredFields.hasWarnings) {
-      return "Assistant disabled: warnings context is missing.";
+      return "unavailable_missing_context: warnings missing.";
     }
     if (selectedOpportunityForAssistant) {
       const missing = selectedOpportunityForAssistant.import_missing_fields ?? [];
-      if (selectedOpportunityForAssistant.import_status === "needs_review") {
+      if (!isAssistantEligibleImportStatus(selectedOpportunityForAssistant.import_status)) {
         if (missing.includes("title")) {
-          return "Assistant disabled: missing title in imported opportunity.";
+          return "unavailable_missing_context: missing title.";
         }
         if (missing.includes("current_bid")) {
-          return "Assistant disabled: missing bid in imported opportunity.";
+          return "unavailable_missing_context: missing bid.";
         }
         if (missing.includes("seller_agency")) {
-          return "Assistant disabled: missing seller in imported opportunity.";
+          return "unavailable_missing_context: missing seller.";
         }
         if (missing.includes("location")) {
-          return "Assistant disabled: missing location in imported opportunity.";
+          return "unavailable_missing_context: missing location.";
         }
         if (missing.includes("auction_end")) {
-          return "Assistant disabled: missing close time in imported opportunity.";
+          return "unavailable_missing_context: missing close time.";
         }
-        return "Assistant disabled: imported opportunity needs review before AI grounding.";
+        return `unavailable_missing_context: import_status=${selectedOpportunityForAssistant.import_status}.`;
       }
-      if (selectedOpportunityForAssistant.import_confidence < 55) {
-        return `Assistant disabled: import_confidence ${selectedOpportunityForAssistant.import_confidence} is below 55.`;
+      if (
+        selectedOpportunityForAssistant.import_confidence !== null &&
+        selectedOpportunityForAssistant.import_confidence < 55
+      ) {
+        return `unavailable_missing_context: import_confidence ${selectedOpportunityForAssistant.import_confidence} < 55.`;
       }
     } else if (selectedDeal.calculations.data_confidence < 55) {
-      return `Assistant disabled: data_confidence ${selectedDeal.calculations.data_confidence} is below 55.`;
+      return `unavailable_missing_context: data_confidence ${selectedDeal.calculations.data_confidence} < 55.`;
     }
     return null;
-  }, [assistantRequiredFields, selectedDeal, selectedOpportunityForAssistant]);
+  }, [assistantRequiredFields, isPreviewSelectedRecord, selectedDeal, selectedOpportunityForAssistant]);
   const assistantReadinessState: AssistantReadinessState = assistantLoading
     ? "loading"
-    : assistantError
-      ? /timed out/i.test(assistantError)
-        ? "timeout"
-        : "api_failure"
-      : assistantDisableReason
-        ? "disabled"
-        : "ready";
-  const assistantCanSubmit = assistantReadinessState === "ready" || assistantReadinessState === "loading";
+    : assistantResponse
+      ? "success"
+      : assistantError
+        ? /Deal not found/i.test(assistantError)
+          ? "deal_not_found"
+          : "api_failure"
+        : assistantDisableReason?.startsWith("preview_not_supported")
+          ? "preview_not_supported"
+          : assistantDisableReason
+            ? "unavailable_missing_context"
+            : "ready";
+  const assistantCanSubmit = assistantReadinessState === "ready";
   const showMobileContextPanel = mobilePanelMode === "detail" || mobilePanelMode === "assistant";
   const operatorAgreementRate = useMemo(() => {
     if (sniperLast10.length === 0) {
@@ -1342,20 +1325,45 @@ function App() {
     if (!trimmedQuestion) {
       return;
     }
+    const requestId = assistantRequestIdRef.current + 1;
+    assistantRequestIdRef.current = requestId;
     setAssistantLoading(true);
     setAssistantError(null);
+    setAssistantResponse(null);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      controller.abort();
+    }, ASSISTANT_TIMEOUT_MS);
     try {
-      const response = await queryAssistant({
-        deal_id: selectedDeal.deal.id,
-        question: trimmedQuestion,
-      });
+      const response = await queryAssistant(
+        {
+          deal_id: selectedDeal.deal.id,
+          question: trimmedQuestion,
+        },
+        controller.signal
+      );
+      if (assistantRequestIdRef.current !== requestId) {
+        return;
+      }
       setAssistantResponse(response);
     } catch (assistantQueryError) {
       const message =
         assistantQueryError instanceof Error ? assistantQueryError.message : "Assistant query failed";
-      setAssistantError(/timed out/i.test(message) ? "Assistant request timed out." : message);
+      if (assistantRequestIdRef.current !== requestId) {
+        return;
+      }
+      if (/aborted|timed out|timeout/i.test(message)) {
+        setAssistantError("Assistant request timed out. Please retry.");
+      } else if (/deal not found/i.test(message)) {
+        setAssistantError("Deal not found on backend. Select a persisted deal and retry.");
+      } else {
+        setAssistantError(message);
+      }
     } finally {
-      setAssistantLoading(false);
+      window.clearTimeout(timeoutId);
+      if (assistantRequestIdRef.current === requestId) {
+        setAssistantLoading(false);
+      }
     }
   };
 
@@ -1399,7 +1407,7 @@ function App() {
         draftOverrides: buildImportReviewDraftOverrides(review),
       });
       setScannerStatusMessage(
-        review.import_status === "needs_review"
+        review.import_status !== "valid"
           ? "Import parsed. Review required before opportunity activation."
           : "Import parsed. Review and confirm to activate."
       );
@@ -1431,8 +1439,12 @@ function App() {
       const payloadReview: OpportunityImportReviewResponse = {
         listing_url: manual.listing_url,
         canonical_url: manual.canonical_url,
+        account_id: manual.account_id,
+        item_id: manual.item_id,
         listing_id: manual.listing_id,
         raw_fields: manual.raw_import_data ?? {
+          account_id: manual.account_id,
+          item_id: manual.item_id,
           listing_id: manual.listing_id,
           title: manual.title,
           current_bid_text: String(manual.current_bid),
@@ -1441,7 +1453,10 @@ function App() {
           location_text: manual.location,
           seller_agency_text: manual.seller_agency,
           category_text: manual.category,
-          buyer_premium_text: String(manual.buyer_premium_pct),
+          buyer_premium_text:
+            manual.buyer_premium_pct === null || manual.buyer_premium_pct === undefined
+              ? null
+              : String(manual.buyer_premium_pct),
           description_text: manual.description ?? manual.condition_raw,
           quantity_text:
             manual.quantity_purchased === null || manual.quantity_purchased === undefined
@@ -1454,6 +1469,8 @@ function App() {
           listing_id: manual.listing_id,
           canonical_url: manual.canonical_url,
           category: manual.category,
+          buyer_premium_explicit:
+            manual.buyer_premium_pct !== null && manual.buyer_premium_pct !== undefined,
           description: manual.description,
           attachment_links: manual.attachment_links,
           seller_contact: manual.seller_contact,
@@ -1475,7 +1492,16 @@ function App() {
         },
         missing_fields: manual.import_missing_fields,
         import_status: manual.import_status,
+        parse_status: manual.parse_status,
         import_confidence: manual.import_confidence,
+        guardrail_flags: manual.guardrail_flags,
+        blocked_reason: manual.blocked_reason,
+        parser_error: manual.parser_error,
+        request_headers: {
+          "User-Agent": "manual-import",
+          "Accept-Language": "manual-import",
+          Referer: "manual-import",
+        },
         extraction_notes: ["Manual import"],
         selector_hits: {},
       };
@@ -1555,8 +1581,11 @@ function App() {
     }
   };
 
+  const isActionBlockedByImportStatus = (status: GovDealsOpportunity["import_status"]): boolean =>
+    status !== "valid";
+
   const handleScannerPreview = async (opportunity: GovDealsOpportunity): Promise<void> => {
-    if (opportunity.import_status === "needs_review") {
+    if (isActionBlockedByImportStatus(opportunity.import_status)) {
       setScannerErrorMessage("Opportunity needs review before preview.");
       return;
     }
@@ -1587,7 +1616,7 @@ function App() {
     reason?: string | null,
     note?: string | null
   ): Promise<boolean> => {
-    if (opportunity.import_status === "needs_review") {
+    if (isActionBlockedByImportStatus(opportunity.import_status)) {
       setScannerErrorMessage("Opportunity needs review before actions.");
       return false;
     }
@@ -1635,7 +1664,7 @@ function App() {
   };
 
   const handleScannerCreateDeal = async (opportunity: GovDealsOpportunity): Promise<void> => {
-    if (opportunity.import_status === "needs_review") {
+    if (isActionBlockedByImportStatus(opportunity.import_status)) {
       setScannerErrorMessage("Opportunity needs review before deal creation.");
       return;
     }
@@ -1701,7 +1730,7 @@ function App() {
     opportunity: GovDealsOpportunity,
     intake: WonDealIntakeInput
   ): Promise<void> => {
-    if (opportunity.import_status === "needs_review") {
+    if (isActionBlockedByImportStatus(opportunity.import_status)) {
       setScannerErrorMessage("Opportunity needs review before won-deal intake.");
       return;
     }
@@ -1745,7 +1774,7 @@ function App() {
       return;
     }
     setScannerSaveInFlightByOpportunityId((prev) => ({ ...prev, [opportunity.id]: true }));
-    if (opportunity.import_status === "needs_review") {
+    if (isActionBlockedByImportStatus(opportunity.import_status)) {
       setScannerErrorMessage("Opportunity needs review before sniper action.");
       setScannerSaveInFlightByOpportunityId((prev) => ({ ...prev, [opportunity.id]: false }));
       return;
@@ -1861,16 +1890,7 @@ function App() {
             {selectedDeal ? `${selectedDeal.deal.label} (${selectedDeal.deal.id})` : "None selected"}
           </p>
           <p>
-            Assistant state: {" "}
-            {assistantReadinessState === "ready"
-              ? "ready"
-              : assistantReadinessState === "loading"
-                ? "loading"
-                : assistantReadinessState === "timeout"
-                  ? "timeout"
-                  : assistantReadinessState === "api_failure"
-                    ? "api_failure"
-                    : "disabled"}
+            Assistant state: {assistantReadinessState}
           </p>
           {assistantDisableReason ? <p className="warning-banner">{assistantDisableReason}</p> : null}
           <div className="quick-prompts">
@@ -1878,7 +1898,7 @@ function App() {
               <button
                 type="button"
                 key={prompt}
-                disabled={!assistantCanSubmit}
+                disabled={!assistantCanSubmit || assistantLoading}
                 onClick={() => {
                   setAssistantQuestion(prompt);
                   setAssistantResponse(null);
@@ -1901,11 +1921,21 @@ function App() {
             <button
               type="button"
               className="secondary-button"
-              disabled={!assistantCanSubmit || !selectedDeal}
+              disabled={!assistantCanSubmit || !selectedDeal || assistantLoading}
               onClick={() => void handleAssistantSubmit()}
             >
               {assistantLoading ? "Asking..." : "Ask Assistant"}
             </button>
+            {assistantReadinessState === "api_failure" || assistantReadinessState === "deal_not_found" ? (
+              <button
+                type="button"
+                className="ghost-button"
+                disabled={assistantLoading || !assistantCanSubmit || !selectedDeal || !assistantQuestion.trim()}
+                onClick={() => void handleAssistantSubmit()}
+              >
+                Retry
+              </button>
+            ) : null}
           </div>
           {assistantError ? <p className="warning-banner">{assistantError}</p> : null}
           {assistantResponse ? (
