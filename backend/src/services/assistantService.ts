@@ -2,7 +2,17 @@ import type { EnrichedDeal } from "./engine/enrichDeal";
 import { getDealById } from "./dealService";
 
 export interface AssistantQueryInput {
+  mode?: "preview_opportunity" | "persisted_deal";
   deal_id?: string;
+  listing_id?: string;
+  snapshot?: {
+    deal?: {
+      id?: string;
+      label?: string;
+    } | null;
+    opportunity?: Record<string, unknown> | null;
+    assistant_context?: EnrichedDeal["assistant_context"] | null;
+  } | null;
   assistant_context?: EnrichedDeal["assistant_context"];
   question: string;
 }
@@ -45,6 +55,191 @@ const resolveWarnings = (context: EnrichedDeal["assistant_context"]): string[] =
 const resolveNumber = (value: unknown, fallback = 0): number =>
   typeof value === "number" && Number.isFinite(value) ? value : fallback;
 
+const resolveString = (value: unknown, fallback: string): string =>
+  typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+
+const toObjectRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+};
+
+const buildAssistantContextFromSnapshot = (
+  snapshot: AssistantQueryInput["snapshot"]
+): EnrichedDeal["assistant_context"] | null => {
+  if (!snapshot) {
+    return null;
+  }
+  if (snapshot.assistant_context) {
+    return snapshot.assistant_context;
+  }
+  const opportunity = toObjectRecord(snapshot.opportunity);
+  if (!opportunity) {
+    return null;
+  }
+  const dealId = resolveString(snapshot.deal?.id, resolveString(opportunity.id, "preview-opportunity"));
+  const label = resolveString(
+    snapshot.deal?.label,
+    resolveString(opportunity.title, `Opportunity ${dealId}`)
+  );
+  const currentBid = Math.max(0, resolveNumber(opportunity.current_bid, 0));
+  const buyerPremiumPct = Math.max(0, resolveNumber(opportunity.buyer_premium_pct, 0));
+  const shipping = Math.max(0, resolveNumber(opportunity.estimated_transport_override, 0));
+  const reconEstimate = Math.max(0, resolveNumber(opportunity.estimated_repair_cost, 0));
+  const marketComp = Math.max(0, resolveNumber(opportunity.estimated_resale_value, 0));
+  const totalCostBasis = currentBid + currentBid * buyerPremiumPct + shipping + reconEstimate;
+  const projectedProfit = marketComp * 0.85 - totalCostBasis;
+  const importConfidence = Math.max(0, resolveNumber(opportunity.import_confidence, 65));
+  const missingFieldsRaw = Array.isArray(opportunity.import_missing_fields)
+    ? opportunity.import_missing_fields.filter((item): item is string => typeof item === "string")
+    : [];
+  const warnings = [
+    ...missingFieldsRaw.map((field) => `MISSING_${field.toUpperCase()}`),
+    resolveString(opportunity.blocked_reason, ""),
+  ].filter(Boolean);
+
+  return {
+    current_deal: {
+      deal: {
+        id: dealId,
+        label,
+        category: "electronics_bulk",
+        source_platform: "govdeals",
+        acquisition_state: "TX",
+        seller_type: "unknown",
+        status: "sourced",
+        stage_updated_at: new Date().toISOString(),
+        discovered_date: new Date().toISOString(),
+        purchase_date: null,
+        listing_date: null,
+        sale_date: null,
+        completion_date: null,
+      } as EnrichedDeal["assistant_context"]["current_deal"]["deal"],
+      financials: {
+        deal_id: dealId,
+        acquisition_cost: currentBid,
+        buyer_premium_pct: buyerPremiumPct,
+        buyer_premium_overridden: false,
+        tax_rate: null,
+        tax: null,
+        transport_cost_actual: null,
+        transport_cost_estimated: shipping,
+        repair_cost: reconEstimate,
+        prep_cost: null,
+        estimated_market_value: marketComp,
+        sale_price_actual: null,
+        projected_profit: projectedProfit,
+        realized_profit: null,
+      } as EnrichedDeal["assistant_context"]["current_deal"]["financials"],
+      metadata: {
+        deal_id: dealId,
+        condition_grade: "used",
+        condition_notes: resolveString(opportunity.condition_raw, "No condition notes provided."),
+        transport_type: "freight",
+        presentation_quality: "standard",
+        removal_deadline: null,
+        title_status: "unknown",
+      } as EnrichedDeal["assistant_context"]["current_deal"]["metadata"],
+    },
+    calculations: {
+      total_cost_basis: totalCostBasis,
+      projected_profit: projectedProfit,
+      realized_profit: null,
+      days_in_stage: 0,
+      days_in_current_stage: 0,
+      stage_alert: "OK",
+      data_confidence: importConfidence,
+      avg_time_per_unit: null,
+      efficiency_score: null,
+      efficiency_rating: null,
+      locked_ratio: null,
+      source_quality_flag: null,
+    },
+    engine: {
+      cost_basis: {
+        total_cost_basis: totalCostBasis,
+        cost_basis_breakdown: {
+          acquisition_cost: currentBid,
+          buyer_premium: currentBid * buyerPremiumPct,
+          tax: 0,
+          transport: shipping,
+          repair_cost: reconEstimate,
+          prep_cost: 0,
+          vehicle_mechanical_contingency: 0,
+        },
+        estimated_inputs: [],
+        buyer_premium_pct: buyerPremiumPct,
+        buyer_premium_overridden: false,
+        tax_rate: null,
+        tax: 0,
+      },
+      profit: {
+        projected_profit: projectedProfit,
+        realized_profit: null,
+        breakdown: {
+          gross_value_projection: marketComp,
+          sell_through_factor: 0.85,
+          platform_fee_pct: 0,
+          platform_fees: 0,
+          return_rate_buffer_pct: 0,
+          return_rate_buffer: 0,
+          conservative_revenue_projection: marketComp * 0.85,
+        },
+      },
+      scoring: {
+        acquisition_score: 50,
+        exit_score: 50,
+        classification: projectedProfit >= 0 ? "WORTH REVIEW" : "PASS",
+        defective_review_bias: 0,
+      },
+      aging: {
+        days_in_current_stage: 0,
+        stage_alert: "OK",
+      },
+      liquidation: {
+        warning: projectedProfit < 0,
+        trigger: projectedProfit < 0,
+        force_liquidation: false,
+        recommended_action: projectedProfit < 0 ? "do_not_acquire" : "review_only",
+      },
+      data_confidence: importConfidence,
+      postmortem: {
+        profit_delta: null,
+        variance_pct: null,
+        revenue_variance: null,
+        profit_drift_flag: null,
+        cost_overrun_flag: false,
+        drift_sources: [],
+        postmortem_incomplete: true,
+      },
+      recommended_action: projectedProfit < 0 ? "do_not_acquire" : "review_only",
+    },
+    warnings,
+    postmortem: {
+      profit_delta: null,
+      variance_pct: null,
+      revenue_variance: null,
+      profit_drift_flag: null,
+      cost_overrun_flag: false,
+      drift_sources: [],
+      postmortem_incomplete: true,
+    },
+    recommendation_summary:
+      "Snapshot advisory context generated from selected opportunity fields (cost, market comp, shipping, recon).",
+    ai_recommendation: {
+      suggested_action: projectedProfit < 0 ? "pass" : "investigate",
+      confidence: importConfidence,
+      reasoning: "Snapshot-only recommendation.",
+      key_factors: [
+        `Cost basis: ${totalCostBasis.toFixed(2)}`,
+        `Projected profit: ${projectedProfit.toFixed(2)}`,
+      ],
+    },
+    operator_decision_history: [],
+  };
+};
+
 const ensureQuestion = (value: unknown): string => {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error("question is required");
@@ -58,8 +253,12 @@ const ensureAssistantContext = (
   if (input.assistant_context) {
     return input.assistant_context;
   }
+  const snapshotContext = buildAssistantContextFromSnapshot(input.snapshot);
+  if (snapshotContext) {
+    return snapshotContext;
+  }
   if (!input.deal_id) {
-    throw new Error("Provide either deal_id or assistant_context");
+    throw new Error("no selected record");
   }
   const deal = getDealById(input.deal_id);
   if (!deal) {

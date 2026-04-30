@@ -2,10 +2,12 @@ import type { CreateDealRequest, DealCategory, TitleStatus } from "../types";
 import type { DealView } from "../types";
 
 export type OpportunityCategory = "vehicle" | "electronics" | "other";
-export type OpportunityStatus = "new" | "watch" | "passed" | "converted";
+export type OpportunitySource = "govdeals" | "manual";
+export type OpportunityStatus = "draft" | "new" | "watch" | "passed" | "converted";
 export type OpportunityInterest = "undecided" | "interested" | "not_interested";
-export type OpportunityImportStatus = "active" | "needs_review";
+export type OpportunityImportStatus = "valid" | "needs_review" | "blocked";
 export type OpportunityCriticalField =
+  | "identity"
   | "title"
   | "current_bid"
   | "auction_end"
@@ -21,42 +23,75 @@ export type OpportunitySortMode =
   | "time_left";
 
 export interface OpportunityEditableFields {
-  title: string;
-  current_bid: number;
-  buyer_premium_pct: number;
-  estimated_resale_value: number;
+  title: string | null;
+  current_bid: number | null;
+  buyer_premium_pct: number | null;
+  estimated_resale_value: number | null;
   estimated_transport_override: number | null;
-  estimated_repair_cost: number;
+  estimated_repair_cost: number | null;
   quantity_purchased: number | null;
   quantity_broken: number | null;
-  condition_raw: string;
-  title_status: TitleStatus;
-  removal_window_days: number;
-  seller_agency: string;
-  seller_type: "government" | "commercial" | "unknown";
-  location: string;
-  auction_end: string;
+  condition_raw: string | null;
+  title_status: TitleStatus | null;
+  removal_window_days: number | null;
+  seller_agency: string | null;
+  seller_type: "government" | "commercial" | "unknown" | null;
+  location: string | null;
+  auction_end: string | null;
+}
+
+export interface OpportunityValueLayer<T> {
+  imported_value: T | null;
+  operator_override: T | null;
+  effective_value: T | null;
+}
+
+export interface OpportunityValueLayers {
+  title: OpportunityValueLayer<string>;
+  current_bid: OpportunityValueLayer<number>;
+  buyer_premium_pct: OpportunityValueLayer<number>;
+  estimated_resale_value: OpportunityValueLayer<number>;
+  estimated_transport_override: OpportunityValueLayer<number>;
+  estimated_repair_cost: OpportunityValueLayer<number>;
+  quantity_purchased: OpportunityValueLayer<number>;
+  quantity_broken: OpportunityValueLayer<number>;
+  removal_window_days: OpportunityValueLayer<number>;
+  title_status: OpportunityValueLayer<TitleStatus>;
+  seller_type: OpportunityValueLayer<"government" | "commercial" | "unknown">;
+  seller_agency: OpportunityValueLayer<string>;
+  location: OpportunityValueLayer<string>;
+  condition_raw: OpportunityValueLayer<string>;
+  auction_end: OpportunityValueLayer<string>;
 }
 
 export interface OpportunityRawImportFields {
+  account_id: string | null;
+  item_id: string | null;
   listing_id: string | null;
   title: string | null;
   current_bid_text: string | null;
+  bid_increment_text: string | null;
   auction_end_text: string | null;
   time_remaining_text: string | null;
   location_text: string | null;
   seller_agency_text: string | null;
+  seller_contact_text: string | null;
   category_text: string | null;
   buyer_premium_text: string | null;
   description_text: string | null;
+  vin_text: string | null;
+  condition_text: string | null;
   quantity_text: string | null;
+  terms_text: string | null;
   attachment_links_text: string | null;
-  seller_contact_text: string | null;
 }
 
 export interface OpportunityImportReviewResponse {
+  source: "url_import" | "pasted_text" | "manual_draft";
   listing_url: string;
   canonical_url: string;
+  account_id: string | null;
+  item_id: string | null;
   listing_id: string | null;
   raw_fields: OpportunityRawImportFields;
   parsed_fields: Partial<OpportunityEditableFields> & {
@@ -66,47 +101,63 @@ export interface OpportunityImportReviewResponse {
     description: string | null;
     attachment_links: string[];
     seller_contact: string | null;
+    bid_increment: number | null;
+    vin: string | null;
+    buyer_premium_explicit: boolean;
   };
   missing_fields: OpportunityCriticalField[];
   import_status: OpportunityImportStatus;
-  import_confidence: number;
+  import_confidence: number | null;
+  blocked_reason: string | null;
+  parser_error: string | null;
+  request_headers: {
+    "User-Agent": string;
+    "Accept-Language": string;
+    Referer: string;
+  };
   extraction_notes: string[];
   selector_hits: Record<string, string[]>;
 }
 
 export interface GovDealsOpportunity {
   id: string;
-  source: "url_import" | "keyword_search" | "manual_import";
+  source: OpportunitySource;
+  account_id: string | null;
+  item_id: string | null;
   listing_id: string | null;
-  listing_url: string;
-  canonical_url: string;
-  title: string;
+  listing_url: string | null;
+  canonical_url: string | null;
+  title: string | null;
   category: OpportunityCategory;
-  current_bid: number;
-  auction_end: string;
+  current_bid: number | null;
+  auction_end: string | null;
   auction_state?: "active" | "ended" | "unknown";
   time_left_hours?: number | null;
-  location: string;
-  seller_agency: string;
+  location: string | null;
+  seller_agency: string | null;
   seller_type: "government" | "commercial" | "unknown";
-  buyer_premium_pct: number;
-  removal_window_days: number;
+  buyer_premium_pct: number | null;
+  buyer_premium_explicit: boolean;
+  removal_window_days: number | null;
   title_status: TitleStatus;
   relisted: boolean;
-  condition_raw: string;
+  condition_raw: string | null;
   description: string | null;
   attachment_links: string[];
   seller_contact: string | null;
-  estimated_resale_value: number;
+  estimated_resale_value: number | null;
   estimated_transport_override: number | null;
-  estimated_repair_cost: number;
+  estimated_repair_cost: number | null;
   quantity_purchased: number | null;
   quantity_broken: number | null;
   import_status: OpportunityImportStatus;
-  import_confidence: number;
+  import_confidence: number | null;
   import_missing_fields: OpportunityCriticalField[];
   raw_import_data: OpportunityRawImportFields | null;
   operator_overrides: Partial<OpportunityEditableFields> | null;
+  value_layers: OpportunityValueLayers | null;
+  blocked_reason: string | null;
+  parser_error: string | null;
   imported_at: string | null;
   status: OpportunityStatus;
   interest: OpportunityInterest;
@@ -117,18 +168,18 @@ export interface ManualOpportunityInput {
   listing_url: string;
   title: string;
   category: OpportunityCategory;
-  current_bid: number;
+  current_bid: number | null;
   auction_end: string;
   location: string;
   seller_agency: string;
   seller_type: "government" | "commercial" | "unknown";
-  buyer_premium_pct: number;
+  buyer_premium_pct: number | null;
   removal_window_days: number;
   title_status: TitleStatus;
   relisted: boolean;
   condition_raw: string;
-  estimated_resale_value: number;
-  estimated_repair_cost: number;
+  estimated_resale_value: number | null;
+  estimated_repair_cost: number | null;
   quantity_purchased?: number | null;
   quantity_broken?: number | null;
 }
@@ -137,7 +188,7 @@ export interface WonDealIntakeInput {
   label: string;
   acquisition_state: string;
   final_bid: number;
-  buyer_premium_pct: number;
+  buyer_premium_pct: number | null;
   transport_cost_actual: number | null;
   transport_cost_estimated: number | null;
   repair_cost: number | null;
@@ -367,69 +418,134 @@ const STATE_NAME_TO_CODE: Record<string, string> = {
 const withNewId = (
   item: Partial<Omit<GovDealsOpportunity, "id" | "created_at">>
 ): GovDealsOpportunity => ({
-  source: "manual_import",
+  source: "manual",
+  account_id: null,
+  item_id: null,
   listing_id: null,
-  listing_url: "",
-  canonical_url: "",
-  title: "Imported opportunity",
+  listing_url: null,
+  canonical_url: null,
+  title: null,
   category: "other",
-  current_bid: 0,
-  auction_end: "",
+  current_bid: null,
+  auction_end: null,
   auction_state: "unknown",
   time_left_hours: null,
-  location: "",
-  seller_agency: "",
+  location: null,
+  seller_agency: null,
   seller_type: "unknown",
-  buyer_premium_pct: 0.1,
-  removal_window_days: 3,
+  buyer_premium_pct: null,
+  buyer_premium_explicit: false,
+  removal_window_days: null,
   title_status: "unknown",
   relisted: false,
-  condition_raw: "",
+  condition_raw: null,
   description: null,
   attachment_links: [],
   seller_contact: null,
-  estimated_resale_value: 0,
+  estimated_resale_value: null,
   estimated_transport_override: null,
-  estimated_repair_cost: 0,
+  estimated_repair_cost: null,
   quantity_purchased: null,
   quantity_broken: null,
   import_status: "needs_review",
-  import_confidence: 0,
-  import_missing_fields: ["title", "current_bid", "auction_end", "location", "seller_agency"],
+  import_confidence: null,
+  import_missing_fields: ["identity", "title", "current_bid", "auction_end", "location", "seller_agency"],
   raw_import_data: null,
   operator_overrides: null,
+  value_layers: null,
+  blocked_reason: null,
+  parser_error: null,
   imported_at: null,
-  status: "new",
+  status: "draft",
   interest: "undecided",
   ...item,
   id: `op-${crypto.randomUUID()}`,
   created_at: new Date().toISOString(),
 });
 
+export const normalizeBuyerPremiumPct = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.includes("$")) {
+      return null;
+    }
+    const numeric = Number(trimmed.replace(/%/g, "").replace(/,/g, ""));
+    if (!Number.isFinite(numeric) || numeric < 0) {
+      return null;
+    }
+    return numeric > 1 ? Math.min(numeric / 100, 1) : numeric;
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return null;
+  }
+  return numeric > 1 ? Math.min(numeric / 100, 1) : numeric;
+};
+
+const normalizeBuyerPremiumInput = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.includes("$")) {
+      return null;
+    }
+    const parsed = Number(trimmed.replace(/%/g, "").replace(/,/g, ""));
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return null;
+    }
+    return parsed > 1 ? Math.min(parsed / 100, 1) : parsed;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+  return parsed > 1 ? Math.min(parsed / 100, 1) : parsed;
+};
+
 export const emptyRawImportFields = (): OpportunityRawImportFields => ({
+  account_id: null,
+  item_id: null,
   listing_id: null,
   title: null,
   current_bid_text: null,
+  bid_increment_text: null,
   auction_end_text: null,
   time_remaining_text: null,
   location_text: null,
   seller_agency_text: null,
+  seller_contact_text: null,
   category_text: null,
   buyer_premium_text: null,
   description_text: null,
+  vin_text: null,
+  condition_text: null,
   quantity_text: null,
+  terms_text: null,
   attachment_links_text: null,
-  seller_contact_text: null,
 });
 
 export const computeImportMissingFields = (
   editable: Partial<OpportunityEditableFields>
 ): OpportunityCriticalField[] => {
   const missing: OpportunityCriticalField[] = [];
+  if (
+    !editable.listing_id ||
+    !/^govdeals_\d+_\d+$/.test(editable.listing_id)
+  ) {
+    missing.push("identity");
+  }
   if (!editable.title || !editable.title.trim()) {
     missing.push("title");
   }
-  if (!Number.isFinite(editable.current_bid ?? Number.NaN) || (editable.current_bid ?? 0) <= 0) {
+  if (
+    !Number.isFinite(editable.current_bid ?? Number.NaN) ||
+    (editable.current_bid ?? Number.NaN) <= 0
+  ) {
     missing.push("current_bid");
   }
   if (!editable.auction_end || !Number.isFinite(Date.parse(editable.auction_end))) {
@@ -447,21 +563,39 @@ export const computeImportMissingFields = (
 export const buildImportReviewDraftOverrides = (
   review: OpportunityImportReviewResponse
 ): Partial<OpportunityEditableFields> => ({
+  listing_id: review.parsed_fields.listing_id ?? review.listing_id ?? null,
   title: review.parsed_fields.title ?? "",
-  current_bid: Number(review.parsed_fields.current_bid ?? 0),
-  buyer_premium_pct: Number(review.parsed_fields.buyer_premium_pct ?? 0.1),
-  estimated_resale_value: Number(review.parsed_fields.estimated_resale_value ?? 0),
+  current_bid:
+    review.parsed_fields.current_bid === undefined || review.parsed_fields.current_bid === null
+      ? null
+      : Number(review.parsed_fields.current_bid),
+  buyer_premium_pct:
+    review.parsed_fields.buyer_premium_pct === undefined || review.parsed_fields.buyer_premium_pct === null
+      ? null
+      : normalizeBuyerPremiumPct(review.parsed_fields.buyer_premium_pct),
+  estimated_resale_value:
+    review.parsed_fields.estimated_resale_value === undefined ||
+    review.parsed_fields.estimated_resale_value === null
+      ? null
+      : Number(review.parsed_fields.estimated_resale_value),
   estimated_transport_override:
     review.parsed_fields.estimated_transport_override === undefined
       ? null
       : review.parsed_fields.estimated_transport_override,
-  estimated_repair_cost: Number(review.parsed_fields.estimated_repair_cost ?? 0),
+  estimated_repair_cost:
+    review.parsed_fields.estimated_repair_cost === undefined || review.parsed_fields.estimated_repair_cost === null
+      ? null
+      : Number(review.parsed_fields.estimated_repair_cost),
   quantity_purchased:
     review.parsed_fields.quantity_purchased === undefined ? null : review.parsed_fields.quantity_purchased,
   quantity_broken: review.parsed_fields.quantity_broken === undefined ? null : review.parsed_fields.quantity_broken,
   condition_raw: review.parsed_fields.condition_raw ?? "",
   title_status: review.parsed_fields.title_status ?? "unknown",
-  removal_window_days: Number(review.parsed_fields.removal_window_days ?? 3),
+  removal_window_days:
+    review.parsed_fields.removal_window_days === undefined ||
+    review.parsed_fields.removal_window_days === null
+      ? null
+      : Number(review.parsed_fields.removal_window_days),
   seller_agency: review.parsed_fields.seller_agency ?? "",
   seller_type: review.parsed_fields.seller_type ?? "unknown",
   location: review.parsed_fields.location ?? "",
@@ -490,7 +624,8 @@ export const OPPORTUNITY_SORT_OPTIONS: Array<{ value: OpportunitySortMode; label
   { value: "time_left", label: "Ending Soonest" },
 ];
 
-export const SNIPER_CONFIDENCE_THRESHOLD = 62;
+export const SNIPER_CONFIDENCE_THRESHOLD = 80;
+export const SNIPER_MIN_ROI_PCT = 30;
 const KEY_NONRUNNER_COST_PENALTY = 450;
 const MAJOR_EXCLUDED_RISK_FLAGS = new Set([
   "FORCE_LIQUIDATION",
@@ -575,28 +710,39 @@ const mapConditionGrade = (rawCondition: string): CreateDealRequest["metadata"][
   return "used";
 };
 
-const buildRemovalDeadline = (days: number): string | null => {
+const buildRemovalDeadline = (days: number | null): string | null => {
   if (!Number.isFinite(days) || days <= 0) {
     return null;
   }
   return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
 };
 
+const toSafeNumber = (value: number | null | undefined): number =>
+  typeof value === "number" && Number.isFinite(value) ? value : 0;
+
+const asNonEmptyText = (value: string | null | undefined, fallback = "Unknown"): string => {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : fallback;
+};
+
 const estimateConfidence = (opportunity: GovDealsOpportunity, distanceMiles: number | null): number => {
   let score = 45;
-  if (opportunity.listing_url.trim()) {
+  if ((opportunity.listing_url ?? "").trim()) {
     score += 10;
   }
   if (opportunity.auction_end) {
     score += 8;
   }
-  if (opportunity.current_bid > 0) {
+  if (toSafeNumber(opportunity.current_bid) > 0) {
     score += 8;
   }
-  if (opportunity.estimated_resale_value > 0) {
+  if (toSafeNumber(opportunity.estimated_resale_value) > 0) {
     score += 16;
   }
-  if (opportunity.buyer_premium_pct > 0) {
+  if (toSafeNumber(opportunity.buyer_premium_pct) > 0) {
     score += 8;
   }
   if (opportunity.seller_type !== "unknown") {
@@ -630,21 +776,26 @@ export const computeOpportunityDerivedMetrics = (
     opportunity.category,
     backendTimeLeft
   );
-  const conditionLower = opportunity.condition_raw.toLowerCase();
+  const conditionLower = (opportunity.condition_raw ?? "").toLowerCase();
   const missingKey = conditionLower.includes("missing key") || conditionLower.includes("no key");
   const nonRunner =
     conditionLower.includes("non-runner") ||
     conditionLower.includes("non runner") ||
     conditionLower.includes("does not run");
   const keyNonRunnerCost = missingKey || nonRunner ? KEY_NONRUNNER_COST_PENALTY : 0;
-  const premiumCost = opportunity.current_bid * opportunity.buyer_premium_pct;
+  const effectiveCurrentBid = opportunity.current_bid ?? 0;
+  const effectiveBuyerPremiumPct = opportunity.buyer_premium_pct ?? 0;
+  const effectiveRepair = opportunity.estimated_repair_cost ?? 0;
+  const effectiveResale = opportunity.estimated_resale_value ?? 0;
+  const premiumCost = effectiveCurrentBid * effectiveBuyerPremiumPct;
   const estimatedTotalInvestment =
-    opportunity.current_bid +
+    effectiveCurrentBid +
     premiumCost +
     (estimatedTransportCost ?? 0) +
-    opportunity.estimated_repair_cost +
+    effectiveRepair +
     keyNonRunnerCost;
-  const rawUpside = opportunity.estimated_resale_value - estimatedTotalInvestment;
+  const conservativeResale = effectiveResale * 0.85;
+  const rawUpside = conservativeResale - estimatedTotalInvestment;
   const rawRoi = estimatedTotalInvestment > 0 ? (rawUpside / estimatedTotalInvestment) * 100 : 0;
   const timeLeft = backendTimeLeft;
   const confidence = preview?.data_confidence ?? estimateConfidence(opportunity, estimatedDistance);
@@ -661,14 +812,14 @@ export const computeOpportunityDerivedMetrics = (
   if (timeLeft !== null && timeLeft < 12) {
     riskFlags.add("ENDING_SOON");
   }
-  if (opportunity.removal_window_days <= 2) {
+  if ((opportunity.removal_window_days ?? Number.POSITIVE_INFINITY) <= 2) {
     riskFlags.add("REMOVAL_RISK");
   }
   if (timeLeft !== null && timeLeft <= 36) {
-    const auctionEndTs = Date.parse(opportunity.auction_end);
+    const auctionEndTs = Date.parse(opportunity.auction_end ?? "");
     const removalDeadlineTs =
-      Number.isFinite(auctionEndTs) && opportunity.removal_window_days > 0
-        ? auctionEndTs + opportunity.removal_window_days * 24 * 60 * 60 * 1000
+      Number.isFinite(auctionEndTs) && (opportunity.removal_window_days ?? 0) > 0
+        ? auctionEndTs + (opportunity.removal_window_days ?? 0) * 24 * 60 * 60 * 1000
         : Number.NaN;
     const removalDay = Number.isFinite(removalDeadlineTs) ? new Date(removalDeadlineTs).getDay() : null;
     if (removalDay === 0 || removalDay === 6) {
@@ -959,258 +1110,81 @@ const inferCategoryFromText = (value: string): OpportunityCategory => {
   return "vehicle";
 };
 
-const SAMPLE_OPPORTUNITIES: Array<Omit<GovDealsOpportunity, "id" | "created_at">> = [
-  {
-    source: "keyword_search",
-    listing_id: "11221",
-    listing_url: "https://govdeals.example/listing/11221",
-    canonical_url: "https://govdeals.example/listing/11221",
-    title: "2018 Ford Explorer Police Interceptor - 132k miles",
-    category: "vehicle",
-    current_bid: 5400,
-    auction_end: new Date(Date.now() + 13 * 60 * 60 * 1000).toISOString(),
-    auction_state: "unknown",
-    time_left_hours: null,
-    location: "Austin, TX",
-    seller_agency: "City of Austin Fleet",
-    seller_type: "government",
-    buyer_premium_pct: 0.1,
-    removal_window_days: 5,
-    title_status: "on_site",
-    relisted: false,
-    condition_raw: "Runs, minor cosmetic wear, fleet maintained.",
-    description: "Runs, minor cosmetic wear, fleet maintained.",
-    attachment_links: [],
-    seller_contact: null,
-    estimated_resale_value: 10950,
-    estimated_transport_override: null,
-    estimated_repair_cost: 650,
-    quantity_purchased: null,
-    quantity_broken: null,
-    import_status: "active",
-    import_confidence: 88,
-    import_missing_fields: [],
-    raw_import_data: null,
-    operator_overrides: null,
-    imported_at: new Date().toISOString(),
-    status: "new",
-    interest: "undecided",
-  },
-  {
-    source: "keyword_search",
-    listing_id: "22911",
-    listing_url: "https://govdeals.example/listing/22911",
-    canonical_url: "https://govdeals.example/listing/22911",
-    title: "Mixed iPad Lot (36 Units) - untested mix",
-    category: "electronics",
-    current_bid: 3250,
-    auction_end: new Date(Date.now() + 22 * 60 * 60 * 1000).toISOString(),
-    auction_state: "unknown",
-    time_left_hours: null,
-    location: "Baton Rouge, LA",
-    seller_agency: "Parish IT Department",
-    seller_type: "government",
-    buyer_premium_pct: 0.12,
-    removal_window_days: 4,
-    title_status: "unknown",
-    relisted: true,
-    condition_raw: "Mixed condition, some locked units expected.",
-    description: "Mixed condition, some locked units expected.",
-    attachment_links: [],
-    seller_contact: null,
-    estimated_resale_value: 8450,
-    estimated_transport_override: null,
-    estimated_repair_cost: 420,
-    quantity_purchased: 36,
-    quantity_broken: 6,
-    import_status: "active",
-    import_confidence: 80,
-    import_missing_fields: [],
-    raw_import_data: null,
-    operator_overrides: null,
-    imported_at: new Date().toISOString(),
-    status: "new",
-    interest: "undecided",
-  },
-  {
-    source: "keyword_search",
-    listing_id: "37770",
-    listing_url: "https://govdeals.example/listing/37770",
-    canonical_url: "https://govdeals.example/listing/37770",
-    title: "2017 Chevy Tahoe - Utility Unit",
-    category: "vehicle",
-    current_bid: 6900,
-    auction_end: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
-    auction_state: "unknown",
-    time_left_hours: null,
-    location: "Tulsa, OK",
-    seller_agency: "County Asset Disposal",
-    seller_type: "government",
-    buyer_premium_pct: 0.1,
-    removal_window_days: 3,
-    title_status: "delayed",
-    relisted: false,
-    condition_raw: "Starts and drives, check transmission response.",
-    description: "Starts and drives, check transmission response.",
-    attachment_links: [],
-    seller_contact: null,
-    estimated_resale_value: 13200,
-    estimated_transport_override: null,
-    estimated_repair_cost: 1200,
-    quantity_purchased: null,
-    quantity_broken: null,
-    import_status: "active",
-    import_confidence: 82,
-    import_missing_fields: [],
-    raw_import_data: null,
-    operator_overrides: null,
-    imported_at: new Date().toISOString(),
-    status: "new",
-    interest: "undecided",
-  },
-  {
-    source: "keyword_search",
-    listing_id: "49005",
-    listing_url: "https://govdeals.example/listing/49005",
-    canonical_url: "https://govdeals.example/listing/49005",
-    title: "2020 Polaris Ranger 1000",
-    category: "other",
-    current_bid: 4700,
-    auction_end: new Date(Date.now() + 28 * 60 * 60 * 1000).toISOString(),
-    auction_state: "unknown",
-    time_left_hours: null,
-    location: "Raleigh, NC",
-    seller_agency: "State Parks Division",
-    seller_type: "government",
-    buyer_premium_pct: 0.1,
-    removal_window_days: 7,
-    title_status: "on_site",
-    relisted: false,
-    condition_raw: "Operational, deep detail needed.",
-    description: "Operational, deep detail needed.",
-    attachment_links: [],
-    seller_contact: null,
-    estimated_resale_value: 9400,
-    estimated_transport_override: null,
-    estimated_repair_cost: 550,
-    quantity_purchased: null,
-    quantity_broken: null,
-    import_status: "active",
-    import_confidence: 85,
-    import_missing_fields: [],
-    raw_import_data: null,
-    operator_overrides: null,
-    imported_at: new Date().toISOString(),
-    status: "new",
-    interest: "undecided",
-  },
-];
+const SAMPLE_OPPORTUNITIES: Array<Omit<GovDealsOpportunity, "id" | "created_at">> = [];
 
 export const buildKeywordOpportunities = (keyword: string): GovDealsOpportunity[] => {
-  const lowered = keyword.trim().toLowerCase();
-  if (!lowered) {
+  const _lowered = keyword.trim().toLowerCase();
+  if (!_lowered) {
     return [];
   }
-  const matching = SAMPLE_OPPORTUNITIES.filter((opportunity) => {
-    const haystack = [
-      opportunity.title,
-      opportunity.location,
-      opportunity.seller_agency,
-      opportunity.condition_raw,
-    ]
-      .join(" ")
-      .toLowerCase();
-    return haystack.includes(lowered);
-  });
-  if (matching.length > 0) {
-    return matching.map((item) => withNewId(item));
-  }
-  return [
-    withNewId({
-      source: "keyword_search",
-      listing_url: "",
-      title: `${keyword.trim()} - manual verify needed`,
-      category: inferCategoryFromText(keyword),
-      current_bid: 0,
-      auction_end: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      auction_state: "unknown",
-      time_left_hours: null,
-      location: "Unknown, TX",
-      seller_agency: "Unknown agency",
-      seller_type: "unknown",
-      buyer_premium_pct: 0.1,
-      removal_window_days: 3,
-      title_status: "unknown",
-      relisted: false,
-      condition_raw: "Keyword import skeleton. Add listing details before execution.",
-      estimated_resale_value: 0,
-      estimated_repair_cost: 0,
-      quantity_purchased: null,
-      quantity_broken: null,
-      status: "new",
-      interest: "undecided",
-    }),
-  ];
+  return [];
 };
 
 export const buildOpportunityFromUrl = (listingUrl: string, keywordHint = ""): GovDealsOpportunity => {
-  const safeUrl = listingUrl.trim();
-  let titleFromUrl = "GovDeals Listing";
-  try {
-    const parsed = new URL(safeUrl);
-    const parts = parsed.pathname.split("/").filter(Boolean);
-    const last = parts.at(-1) ?? "listing";
-    titleFromUrl = decodeURIComponent(last).replace(/[-_]+/g, " ");
-  } catch {
-    titleFromUrl = "GovDeals Listing";
-  }
-  const now = Date.now();
   return withNewId({
-    source: "url_import",
-    listing_url: safeUrl,
-    title: `${titleFromUrl} ${keywordHint ? `(${keywordHint.trim()})` : ""}`.trim(),
-    category: inferCategoryFromText(`${titleFromUrl} ${keywordHint}`),
-    current_bid: 0,
-    auction_end: new Date(now + 24 * 60 * 60 * 1000).toISOString(),
+    source: "govdeals",
+    listing_url: listingUrl.trim(),
+    title: keywordHint.trim() || null,
+    category: inferCategoryFromText(keywordHint || listingUrl),
+    current_bid: null,
+    auction_end: null,
     auction_state: "unknown",
     time_left_hours: null,
-    location: "Unknown, TX",
-    seller_agency: "Unknown agency",
+    location: null,
+    seller_agency: null,
     seller_type: "unknown",
-    buyer_premium_pct: 0.1,
-    removal_window_days: 3,
+    buyer_premium_pct: null,
+    buyer_premium_explicit: false,
+    removal_window_days: null,
     title_status: "unknown",
     relisted: false,
-    condition_raw: "URL imported. Fill missing listing details before creating deal.",
-    estimated_resale_value: 0,
-    estimated_repair_cost: 0,
+    condition_raw: null,
+    estimated_resale_value: null,
+    estimated_repair_cost: null,
     quantity_purchased: null,
     quantity_broken: null,
-    status: "new",
+    import_status: "needs_review",
+    import_confidence: null,
+    import_missing_fields: ["identity", "title", "current_bid", "auction_end", "location", "seller_agency"],
+    status: "draft",
     interest: "undecided",
   });
 };
 
 export const buildManualOpportunity = (input: ManualOpportunityInput): GovDealsOpportunity =>
   withNewId({
-    source: "manual_import",
+    source: "manual",
     listing_url: input.listing_url.trim(),
-    title: input.title.trim() || "Manual GovDeals Listing",
+    title: input.title.trim() || null,
     category: input.category,
-    current_bid: Math.max(0, input.current_bid),
-    auction_end: input.auction_end || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    current_bid:
+      input.current_bid === null || input.current_bid === undefined
+        ? null
+        : Math.max(0, input.current_bid),
+    auction_end: input.auction_end.trim() || null,
     auction_state: "unknown",
     time_left_hours: null,
-    location: input.location.trim() || "Unknown, TX",
-    seller_agency: input.seller_agency.trim() || "Unknown agency",
+    location: input.location.trim() || null,
+    seller_agency: input.seller_agency.trim() || null,
     seller_type: input.seller_type,
-    buyer_premium_pct: Math.max(0, input.buyer_premium_pct),
+    buyer_premium_pct:
+      input.buyer_premium_pct === null || input.buyer_premium_pct === undefined
+        ? null
+        : normalizeBuyerPremiumPct(input.buyer_premium_pct),
+    buyer_premium_explicit:
+      input.buyer_premium_pct !== null && input.buyer_premium_pct !== undefined,
     removal_window_days: Math.max(1, Math.round(input.removal_window_days || 3)),
     title_status: input.title_status,
     relisted: input.relisted,
-    condition_raw: input.condition_raw.trim() || "No condition details provided.",
-    estimated_resale_value: Math.max(0, input.estimated_resale_value),
-    estimated_repair_cost: Math.max(0, input.estimated_repair_cost),
+    condition_raw: input.condition_raw.trim() || null,
+    estimated_resale_value:
+      input.estimated_resale_value === null || input.estimated_resale_value === undefined
+        ? null
+        : Math.max(0, input.estimated_resale_value),
+    estimated_repair_cost:
+      input.estimated_repair_cost === null || input.estimated_repair_cost === undefined
+        ? null
+        : Math.max(0, input.estimated_repair_cost),
     quantity_purchased:
       input.quantity_purchased === null || input.quantity_purchased === undefined
         ? null
@@ -1219,7 +1193,18 @@ export const buildManualOpportunity = (input: ManualOpportunityInput): GovDealsO
       input.quantity_broken === null || input.quantity_broken === undefined
         ? null
         : Math.max(0, Math.round(input.quantity_broken)),
-    status: "new",
+    import_status: "needs_review",
+    import_confidence: null,
+    import_missing_fields: computeImportMissingFields({
+      listing_id: null,
+      title: input.title.trim() || null,
+      current_bid:
+        input.current_bid === null || input.current_bid === undefined ? null : Math.max(0, input.current_bid),
+      auction_end: input.auction_end.trim() || null,
+      location: input.location.trim() || null,
+      seller_agency: input.seller_agency.trim() || null,
+    }),
+    status: "draft",
     interest: "undecided",
   });
 
@@ -1230,18 +1215,16 @@ export const upsertOpportunities = (
   const map = new Map<string, GovDealsOpportunity>();
   existing.forEach((item) => map.set(item.id, item));
   incoming.forEach((item) => {
-    const existingByUrl = Array.from(map.values()).find(
-      (candidate) =>
-        candidate.listing_url &&
-        item.listing_url &&
-        candidate.listing_url.trim().toLowerCase() === item.listing_url.trim().toLowerCase()
-    );
-    if (existingByUrl) {
-      map.set(existingByUrl.id, {
-        ...existingByUrl,
+    const existingByListingId =
+      item.listing_id && /^govdeals_\d+_\d+$/.test(item.listing_id)
+        ? Array.from(map.values()).find((candidate) => candidate.listing_id === item.listing_id)
+        : null;
+    if (existingByListingId) {
+      map.set(existingByListingId.id, {
+        ...existingByListingId,
         ...item,
-        id: existingByUrl.id,
-        created_at: existingByUrl.created_at,
+        id: existingByListingId.id,
+        created_at: existingByListingId.created_at,
       });
       return;
     }
@@ -1585,10 +1568,10 @@ export const buildSniperAIPicks = (
       if (opportunity.status === "converted") {
         return false;
       }
-      if (metrics.projected_upside < 500) {
+      if (metrics.projected_roi_pct <= SNIPER_MIN_ROI_PCT) {
         return false;
       }
-      if (metrics.confidence < SNIPER_CONFIDENCE_THRESHOLD) {
+      if (metrics.confidence <= SNIPER_CONFIDENCE_THRESHOLD) {
         return false;
       }
       if (hasMajorExcludedRisk(metrics.risk_flags)) {

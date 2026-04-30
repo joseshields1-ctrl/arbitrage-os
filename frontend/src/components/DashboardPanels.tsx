@@ -119,7 +119,13 @@ export function computeDecisionQueue(deals: DealView[]): DecisionQueueItem[] {
 
 export function computeBurnEnhancements(deals: DealView[]): BurnEnhancementItem[] {
   return deals
-    .filter((deal) => deal.deal.status !== "completed")
+    .filter((deal) => {
+      if (deal.deal.status === "completed") {
+        return false;
+      }
+      const hasZeroInterestSignals = (deal.operator_decision_history?.length ?? 0) === 0;
+      return deal.calculations.days_in_current_stage > 30 && hasZeroInterestSignals;
+    })
     .map((deal) => {
       const marketIntel = inferVehicleMarketIntel(deal);
       const blended = computeBlendedMarketValue(marketIntel, deal.financials.estimated_market_value);
@@ -143,8 +149,8 @@ export function computeBurnEnhancements(deals: DealView[]): BurnEnhancementItem[
 }
 
 export function computeRoiVelocitySummary(deals: DealView[]): RoiVelocitySummary {
-  const completedDeals = deals.filter((item) => item.deal.status === "completed");
-  if (completedDeals.length === 0) {
+  const velocityDeals = deals.filter((item) => item.deal.status !== "completed");
+  if (velocityDeals.length === 0) {
     return {
       avg_roi_pct: 0,
       avg_days_to_cash_back: 0,
@@ -153,29 +159,47 @@ export function computeRoiVelocitySummary(deals: DealView[]): RoiVelocitySummary
       slowest_payback: null,
     };
   }
-  const roiValues = completedDeals.map((item) =>
-    calculateRoiPct(item.calculations.realized_profit, item.calculations.total_cost_basis)
-  );
-  const daysToCashBack = completedDeals.map((item) => {
-    const start = item.deal.purchase_date ?? item.deal.discovered_date ?? item.deal.stage_updated_at;
-    const end = item.deal.completion_date ?? item.deal.sale_date ?? item.deal.stage_updated_at;
-    const startTs = Date.parse(start);
-    const endTs = Date.parse(end);
-    const days =
-      Number.isFinite(startTs) && Number.isFinite(endTs)
-        ? Math.max(0, (endTs - startTs) / (24 * 60 * 60 * 1000))
-        : 0;
-    return {
-      id: item.deal.id,
-      label: item.deal.label,
-      days,
-    };
+  const roiValues = velocityDeals.map((item) => {
+    const projectedProfit =
+      item.financials.estimated_market_value * 0.85 -
+      (item.financials.acquisition_cost +
+        (item.financials.transport_cost_actual ?? item.financials.transport_cost_estimated ?? 0) +
+        (item.financials.repair_cost ?? 0));
+    const basis =
+      item.financials.acquisition_cost +
+      (item.financials.transport_cost_actual ?? item.financials.transport_cost_estimated ?? 0) +
+      (item.financials.repair_cost ?? 0);
+    return calculateRoiPct(projectedProfit, basis);
   });
+  const categoryAverages: Record<string, number> = {
+    electronics_bulk: 21,
+    electronics_individual: 18,
+    vehicle_suv: 42,
+    vehicle_police_fleet: 35,
+    powersports: 30,
+  };
+  const daysToCashBack = velocityDeals.map((item) => ({
+    id: item.deal.id,
+    label: item.deal.label,
+    days: categoryAverages[item.deal.category] ?? 30,
+  }));
 
   const avgRoi = roiValues.reduce((sum, value) => sum + value, 0) / roiValues.length;
   const avgDays = daysToCashBack.reduce((sum, item) => sum + item.days, 0) / daysToCashBack.length;
-  const hourlyRates = completedDeals
-    .map((item) => computeEffectiveHourlyRate(item))
+  const hourlyRates = velocityDeals
+    .map((item) => {
+      const value = computeEffectiveHourlyRate(item);
+      if (value !== null) {
+        return value;
+      }
+      const projectedProfit =
+        item.financials.estimated_market_value * 0.85 -
+        (item.financials.acquisition_cost +
+          (item.financials.transport_cost_actual ?? item.financials.transport_cost_estimated ?? 0) +
+          (item.financials.repair_cost ?? 0));
+      const reconHours = Math.max(1, item.calculations.days_in_current_stage * 1.5);
+      return projectedProfit / reconHours;
+    })
     .filter((value): value is number => value !== null);
   const avgEhr =
     hourlyRates.length > 0

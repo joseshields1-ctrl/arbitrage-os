@@ -72,6 +72,7 @@ interface GovDealsScannerPanelProps {
     opportunity: GovDealsOpportunity,
     intake: WonDealIntakeInput
   ) => Promise<void>;
+  onSelectOpportunityForAssistant: (opportunity: GovDealsOpportunity) => void;
   onSniperApprove: (pick: SniperAIPick) => void;
   onSniperPass: (pick: SniperAIPick, reason: SniperPassReason, note: string | null) => void;
 }
@@ -206,6 +207,7 @@ function GovDealsScannerPanel({
   onSetInterest,
   onOverrideOpportunity,
   onCreateFromWonDeal,
+  onSelectOpportunityForAssistant,
   onSniperApprove,
   onSniperPass,
 }: GovDealsScannerPanelProps) {
@@ -902,7 +904,7 @@ function GovDealsScannerPanel({
           </div>
         </div>
         <p className="muted">
-          Rules: projected profit ≥ $500, confidence ≥ {SNIPER_CONFIDENCE_THRESHOLD}, not marked
+          Rules: projected ROI &gt; 30% and confidence &gt; {SNIPER_CONFIDENCE_THRESHOLD}, not marked
           Not Interested, not already converted, no major risk exclusion, and acceptable transport economics.
           Ranking also factors operator penalties (title/removal/key/non-runner/relisted), EHR, capital pressure,
           and pass-reason behavior bias.
@@ -1292,6 +1294,14 @@ function GovDealsScannerPanel({
                   <button
                     type="button"
                     className="ghost-button"
+                    disabled={isBusy}
+                    onClick={() => onSelectOpportunityForAssistant(opportunity)}
+                  >
+                    Explain this deal
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-button"
                     disabled={disableDecisionActions || opportunity.import_status === "needs_review"}
                     onClick={() => onWatch(opportunity)}
                   >
@@ -1303,7 +1313,7 @@ function GovDealsScannerPanel({
                     disabled={disableDecisionActions || opportunity.import_status === "needs_review"}
                     onClick={() => void onCreateDeal(opportunity)}
                   >
-                    Create Deal
+                    Add to Pipeline
                   </button>
                   <button
                     type="button"

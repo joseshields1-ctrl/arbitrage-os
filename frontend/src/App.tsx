@@ -83,6 +83,8 @@ const INTAKE_QUEUE_STORAGE_KEY = "arbitrage_os_intake_queue_v1";
 const GOVDEALS_SCANNER_META_STORAGE_KEY = "arbitrage_os_govdeals_scanner_meta_v1";
 
 const OPPORTUNITIES_REQUEST_TIMEOUT_MS = 10000;
+const FEED_HEARTBEAT_INTERVAL_MS = 30_000;
+const FEED_HEARTBEAT_LIVE_WINDOW_MS = 60_000;
 const MOBILE_ONE_PANE_MEDIA_QUERY = "(max-width: 900px)";
 
 type ActivePage =
@@ -401,6 +403,10 @@ function App() {
   const [scannerFeedMessage, setScannerFeedMessage] = useState("Loading opportunities feed...");
   const [scannerFeedLastPolledAt, setScannerFeedLastPolledAt] = useState<string | null>(null);
   const [scannerFeedRehydrateDone, setScannerFeedRehydrateDone] = useState(false);
+  const [scannerFeedBusy, setScannerFeedBusy] = useState(false);
+  const [selectedOpportunityIdForAssistant, setSelectedOpportunityIdForAssistant] = useState<string | null>(
+    null
+  );
   const [mobilePanelMode, setMobilePanelMode] = useState<"main" | "detail" | "assistant">("main");
   const [isMobileOnePane, setIsMobileOnePane] = useState(false);
   const [scannerSaveInFlightByOpportunityId, setScannerSaveInFlightByOpportunityId] = useState<
@@ -574,12 +580,16 @@ function App() {
     setGovDealsOpportunities(normalized.opportunities);
     setSniperDecisionHistory(mapFeedToSniperHistory(normalized));
     setInterestSignalHistory(mapFeedToInterestSignals(normalized));
-    setScannerFeedLastPolledAt(normalized.last_polled_at);
+    setScannerFeedLastPolledAt(normalized.last_polled_at ?? normalized.generated_at ?? null);
     setScannerFeedStatus(normalized.status);
     setScannerFeedMessage(normalized.message);
   };
 
   const runOpportunitiesRehydrate = async (): Promise<void> => {
+    if (scannerFeedBusy) {
+      return;
+    }
+    setScannerFeedBusy(true);
     setScannerFeedStatus("loading");
     setScannerFeedMessage("Loading opportunities feed...");
     setScannerFeedRehydrateDone(false);
@@ -602,11 +612,19 @@ function App() {
     } finally {
       window.clearTimeout(timeoutId);
       setScannerFeedRehydrateDone(true);
+      setScannerFeedBusy(false);
     }
   };
 
   useEffect(() => {
     void runOpportunitiesRehydrate();
+  }, []);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      void runOpportunitiesRehydrate();
+    }, FEED_HEARTBEAT_INTERVAL_MS);
+    return () => window.clearInterval(intervalId);
   }, []);
 
   useEffect(() => {
@@ -652,6 +670,14 @@ function App() {
     null;
 
   const selectedOpportunityForAssistant = useMemo(() => {
+    if (selectedOpportunityIdForAssistant) {
+      const byId =
+        govDealsOpportunities.find((opportunity) => opportunity.id === selectedOpportunityIdForAssistant) ??
+        null;
+      if (byId) {
+        return byId;
+      }
+    }
     if (!selectedDeal) {
       return null;
     }
@@ -660,9 +686,27 @@ function App() {
       return null;
     }
     return (
-      govDealsOpportunities.find((opportunity) => opportunity.title.trim().toLowerCase() === title) ?? null
+      govDealsOpportunities.find((opportunity) => (opportunity.title ?? "").trim().toLowerCase() === title) ??
+      null
     );
-  }, [govDealsOpportunities, selectedDeal]);
+  }, [govDealsOpportunities, selectedDeal, selectedOpportunityIdForAssistant]);
+  const assistantOpportunitySnapshot = useMemo(() => {
+    if (!selectedOpportunityForAssistant) {
+      return null;
+    }
+    return {
+      acquisition_cost: selectedOpportunityForAssistant.current_bid,
+      market_comp: selectedOpportunityForAssistant.estimated_resale_value,
+      shipping: selectedOpportunityForAssistant.estimated_transport_override,
+      recon_est: selectedOpportunityForAssistant.estimated_repair_cost,
+      detail: {
+        current_bid: selectedOpportunityForAssistant.current_bid,
+        buyer_premium_pct: selectedOpportunityForAssistant.buyer_premium_pct,
+        shipping: selectedOpportunityForAssistant.estimated_transport_override,
+        recon_estimate: selectedOpportunityForAssistant.estimated_repair_cost,
+      },
+    };
+  }, [selectedOpportunityForAssistant]);
 
   const selectedDealMarketIntel = selectedDeal
     ? inferVehicleMarketIntel(selectedDeal, marketIntelMap)
@@ -752,9 +796,18 @@ function App() {
     () => deriveOpportunitiesSurfaceState(scannerFeedStatus, scannerFeedLastPolledAt),
     [scannerFeedStatus, scannerFeedLastPolledAt]
   );
-  const isRealtimeFreshnessVisible = scannerStateTier === "live" || scannerStateTier === "stale";
-  const freshnessLabel =
-    scannerStateTier === "live"
+  const lastFeedSyncMs = scannerFeedLastPolledAt ? Date.parse(scannerFeedLastPolledAt) : Number.NaN;
+  const feedAgeMs = Number.isFinite(lastFeedSyncMs) ? Math.max(0, Date.now() - lastFeedSyncMs) : null;
+  const isHeartbeatLive =
+    scannerFeedStatus !== "backend_error" &&
+    scannerFeedStatus !== "timeout" &&
+    feedAgeMs !== null &&
+    feedAgeMs < FEED_HEARTBEAT_LIVE_WINDOW_MS;
+  const heartbeatSourceLabel = scannerFeedStatus === "feed_offline" ? "DB Polling" : "Backend Feed";
+  const isRealtimeFreshnessVisible = scannerStateTier === "live" || scannerStateTier === "stale" || isHeartbeatLive;
+  const freshnessLabel = isHeartbeatLive
+    ? `LIVE - ${heartbeatSourceLabel}`
+    : scannerStateTier === "live"
       ? "Live"
       : scannerStateTier === "stale"
         ? "Stale"
@@ -768,6 +821,15 @@ function App() {
   const persistedDecisionCount = useMemo(() => sniperDecisionHistory.length, [sniperDecisionHistory]);
   const interestSignalCount = useMemo(() => interestSignalHistory.length, [interestSignalHistory]);
   const assistantRequiredFields = useMemo(() => {
+    if (selectedOpportunityForAssistant) {
+      return {
+        hasDeal: true,
+        hasAssistantContext: true,
+        hasEngine: true,
+        hasCalculations: true,
+        hasWarnings: true,
+      };
+    }
     if (!selectedDeal) {
       return {
         hasDeal: false,
@@ -784,10 +846,10 @@ function App() {
       hasCalculations: Boolean(selectedDeal.assistant_context?.calculations),
       hasWarnings: Array.isArray(selectedDeal.assistant_context?.warnings),
     };
-  }, [selectedDeal]);
+  }, [selectedDeal, selectedOpportunityForAssistant]);
   const assistantDisableReason = useMemo((): string | null => {
-    if (!selectedDeal) {
-      return "Assistant disabled: no deal selected.";
+    if (!selectedDeal && !selectedOpportunityForAssistant) {
+      return "Assistant disabled: no selected record.";
     }
     if (!assistantRequiredFields.hasAssistantContext) {
       return "Assistant disabled: assistant_context is missing.";
@@ -836,9 +898,11 @@ function App() {
         ? "timeout"
         : "api_failure"
       : assistantDisableReason
-        ? "disabled"
+        ? "disabled_missing_context"
         : "ready";
   const assistantCanSubmit = assistantReadinessState === "ready" || assistantReadinessState === "loading";
+  const assistantStateLabel =
+    assistantReadinessState === "disabled_missing_context" ? "disabled_missing_context" : assistantReadinessState;
   const showMobileContextPanel = mobilePanelMode === "detail" || mobilePanelMode === "assistant";
   const operatorAgreementRate = useMemo(() => {
     if (sniperLast10.length === 0) {
@@ -1291,6 +1355,7 @@ function App() {
 
   const openDealDetail = (dealId: string): void => {
     setSelectedDealId(dealId);
+    setSelectedOpportunityIdForAssistant(null);
     setRightPanelMode("detail");
     setAssistantResponse(null);
     if (isMobileOnePane) {
@@ -1341,7 +1406,7 @@ function App() {
   };
 
   const handleAssistantSubmit = async () => {
-    if (!selectedDeal) {
+    if (!selectedDeal && !selectedOpportunityForAssistant) {
       setAssistantError("Select a deal first.");
       return;
     }
@@ -1356,10 +1421,31 @@ function App() {
     setAssistantLoading(true);
     setAssistantError(null);
     try {
-      const response = await queryAssistant({
-        deal_id: selectedDeal.deal.id,
-        question: trimmedQuestion,
-      });
+      if (selectedOpportunityForAssistant && assistantOpportunitySnapshot) {
+        setScannerStatusMessage(
+          `AI context loaded — Cost ${assistantOpportunitySnapshot.acquisition_cost ?? "N/A"}, Market Comp ${assistantOpportunitySnapshot.market_comp ?? "N/A"}, Shipping ${assistantOpportunitySnapshot.shipping ?? "N/A"}, Recon Est ${assistantOpportunitySnapshot.recon_est ?? "N/A"}`
+        );
+      }
+      const response = selectedOpportunityForAssistant
+        ? await queryAssistant({
+            mode: "preview_opportunity",
+            listing_id: selectedOpportunityForAssistant.listing_id ?? undefined,
+            snapshot: {
+              deal: {
+                id: selectedDeal?.deal.id ?? `preview-${selectedOpportunityForAssistant.id}`,
+                label: selectedDeal?.deal.label ?? selectedOpportunityForAssistant.title ?? "Selected opportunity",
+              },
+              opportunity: selectedOpportunityForAssistant,
+              assistant_context: selectedDeal?.assistant_context ?? null,
+            },
+            question: trimmedQuestion,
+          })
+        : await queryAssistant({
+            mode: "persisted_deal",
+            deal_id: selectedDeal?.deal.id,
+            assistant_context: selectedDeal?.assistant_context,
+            question: trimmedQuestion,
+          });
       setAssistantResponse(response);
     } catch (assistantQueryError) {
       const message =
@@ -1893,20 +1979,24 @@ function App() {
       ) : (
         <div className="assistant-panel">
           <p>
-            Selected deal: {" "}
-            {selectedDeal ? `${selectedDeal.deal.label} (${selectedDeal.deal.id})` : "None selected"}
+            Selected record: {" "}
+            {selectedDeal
+              ? `${selectedDeal.deal.label} (${selectedDeal.deal.id})`
+              : selectedOpportunityForAssistant
+                ? `${selectedOpportunityForAssistant.title ?? "Opportunity"} (${selectedOpportunityForAssistant.id})`
+                : "None selected"}
           </p>
           <p>
             Assistant state: {" "}
-            {assistantReadinessState === "ready"
+            {assistantStateLabel === "ready"
               ? "ready"
-              : assistantReadinessState === "loading"
+              : assistantStateLabel === "loading"
                 ? "loading"
-                : assistantReadinessState === "timeout"
+                : assistantStateLabel === "timeout"
                   ? "timeout"
-                  : assistantReadinessState === "api_failure"
+                  : assistantStateLabel === "api_failure"
                     ? "api_failure"
-                    : "disabled"}
+                    : "disabled_missing_context"}
           </p>
           {assistantDisableReason ? <p className="warning-banner">{assistantDisableReason}</p> : null}
           <div className="quick-prompts">
@@ -1937,7 +2027,7 @@ function App() {
             <button
               type="button"
               className="secondary-button"
-              disabled={!assistantCanSubmit || !selectedDeal}
+              disabled={!assistantCanSubmit || (!selectedDeal && !selectedOpportunityForAssistant)}
               onClick={() => void handleAssistantSubmit()}
             >
               {assistantLoading ? "Asking..." : "Ask Assistant"}
@@ -2058,6 +2148,14 @@ function App() {
           <span>Feed freshness</span>
           <strong>{isRealtimeFreshnessVisible ? freshnessLabel : "Not Live"}</strong>
           {scannerPersistenceBusy ? <small>Persisting decisions...</small> : null}
+          {feedAgeMs !== null ? <small>Last sync {Math.floor(feedAgeMs / 1000)}s ago</small> : null}
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => void runOpportunitiesRehydrate()}
+          >
+            Refresh Feed
+          </button>
         </div>
         <div className="next-action-item priority-low">
           <span>Decisions / Interest Signals</span>
@@ -2274,6 +2372,16 @@ function App() {
               onSetInterest={handleScannerSetInterest}
               onOverrideOpportunity={handleScannerOverrideOpportunity}
               onCreateFromWonDeal={handleScannerCreateFromWonDeal}
+              onSelectOpportunityForAssistant={(opportunity) => {
+                setSelectedOpportunityIdForAssistant(opportunity.id);
+                setActivePage("opportunities");
+                setRightPanelMode("assistant");
+                setAssistantQuestion("Explain this deal");
+                setAssistantResponse(null);
+                if (isMobileOnePane) {
+                  setMobilePanelMode("assistant");
+                }
+              }}
               sniperPicks={sniperPicks}
               sniperDashboardSummary={sniperDashboardSummary}
               onSniperApprove={(pick) =>
