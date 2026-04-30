@@ -97,7 +97,15 @@ type RightPanelDetailTab = "decision" | "market" | "recon";
 type PipelineAlertFilter = "all" | "critical" | "warning" | "none";
 type IntakeStep = 1 | 2 | 3;
 type SurfaceState = "live" | "stale" | "fallback" | "disabled";
-type AssistantReadinessState = "ready" | "loading" | "disabled" | "api_failure" | "timeout";
+type AssistantReadinessState =
+  | "ready"
+  | "loading"
+  | "success"
+  | "disabled_missing_context"
+  | "api_failure"
+  | "timeout"
+  | "deal_not_found"
+  | "preview_not_supported";
 
 const normalizeOpportunitiesContract = (
   partial: Partial<OpportunitiesFeedContract> & {
@@ -792,7 +800,7 @@ function App() {
     }
     if (selectedOpportunityForAssistant) {
       const missing = selectedOpportunityForAssistant.import_missing_fields ?? [];
-      if (selectedOpportunityForAssistant.import_status === "needs_review") {
+      if (selectedOpportunityForAssistant.import_status !== "valid") {
         if (missing.includes("title")) {
           return "Assistant disabled: missing title in imported opportunity.";
         }
@@ -810,7 +818,10 @@ function App() {
         }
         return "Assistant disabled: imported opportunity needs review before AI grounding.";
       }
-      if (selectedOpportunityForAssistant.import_confidence < 55) {
+      if (
+        selectedOpportunityForAssistant.import_confidence !== null &&
+        selectedOpportunityForAssistant.import_confidence < 55
+      ) {
         return `Assistant disabled: import_confidence ${selectedOpportunityForAssistant.import_confidence} is below 55.`;
       }
     } else if (selectedDeal.calculations.data_confidence < 55) {
@@ -1399,9 +1410,9 @@ function App() {
         draftOverrides: buildImportReviewDraftOverrides(review),
       });
       setScannerStatusMessage(
-        review.import_status === "needs_review"
-          ? "Import parsed. Review required before opportunity activation."
-          : "Import parsed. Review and confirm to activate."
+        review.import_status === "valid"
+          ? "Import parsed. Review and confirm to activate."
+          : `Import requires review (${review.import_status}).`
       );
     } catch (parseError) {
       const message = parseError instanceof Error ? parseError.message : "Failed to parse GovDeals listing";
@@ -1429,34 +1440,52 @@ function App() {
     try {
       const manual = buildManualOpportunity(input);
       const payloadReview: OpportunityImportReviewResponse = {
-        listing_url: manual.listing_url,
-        canonical_url: manual.canonical_url,
+        source: "manual_draft",
+        listing_url: manual.listing_url ?? "",
+        canonical_url: manual.canonical_url ?? "",
+        account_id: manual.account_id,
+        item_id: manual.item_id,
         listing_id: manual.listing_id,
         raw_fields: manual.raw_import_data ?? {
+          account_id: manual.account_id,
+          item_id: manual.item_id,
           listing_id: manual.listing_id,
           title: manual.title,
-          current_bid_text: String(manual.current_bid),
+          current_bid_text:
+            manual.current_bid === null || manual.current_bid === undefined
+              ? null
+              : String(manual.current_bid),
+          bid_increment_text: null,
           auction_end_text: manual.auction_end,
           time_remaining_text: null,
           location_text: manual.location,
           seller_agency_text: manual.seller_agency,
+          seller_contact_text: manual.seller_contact,
           category_text: manual.category,
-          buyer_premium_text: String(manual.buyer_premium_pct),
+          buyer_premium_text:
+            manual.buyer_premium_pct === null || manual.buyer_premium_pct === undefined
+              ? null
+              : `${manual.buyer_premium_pct * 100}%`,
           description_text: manual.description ?? manual.condition_raw,
+          vin_text: null,
+          condition_text: manual.condition_raw,
           quantity_text:
             manual.quantity_purchased === null || manual.quantity_purchased === undefined
               ? null
               : String(manual.quantity_purchased),
+          terms_text: null,
           attachment_links_text: manual.attachment_links.join(", "),
-          seller_contact_text: manual.seller_contact,
         },
         parsed_fields: {
           listing_id: manual.listing_id,
-          canonical_url: manual.canonical_url,
+          canonical_url: manual.canonical_url ?? "",
           category: manual.category,
           description: manual.description,
           attachment_links: manual.attachment_links,
           seller_contact: manual.seller_contact,
+          bid_increment: null,
+          vin: null,
+          buyer_premium_explicit: manual.buyer_premium_explicit,
           title: manual.title,
           current_bid: manual.current_bid,
           auction_end: manual.auction_end,
@@ -1476,14 +1505,21 @@ function App() {
         missing_fields: manual.import_missing_fields,
         import_status: manual.import_status,
         import_confidence: manual.import_confidence,
+        blocked_reason: manual.blocked_reason,
+        parser_error: manual.parser_error,
+        request_headers: {
+          "User-Agent": "manual",
+          "Accept-Language": "manual",
+          Referer: "manual",
+        },
         extraction_notes: ["Manual import"],
         selector_hits: {},
       };
       const result = await confirmOpportunityImport({
         review: payloadReview,
-        source: "manual_import",
+        source: "manual_draft",
       });
-      applyOpportunityFeed(result.feed, "Manual listing imported.");
+      applyOpportunityFeed(result.feed, "Manual draft saved.");
     } catch (manualError) {
       const message = manualError instanceof Error ? manualError.message : "Failed manual import";
       setScannerErrorMessage(message);
@@ -1502,15 +1538,15 @@ function App() {
         operator_overrides: importReviewState.draftOverrides,
         source: "url_import",
       });
-      applyOpportunityFeed(
-        result.feed,
-        result.dedupe_action === "updated_existing"
-          ? "Import confirmed and existing opportunity updated."
-          : "Import confirmed and opportunity created."
-      );
+      applyOpportunityFeed(result.feed, "Manual draft saved.");
       setImportReviewState(null);
     } catch (confirmError) {
-      const message = confirmError instanceof Error ? confirmError.message : "Failed to confirm import";
+      const message =
+        confirmError instanceof Error
+          ? confirmError.message
+          : typeof confirmError === "string"
+            ? confirmError
+            : "Failed to confirm import";
       setScannerErrorMessage(message);
     }
   };
@@ -1556,7 +1592,7 @@ function App() {
   };
 
   const handleScannerPreview = async (opportunity: GovDealsOpportunity): Promise<void> => {
-    if (opportunity.import_status === "needs_review") {
+    if (opportunity.import_status !== "valid") {
       setScannerErrorMessage("Opportunity needs review before preview.");
       return;
     }
@@ -1587,7 +1623,7 @@ function App() {
     reason?: string | null,
     note?: string | null
   ): Promise<boolean> => {
-    if (opportunity.import_status === "needs_review") {
+    if (opportunity.import_status !== "valid") {
       setScannerErrorMessage("Opportunity needs review before actions.");
       return false;
     }
@@ -1635,7 +1671,7 @@ function App() {
   };
 
   const handleScannerCreateDeal = async (opportunity: GovDealsOpportunity): Promise<void> => {
-    if (opportunity.import_status === "needs_review") {
+    if (opportunity.import_status !== "valid") {
       setScannerErrorMessage("Opportunity needs review before deal creation.");
       return;
     }
@@ -1701,7 +1737,7 @@ function App() {
     opportunity: GovDealsOpportunity,
     intake: WonDealIntakeInput
   ): Promise<void> => {
-    if (opportunity.import_status === "needs_review") {
+    if (opportunity.import_status !== "valid") {
       setScannerErrorMessage("Opportunity needs review before won-deal intake.");
       return;
     }
@@ -1745,7 +1781,7 @@ function App() {
       return;
     }
     setScannerSaveInFlightByOpportunityId((prev) => ({ ...prev, [opportunity.id]: true }));
-    if (opportunity.import_status === "needs_review") {
+    if (opportunity.import_status !== "valid") {
       setScannerErrorMessage("Opportunity needs review before sniper action.");
       setScannerSaveInFlightByOpportunityId((prev) => ({ ...prev, [opportunity.id]: false }));
       return;
