@@ -1,13 +1,16 @@
 import { Router } from "express";
 import {
   createDeal,
+  getAvailableLiquiditySnapshot,
   listDeals,
   overrideDealValues,
   previewDeal,
   recordDealDecision,
+  scheduleDealBid,
   updateDealStage,
 } from "../services/dealService";
 import { DealStatus } from "../models/dealV32";
+import { getTimeSyncSnapshot, syncGovDealsServerClock } from "../services/engine/timeSync";
 
 const dealsRouter = Router();
 
@@ -36,6 +39,29 @@ dealsRouter.get("/", (_req, res) => {
   res.json({ deals });
 });
 
+dealsRouter.get("/liquidity", (_req, res) => {
+  const snapshot = getAvailableLiquiditySnapshot();
+  res.status(200).json(snapshot);
+});
+
+dealsRouter.post("/time-sync", async (req, res) => {
+  try {
+    const inputUrl =
+      typeof req.body?.listing_url === "string" && req.body.listing_url.trim()
+        ? req.body.listing_url.trim()
+        : undefined;
+    const result = await syncGovDealsServerClock(inputUrl);
+    const snapshot = getTimeSyncSnapshot();
+    res.status(result.ok ? 200 : 202).json({
+      ...result,
+      snapshot,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to sync GovDeals server clock";
+    res.status(400).json({ error: message });
+  }
+});
+
 dealsRouter.patch("/:id/stage", (req, res) => {
   try {
     const id = req.params.id;
@@ -59,6 +85,30 @@ dealsRouter.patch("/:id/stage", (req, res) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to update stage";
     res.status(400).json({ error: message });
+  }
+});
+
+dealsRouter.post("/:id/schedule-bid", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const auctionEndTime = typeof req.body?.auction_end_time === "string" ? req.body.auction_end_time : "";
+    const targetBid = Number(req.body?.target_bid);
+    const currentBid = Number(req.body?.current_bid);
+    const estimatedFees = Number(req.body?.estimated_fees ?? 0);
+    const result = await scheduleDealBid({
+      deal_id: id,
+      listing_id: typeof req.body?.listing_id === "string" ? req.body.listing_id : null,
+      auction_end_time: auctionEndTime,
+      target_bid: targetBid,
+      current_bid: currentBid,
+      estimated_fees: estimatedFees,
+    });
+    const statusCode = result.ok ? 201 : result.status === "invalid" ? 400 : 409;
+    res.status(statusCode).json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to schedule bid";
+    const status = message === "Deal not found" ? 404 : 400;
+    res.status(status).json({ error: message });
   }
 });
 

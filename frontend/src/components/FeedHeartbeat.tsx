@@ -22,7 +22,12 @@ export default function FeedHeartbeat({ wsUrl, onMessage }: FeedHeartbeatProps) 
     const client = createFeedSocketClient(
       wsUrl,
       (message) => {
-        if (message.type === "heartbeat" || message.type === "feed_update") {
+        if (
+          message.type === "heartbeat" ||
+          message.type === "feed_update" ||
+          message.type === "DEAL_HEARTBEAT" ||
+          message.type === "LIQUIDITY_CRITICAL"
+        ) {
           setLastSyncAt(message.timestamp);
           if (
             message.payload &&

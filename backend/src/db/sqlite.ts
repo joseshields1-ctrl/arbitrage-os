@@ -31,7 +31,8 @@ export const initializeDatabase = (): void => {
       completion_date TEXT,
       quantity_purchased INTEGER,
       quantity_broken INTEGER,
-      unit_count INTEGER
+      unit_count INTEGER,
+      reserved_capital REAL NOT NULL DEFAULT 0
     );
   `);
 
@@ -63,6 +64,7 @@ export const initializeDatabase = (): void => {
       transport_type TEXT NOT NULL,
       presentation_quality TEXT NOT NULL,
       removal_deadline TEXT,
+      resale_certificate_active INTEGER NOT NULL DEFAULT 0,
       title_status TEXT NOT NULL DEFAULT 'unknown',
       FOREIGN KEY (deal_id) REFERENCES deals(id) ON DELETE CASCADE
     );
@@ -71,12 +73,13 @@ export const initializeDatabase = (): void => {
   db.exec(`
     CREATE TABLE IF NOT EXISTS operator_decisions (
       id TEXT PRIMARY KEY,
-      deal_id TEXT NOT NULL,
+      deal_id TEXT,
+      opportunity_id TEXT,
       decision TEXT NOT NULL,
       reason TEXT NOT NULL,
+      note TEXT,
       decided_at TEXT NOT NULL,
-      ai_recommendation_snapshot TEXT NOT NULL,
-      FOREIGN KEY (deal_id) REFERENCES deals(id) ON DELETE CASCADE
+      ai_recommendation_snapshot TEXT NOT NULL
     );
   `);
 
@@ -84,37 +87,43 @@ export const initializeDatabase = (): void => {
     CREATE TABLE IF NOT EXISTS opportunities (
       id TEXT PRIMARY KEY,
       source TEXT NOT NULL,
+      account_id TEXT,
+      item_id TEXT,
       listing_id TEXT,
-      listing_url TEXT NOT NULL,
-      canonical_url TEXT NOT NULL DEFAULT '',
-      title TEXT NOT NULL,
+      listing_url TEXT,
+      canonical_url TEXT,
+      title TEXT,
       category TEXT NOT NULL,
-      current_bid REAL NOT NULL,
-      auction_end TEXT NOT NULL,
-      location TEXT NOT NULL,
-      seller_agency TEXT NOT NULL,
+      current_bid REAL,
+      auction_end TEXT,
+      location TEXT,
+      seller_agency TEXT,
       seller_type TEXT NOT NULL,
-      buyer_premium_pct REAL NOT NULL,
-      removal_window_days INTEGER NOT NULL,
+      buyer_premium_pct REAL,
+      buyer_premium_explicit INTEGER NOT NULL DEFAULT 0,
+      removal_window_days INTEGER,
       title_status TEXT NOT NULL,
       relisted INTEGER NOT NULL DEFAULT 0,
-      condition_raw TEXT NOT NULL,
+      condition_raw TEXT,
       description TEXT,
       attachment_links TEXT NOT NULL DEFAULT '[]',
       seller_contact TEXT,
-      estimated_resale_value REAL NOT NULL,
+      estimated_resale_value REAL,
       estimated_transport_override REAL,
-      estimated_repair_cost REAL NOT NULL,
+      estimated_repair_cost REAL,
       quantity_purchased INTEGER,
       quantity_broken INTEGER,
-      import_status TEXT NOT NULL DEFAULT 'active',
-      import_confidence REAL NOT NULL DEFAULT 100,
+      import_status TEXT NOT NULL DEFAULT 'needs_review',
+      import_confidence REAL,
       import_missing_fields TEXT NOT NULL DEFAULT '[]',
       raw_import_data TEXT,
       operator_overrides TEXT,
+      value_layers TEXT,
+      blocked_reason TEXT,
+      parser_error TEXT,
       imported_at TEXT,
-      status TEXT NOT NULL,
-      interest TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft',
+      interest TEXT NOT NULL DEFAULT 'undecided',
       created_at TEXT NOT NULL
     );
   `);
@@ -173,6 +182,10 @@ export const initializeDatabase = (): void => {
   if (!hasSellerType) {
     db.exec(`ALTER TABLE deals ADD COLUMN seller_type TEXT NOT NULL DEFAULT 'unknown';`);
   }
+  const hasReservedCapital = dealColumns.some((column) => column.name === "reserved_capital");
+  if (!hasReservedCapital) {
+    db.exec(`ALTER TABLE deals ADD COLUMN reserved_capital REAL NOT NULL DEFAULT 0;`);
+  }
 
   const financialColumns = db.prepare(`PRAGMA table_info(financials)`).all() as Array<{
     name: string;
@@ -207,6 +220,52 @@ export const initializeDatabase = (): void => {
   if (!hasTitleStatus) {
     db.exec(`ALTER TABLE metadata ADD COLUMN title_status TEXT NOT NULL DEFAULT 'unknown';`);
   }
+  const hasResaleCertificateActive = metadataColumns.some(
+    (column) => column.name === "resale_certificate_active"
+  );
+  if (!hasResaleCertificateActive) {
+    db.exec(`ALTER TABLE metadata ADD COLUMN resale_certificate_active INTEGER NOT NULL DEFAULT 0;`);
+  }
+
+  const operatorDecisionColumns = db.prepare(`PRAGMA table_info(operator_decisions)`).all() as Array<{
+    name: string;
+    notnull: number;
+  }>;
+  const hasOpportunityId = operatorDecisionColumns.some((column) => column.name === "opportunity_id");
+  const hasDecisionNote = operatorDecisionColumns.some((column) => column.name === "note");
+  const hasNullableDealId = operatorDecisionColumns.some(
+    (column) => column.name === "deal_id" && column.notnull === 0
+  );
+  if (!hasOpportunityId || !hasDecisionNote || !hasNullableDealId) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS operator_decisions_v2 (
+        id TEXT PRIMARY KEY,
+        deal_id TEXT,
+        opportunity_id TEXT,
+        decision TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        note TEXT,
+        decided_at TEXT NOT NULL,
+        ai_recommendation_snapshot TEXT NOT NULL
+      );
+    `);
+    db.exec(`
+      INSERT INTO operator_decisions_v2
+        (id, deal_id, opportunity_id, decision, reason, note, decided_at, ai_recommendation_snapshot)
+      SELECT
+        id,
+        deal_id,
+        NULL AS opportunity_id,
+        decision,
+        reason,
+        NULL AS note,
+        decided_at,
+        ai_recommendation_snapshot
+      FROM operator_decisions;
+    `);
+    db.exec(`DROP TABLE operator_decisions;`);
+    db.exec(`ALTER TABLE operator_decisions_v2 RENAME TO operator_decisions;`);
+  }
 
   const opportunityColumns = db.prepare(`PRAGMA table_info(opportunities)`).all() as Array<{
     name: string;
@@ -219,6 +278,8 @@ export const initializeDatabase = (): void => {
   };
 
   ensureOpportunityColumn("listing_id", `ALTER TABLE opportunities ADD COLUMN listing_id TEXT;`);
+  ensureOpportunityColumn("account_id", `ALTER TABLE opportunities ADD COLUMN account_id TEXT;`);
+  ensureOpportunityColumn("item_id", `ALTER TABLE opportunities ADD COLUMN item_id TEXT;`);
   ensureOpportunityColumn(
     "canonical_url",
     `ALTER TABLE opportunities ADD COLUMN canonical_url TEXT NOT NULL DEFAULT '';`
@@ -235,17 +296,24 @@ export const initializeDatabase = (): void => {
   );
   ensureOpportunityColumn(
     "import_status",
-    `ALTER TABLE opportunities ADD COLUMN import_status TEXT NOT NULL DEFAULT 'active';`
+    `ALTER TABLE opportunities ADD COLUMN import_status TEXT NOT NULL DEFAULT 'needs_review';`
   );
   ensureOpportunityColumn(
     "import_confidence",
-    `ALTER TABLE opportunities ADD COLUMN import_confidence REAL NOT NULL DEFAULT 100;`
+    `ALTER TABLE opportunities ADD COLUMN import_confidence REAL;`
   );
   ensureOpportunityColumn(
     "import_missing_fields",
     `ALTER TABLE opportunities ADD COLUMN import_missing_fields TEXT NOT NULL DEFAULT '[]';`
   );
+  ensureOpportunityColumn(
+    "buyer_premium_explicit",
+    `ALTER TABLE opportunities ADD COLUMN buyer_premium_explicit INTEGER NOT NULL DEFAULT 0;`
+  );
   ensureOpportunityColumn("raw_import_data", `ALTER TABLE opportunities ADD COLUMN raw_import_data TEXT;`);
   ensureOpportunityColumn("operator_overrides", `ALTER TABLE opportunities ADD COLUMN operator_overrides TEXT;`);
+  ensureOpportunityColumn("value_layers", `ALTER TABLE opportunities ADD COLUMN value_layers TEXT;`);
+  ensureOpportunityColumn("blocked_reason", `ALTER TABLE opportunities ADD COLUMN blocked_reason TEXT;`);
+  ensureOpportunityColumn("parser_error", `ALTER TABLE opportunities ADD COLUMN parser_error TEXT;`);
   ensureOpportunityColumn("imported_at", `ALTER TABLE opportunities ADD COLUMN imported_at TEXT;`);
 };

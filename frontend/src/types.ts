@@ -402,7 +402,13 @@ export type OpportunitiesFeedStatus =
   | "timeout"
   | "feed_offline";
 
-export type FeedMessageType = "feed_update" | "sniper_pick" | "heartbeat" | "error";
+export type FeedMessageType =
+  | "feed_update"
+  | "sniper_pick"
+  | "heartbeat"
+  | "error"
+  | "DEAL_HEARTBEAT"
+  | "LIQUIDITY_CRITICAL";
 
 export interface FeedSocketMessage {
   type: FeedMessageType;

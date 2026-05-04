@@ -35,6 +35,7 @@ import type {
   DealCategory,
   DealStage,
   DealView,
+  FeedSocketMessage,
   IntakeCategory,
   OpportunitiesFeedContract,
   OpportunitiesFeedStatus,
@@ -366,7 +367,7 @@ const toVehicleIntelFromForm = (form: IntakeFormState): VehicleMarketIntel | nul
 };
 
 function App() {
-  const [activePage, setActivePage] = useState<ActivePage>("dashboard");
+  const [activePage, setActivePage] = useState<ActivePage>("opportunities");
   const [rightPanelMode, setRightPanelMode] = useState<"detail" | "assistant">("detail");
   const [rightPanelDetailTab, setRightPanelDetailTab] = useState<RightPanelDetailTab>("decision");
   const [pipelineAlertFilter, setPipelineAlertFilter] = useState<PipelineAlertFilter>("all");
@@ -407,6 +408,10 @@ function App() {
   const [scannerFeedLastPolledAt, setScannerFeedLastPolledAt] = useState<string | null>(null);
   const [scannerFeedRehydrateDone, setScannerFeedRehydrateDone] = useState(false);
   const [scannerFeedBusy, setScannerFeedBusy] = useState(false);
+  const [dealHeartbeatByOpportunityId, setDealHeartbeatByOpportunityId] = useState<
+    Record<string, { timestamp: string; time_left_ms: number | null; type: string; message: string }>
+  >({});
+  const [liquidityCriticalFeedMessage, setLiquidityCriticalFeedMessage] = useState<string | null>(null);
   const [selectedOpportunityIdForAssistant, setSelectedOpportunityIdForAssistant] = useState<string | null>(
     null
   );
@@ -417,6 +422,19 @@ function App() {
   >({});
   const [sniperDecisionHistory, setSniperDecisionHistory] = useState<SniperDecisionRecord[]>([]);
   const [interestSignalHistory, setInterestSignalHistory] = useState<InterestSignalRecord[]>([]);
+  const [feedHeartbeatStats, setFeedHeartbeatStats] = useState<{
+    total_events: number;
+    final_15m_events: number;
+    price_change_events: number;
+    liquidity_critical_events: number;
+    last_message: string | null;
+  }>({
+    total_events: 0,
+    final_15m_events: 0,
+    price_change_events: 0,
+    liquidity_critical_events: 0,
+    last_message: null,
+  });
   const [importReviewState, setImportReviewState] = useState<{
     review: OpportunityImportReviewResponse;
     draftOverrides: Partial<OpportunityEditableFields>;
@@ -505,7 +523,9 @@ function App() {
   const mapFeedToSniperHistory = (
     feed: OpportunitiesFeedContract
   ): SniperDecisionRecord[] =>
-    feed.decisions.map((decision) => {
+    feed.decisions
+      .filter((decision) => decision.action === "must_buy" || decision.action === "pass")
+      .map((decision) => {
       const opportunitySnapshot =
         feed.opportunities.find((item) => item.id === decision.opportunity_id) ??
         govDealsOpportunities.find((item) => item.id === decision.opportunity_id) ??
@@ -556,14 +576,14 @@ function App() {
       return {
         id: `feed-${decision.id}`,
         opportunity_id: decision.opportunity_id,
-        decision: decision.action === "pass" ? "passed" : "approved",
+        decision: decision.action === "must_buy" ? "approved" : "passed",
         pass_reason: decision.action === "pass" ? mapPassReasonFromText(decision.reason) : null,
         note: decision.note ?? decision.reason,
         decided_at: decision.decided_at,
         score_at_decision: 0,
         opportunity_snapshot: opportunitySnapshot,
       };
-    });
+      });
 
   const mapFeedToInterestSignals = (
     feed: OpportunitiesFeedContract
@@ -588,13 +608,88 @@ function App() {
     setScannerFeedMessage(normalized.message);
   };
 
-  const runOpportunitiesRehydrate = async (): Promise<void> => {
+  const handleFeedHeartbeatMessage = (message: FeedSocketMessage): void => {
+    if (message.type === "DEAL_HEARTBEAT") {
+      const listingId =
+        typeof message.payload?.listing_id === "string" && message.payload.listing_id.trim()
+          ? message.payload.listing_id.trim()
+          : null;
+      if (listingId) {
+        const matchingOpportunity = govDealsOpportunities.find(
+          (item) => item.listing_id === listingId
+        );
+        if (matchingOpportunity) {
+          const opportunityId = matchingOpportunity.id;
+          const timeLeftMsRaw = message.payload?.time_left_ms;
+          const parsedTimeLeftMs =
+            typeof timeLeftMsRaw === "number" && Number.isFinite(timeLeftMsRaw)
+              ? Math.max(0, timeLeftMsRaw)
+              : null;
+          const type =
+            typeof message.payload?.type === "string" && message.payload.type.trim()
+              ? message.payload.type.trim()
+              : "heartbeat";
+          const hbMessage =
+            typeof message.payload?.message === "string" && message.payload.message.trim()
+              ? message.payload.message.trim()
+              : "heartbeat";
+          setDealHeartbeatByOpportunityId((prev) => ({
+            ...prev,
+            [opportunityId]: {
+              timestamp: message.timestamp,
+              time_left_ms: parsedTimeLeftMs,
+              type,
+              message: hbMessage,
+            },
+          }));
+        }
+      }
+
+      setFeedHeartbeatStats((prev) => {
+        const heartbeatType = typeof message.payload?.type === "string" ? message.payload.type : "";
+        return {
+          total_events: prev.total_events + 1,
+          final_15m_events:
+            heartbeatType === "final_15_minutes" ? prev.final_15m_events + 1 : prev.final_15m_events,
+          price_change_events:
+            heartbeatType === "price_change" ? prev.price_change_events + 1 : prev.price_change_events,
+          liquidity_critical_events:
+            heartbeatType === "liquidity_critical"
+              ? prev.liquidity_critical_events + 1
+              : prev.liquidity_critical_events,
+          last_message:
+            typeof message.payload?.message === "string"
+              ? message.payload.message
+              : prev.last_message,
+        };
+      });
+      return;
+    }
+
+    if (message.type === "LIQUIDITY_CRITICAL") {
+      const msg =
+        typeof message.payload?.reason === "string" && message.payload.reason.trim()
+          ? message.payload.reason.trim()
+          : "Liquidity critical event detected.";
+      setLiquidityCriticalFeedMessage(msg);
+      setFeedHeartbeatStats((prev) => ({
+        ...prev,
+        total_events: prev.total_events + 1,
+        liquidity_critical_events: prev.liquidity_critical_events + 1,
+        last_message: msg,
+      }));
+    }
+  };
+
+  const runOpportunitiesRehydrate = async (options?: { skipLoadingState?: boolean }): Promise<void> => {
     if (scannerFeedBusy) {
       return;
     }
     setScannerFeedBusy(true);
-    setScannerFeedStatus("loading");
-    setScannerFeedMessage("Loading opportunities feed...");
+    if (!options?.skipLoadingState) {
+      setScannerFeedStatus("loading");
+      setScannerFeedMessage("Loading opportunities feed...");
+    }
     setScannerFeedRehydrateDone(false);
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), OPPORTUNITIES_REQUEST_TIMEOUT_MS);
@@ -625,7 +720,7 @@ function App() {
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
-      void runOpportunitiesRehydrate();
+      void runOpportunitiesRehydrate({ skipLoadingState: true });
     }, FEED_HEARTBEAT_INTERVAL_MS);
     return () => window.clearInterval(intervalId);
   }, []);
@@ -823,6 +918,27 @@ function App() {
   );
   const persistedDecisionCount = useMemo(() => sniperDecisionHistory.length, [sniperDecisionHistory]);
   const interestSignalCount = useMemo(() => interestSignalHistory.length, [interestSignalHistory]);
+  const latestSniperDecisionByOpportunity = useMemo(() => {
+    const latest: Record<string, SniperDecisionRecord> = {};
+    sniperDecisionHistory.forEach((decision) => {
+      const current = latest[decision.opportunity_id];
+      if (!current || Date.parse(decision.decided_at) >= Date.parse(current.decided_at)) {
+        latest[decision.opportunity_id] = decision;
+      }
+    });
+    return latest;
+  }, [sniperDecisionHistory]);
+  const interestedAwaitingApprovalCount = useMemo(
+    () =>
+      govDealsOpportunities.filter((opportunity) => {
+        if (opportunity.interest !== "interested" || opportunity.status === "converted") {
+          return false;
+        }
+        const latestDecision = latestSniperDecisionByOpportunity[opportunity.id];
+        return latestDecision?.decision !== "approved";
+      }).length,
+    [govDealsOpportunities, latestSniperDecisionByOpportunity]
+  );
   const assistantRequiredFields = useMemo(() => {
     if (selectedOpportunityForAssistant) {
       return {
@@ -1981,7 +2097,7 @@ function App() {
         )
       ) : (
         <div className="assistant-panel">
-          <FeedHeartbeat wsUrl={WS_FEED_URL} />
+          <FeedHeartbeat wsUrl={WS_FEED_URL} onMessage={handleFeedHeartbeatMessage} />
           <AIAssistant
             selectedDealContext={
               selectedOpportunityForAssistant
@@ -2166,6 +2282,10 @@ function App() {
           </strong>
         </div>
         <div className="next-action-item priority-high">
+          <span>Interested awaiting approval</span>
+          <strong>{interestedAwaitingApprovalCount}</strong>
+        </div>
+        <div className="next-action-item priority-high">
           <span>Deals needing decision</span>
           <strong>{decisionQueue.length}</strong>
         </div>
@@ -2184,6 +2304,9 @@ function App() {
         <div className="next-action-item priority-low">
           <span>Feed freshness</span>
           <strong>{isRealtimeFreshnessVisible ? freshnessLabel : "Not Live"}</strong>
+          {liquidityCriticalFeedMessage ? (
+            <small className="warning-text">{liquidityCriticalFeedMessage}</small>
+          ) : null}
           {scannerPersistenceBusy ? <small>Persisting decisions...</small> : null}
           {feedAgeMs !== null ? <small>Last sync {Math.floor(feedAgeMs / 1000)}s ago</small> : null}
           <button
@@ -2282,7 +2405,11 @@ function App() {
                 </article>
               </div>
 
-              <DashboardPanels deals={deals} reconditioningMap={reconditioningMap} />
+              <DashboardPanels
+                deals={deals}
+                reconditioningMap={reconditioningMap}
+                liveHeartbeat={feedHeartbeatStats}
+              />
 
               <div className="dashboard-chart-card low-emphasis">
                 <h3>Monthly Revenue + Net + EHR</h3>
@@ -2409,6 +2536,7 @@ function App() {
               onSetInterest={handleScannerSetInterest}
               onOverrideOpportunity={handleScannerOverrideOpportunity}
               onCreateFromWonDeal={handleScannerCreateFromWonDeal}
+              heartbeatByOpportunityId={dealHeartbeatByOpportunityId}
               onSelectOpportunityForAssistant={(opportunity) => {
                 setSelectedOpportunityIdForAssistant(opportunity.id);
                 setActivePage("opportunities");

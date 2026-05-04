@@ -40,6 +40,10 @@ interface GovDealsScannerPanelProps {
   errorMessage: string | null;
   sniperPicks: SniperAIPick[];
   sniperDashboardSummary: SniperDashboardSummary;
+  heartbeatByOpportunityId?: Record<
+    string,
+    { timestamp: string; time_left_ms: number | null; type: string; message: string }
+  >;
   onOperatorBaseStateChange: (value: string) => void;
   onFiltersChange: (next: OpportunityFilters) => void;
   onSortModeChange: (next: OpportunitySortMode) => void;
@@ -87,6 +91,9 @@ const getUrgencyClass = (timeLeftHours: number | null): string => {
   if (timeLeftHours === null) {
     return "urgency-neutral";
   }
+  if (timeLeftHours < 5 / 60) {
+    return "urgency-critical-red";
+  }
   if (timeLeftHours < 3) {
     return "urgency-red";
   }
@@ -102,6 +109,9 @@ const getUrgencyClass = (timeLeftHours: number | null): string => {
 const getUrgencyLabel = (timeLeftHours: number | null): string => {
   if (timeLeftHours === null) {
     return "Time Left N/A";
+  }
+  if (timeLeftHours < 5 / 60) {
+    return `🔴 Final ${Math.max(0, Math.round(timeLeftHours * 60))}m`;
   }
   const base = `Time Left ${formatHours(timeLeftHours)}`;
   if (timeLeftHours < 3) {
@@ -190,6 +200,7 @@ function GovDealsScannerPanel({
   errorMessage,
   sniperPicks,
   sniperDashboardSummary,
+  heartbeatByOpportunityId = {},
   onOperatorBaseStateChange,
   onFiltersChange,
   onSortModeChange,
@@ -1117,6 +1128,13 @@ function GovDealsScannerPanel({
             const editDraft = getOpportunityEditDraft(opportunity);
             const preview = previewsByOpportunityId[opportunity.id];
             const isBusy = busyOpportunityId === opportunity.id;
+            const heartbeat = heartbeatByOpportunityId[opportunity.id];
+            const heartbeatTimeLeftHours =
+              heartbeat && heartbeat.time_left_ms !== null
+                ? Math.max(0, heartbeat.time_left_ms / (1000 * 60 * 60))
+                : null;
+            const effectiveTimeLeftHours =
+              heartbeatTimeLeftHours !== null ? heartbeatTimeLeftHours : metrics.time_left_hours;
             const statusClass =
               opportunity.status === "watch"
                 ? "watch"
@@ -1135,10 +1153,19 @@ function GovDealsScannerPanel({
                   : "undecided";
             const hasEndedAuction =
               opportunity.auction_state === "ended" ||
-              (metrics.time_left_hours !== null && metrics.time_left_hours <= 0);
+              (effectiveTimeLeftHours !== null && effectiveTimeLeftHours <= 0);
             const disableDecisionActions = isBusy || hasEndedAuction;
+            const heartbeatUrgentFinalFiveMinutes =
+              heartbeat?.type === "final_15_minutes" &&
+              heartbeatTimeLeftHours !== null &&
+              heartbeatTimeLeftHours <= 5 / 60;
+            const urgencyClass = getUrgencyClass(effectiveTimeLeftHours);
+            const urgencyLabel = getUrgencyLabel(effectiveTimeLeftHours);
             return (
-              <article className="opportunity-card" key={opportunity.id}>
+              <article
+                className={`opportunity-card ${heartbeatUrgentFinalFiveMinutes ? "opportunity-card-critical" : ""}`}
+                key={opportunity.id}
+              >
                 <div className="opportunity-head">
                   <h4>{opportunity.title}</h4>
                   <div className="opportunity-head-badges">
@@ -1178,8 +1205,8 @@ function GovDealsScannerPanel({
                   </div>
                   <div>
                     <span>Time Left</span>
-                    <strong className={`urgency-indicator ${getUrgencyClass(metrics.time_left_hours)}`}>
-                      {getUrgencyLabel(metrics.time_left_hours)}
+                    <strong className={`urgency-indicator ${urgencyClass}`}>
+                      {urgencyLabel}
                     </strong>
                   </div>
                   <div>

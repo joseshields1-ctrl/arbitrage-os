@@ -1,11 +1,13 @@
 export type OpportunityCategory = "vehicle" | "electronics" | "other";
-export type OpportunityStatus = "new" | "watch" | "passed" | "converted";
+export type OpportunitySource = "govdeals" | "manual";
+export type OpportunityStatus = "draft" | "new" | "watch" | "passed" | "converted";
 export type OpportunityInterest = "undecided" | "interested" | "not_interested";
 export type OpportunitySellerType = "government" | "commercial" | "unknown";
 export type OpportunityTitleStatus = "on_site" | "delayed" | "unknown";
 export type OpportunityAuctionState = "active" | "ended" | "unknown";
-export type OpportunityImportStatus = "active" | "needs_review";
+export type OpportunityImportStatus = "valid" | "needs_review" | "blocked";
 export type OpportunityCriticalField =
+  | "identity"
   | "title"
   | "current_bid"
   | "auction_end"
@@ -13,72 +15,108 @@ export type OpportunityCriticalField =
   | "seller_agency";
 
 export interface OpportunityEditableFields {
-  title: string;
-  current_bid: number;
-  buyer_premium_pct: number;
-  estimated_resale_value: number;
+  title: string | null;
+  current_bid: number | null;
+  buyer_premium_pct: number | null;
+  estimated_resale_value: number | null;
   estimated_transport_override: number | null;
-  estimated_repair_cost: number;
+  estimated_repair_cost: number | null;
   quantity_purchased: number | null;
   quantity_broken: number | null;
-  condition_raw: string;
-  title_status: OpportunityTitleStatus;
-  removal_window_days: number;
-  seller_agency: string;
-  seller_type: OpportunitySellerType;
-  location: string;
-  auction_end: string;
+  condition_raw: string | null;
+  title_status: OpportunityTitleStatus | null;
+  removal_window_days: number | null;
+  seller_agency: string | null;
+  seller_type: OpportunitySellerType | null;
+  location: string | null;
+  auction_end: string | null;
+}
+
+export interface OpportunityValueLayer<T> {
+  imported_value: T | null;
+  operator_override: T | null;
+  effective_value: T | null;
+}
+
+export interface OpportunityValueLayers {
+  title: OpportunityValueLayer<string>;
+  current_bid: OpportunityValueLayer<number>;
+  buyer_premium_pct: OpportunityValueLayer<number>;
+  estimated_resale_value: OpportunityValueLayer<number>;
+  estimated_transport_override: OpportunityValueLayer<number>;
+  estimated_repair_cost: OpportunityValueLayer<number>;
+  quantity_purchased: OpportunityValueLayer<number>;
+  quantity_broken: OpportunityValueLayer<number>;
+  removal_window_days: OpportunityValueLayer<number>;
+  title_status: OpportunityValueLayer<OpportunityTitleStatus>;
+  seller_type: OpportunityValueLayer<OpportunitySellerType>;
+  seller_agency: OpportunityValueLayer<string>;
+  location: OpportunityValueLayer<string>;
+  condition_raw: OpportunityValueLayer<string>;
+  auction_end: OpportunityValueLayer<string>;
 }
 
 export interface OpportunityRawImportFields {
+  account_id: string | null;
+  item_id: string | null;
   listing_id: string | null;
   title: string | null;
   current_bid_text: string | null;
+  bid_increment_text: string | null;
   auction_end_text: string | null;
   time_remaining_text: string | null;
   location_text: string | null;
   seller_agency_text: string | null;
+  seller_contact_text: string | null;
   category_text: string | null;
   buyer_premium_text: string | null;
   description_text: string | null;
+  vin_text: string | null;
+  condition_text: string | null;
   quantity_text: string | null;
+  terms_text: string | null;
   attachment_links_text: string | null;
-  seller_contact_text: string | null;
 }
 
 export interface OpportunityRecord {
   id: string;
-  source: "url_import" | "keyword_search" | "manual_import";
+  source: OpportunitySource;
+  account_id: string | null;
+  item_id: string | null;
   listing_id: string | null;
-  listing_url: string;
-  canonical_url: string;
-  title: string;
+  listing_url: string | null;
+  canonical_url: string | null;
+  title: string | null;
   category: OpportunityCategory;
-  current_bid: number;
-  auction_end: string;
+  current_bid: number | null;
+  auction_end: string | null;
   auction_state: OpportunityAuctionState;
   time_left_hours: number | null;
-  location: string;
-  seller_agency: string;
+  location: string | null;
+  seller_agency: string | null;
   seller_type: OpportunitySellerType;
-  buyer_premium_pct: number;
-  removal_window_days: number;
+  buyer_premium_pct: number | null;
+  buyer_premium_explicit: boolean;
+  removal_window_days: number | null;
   title_status: OpportunityTitleStatus;
   relisted: boolean;
-  condition_raw: string;
+  condition_raw: string | null;
   description: string | null;
   attachment_links: string[];
   seller_contact: string | null;
-  estimated_resale_value: number;
+  estimated_resale_value: number | null;
   estimated_transport_override: number | null;
-  estimated_repair_cost: number;
+  estimated_repair_cost: number | null;
   quantity_purchased: number | null;
   quantity_broken: number | null;
   import_status: OpportunityImportStatus;
-  import_confidence: number;
+  import_confidence: number | null;
   import_missing_fields: OpportunityCriticalField[];
   raw_import_data: OpportunityRawImportFields | null;
   operator_overrides: Partial<OpportunityEditableFields> | null;
+  value_layers: OpportunityValueLayers | null;
+  blocked_reason: string | null;
+  parser_error: string | null;
   imported_at: string | null;
   status: OpportunityStatus;
   interest: OpportunityInterest;
@@ -95,6 +133,12 @@ export interface OpportunityDecisionRecord {
   note: string | null;
   decided_at: string;
   opportunity_snapshot: OpportunityRecord;
+  ai_recommendation_snapshot?: {
+    suggested_action: "buy" | "pass" | "investigate";
+    confidence: number;
+    reasoning: string;
+    key_factors: string[];
+  } | null;
 }
 
 export type OpportunitiesFeedStatus =
@@ -116,8 +160,11 @@ export interface OpportunitiesFeedResponse {
 }
 
 export interface OpportunityImportReviewResponse {
+  source: "url_import" | "pasted_text" | "manual_draft";
   listing_url: string;
   canonical_url: string;
+  account_id: string | null;
+  item_id: string | null;
   listing_id: string | null;
   raw_fields: OpportunityRawImportFields;
   parsed_fields: Partial<OpportunityEditableFields> & {
@@ -127,10 +174,20 @@ export interface OpportunityImportReviewResponse {
     description: string | null;
     attachment_links: string[];
     seller_contact: string | null;
+    bid_increment?: number | null;
+    vin?: string | null;
+    buyer_premium_explicit?: boolean;
   };
   missing_fields: OpportunityCriticalField[];
   import_status: OpportunityImportStatus;
-  import_confidence: number;
+  import_confidence: number | null;
+  blocked_reason: string | null;
+  parser_error: string | null;
+  request_headers?: {
+    "User-Agent": string;
+    "Accept-Language": string;
+    Referer: string;
+  };
   extraction_notes: string[];
   selector_hits: Record<string, string[]>;
 }

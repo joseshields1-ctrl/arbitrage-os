@@ -6,6 +6,7 @@ import type {
   OpportunityImportReviewResponse,
   OpportunityRawImportFields,
 } from "../models/opportunities";
+import { extractGovDealsFields } from "./engine/extraction";
 
 const GOVDEALS_HOST_RE = /(^|\.)govdeals\.com$/i;
 
@@ -355,6 +356,12 @@ export const parseGovDealsListingForReview = async (
     }
     return Math.max(0, Math.floor(value));
   })();
+  const extraction = await extractGovDealsFields({
+    raw_text: descriptionText ?? pageText,
+  });
+  if (extraction.ambiguity_flags.length > 0) {
+    extractionNotes.push(...extraction.ambiguity_flags.map((flag) => `EXTRACTION:${flag}`));
+  }
   const parsedFields: OpportunityImportReviewResponse["parsed_fields"] = {
     listing_id: listingId,
     canonical_url: canonicalUrl,
@@ -363,7 +370,14 @@ export const parseGovDealsListingForReview = async (
     auction_end: closeIso ?? "",
     location: locationText ?? "",
     seller_agency: sellerAgencyText ?? "",
-    category: inferCategory(categoryText, title),
+    category:
+      extraction.category === "vehicle_suv" || extraction.category === "vehicle_police_fleet"
+        ? "vehicle"
+        : extraction.category === "electronics_bulk" || extraction.category === "electronics_individual"
+          ? "electronics"
+          : extraction.category === "powersports"
+            ? "other"
+            : inferCategory(categoryText, title),
     buyer_premium_pct: parsedBuyerPremium ?? 0.1,
     estimated_resale_value: 0,
     estimated_transport_override: null,
@@ -377,10 +391,33 @@ export const parseGovDealsListingForReview = async (
     description: descriptionText,
     attachment_links: attachmentLinks,
     seller_contact: sellerContactText,
+    buyer_premium_explicit: parsedBuyerPremium !== null,
   };
 
+  if (extraction.unit_breakdown?.units_total !== undefined && parsedFields.quantity_purchased === null) {
+    parsedFields.quantity_purchased = extraction.unit_breakdown.units_total;
+  }
+  if (extraction.units_locked_increment > 0) {
+    parsedFields.quantity_broken = Math.max(
+      parsedFields.quantity_broken ?? 0,
+      extraction.units_locked_increment
+    );
+  }
+  if (extraction.defective_units_increment > 0) {
+    parsedFields.quantity_broken = Math.max(
+      parsedFields.quantity_broken ?? 0,
+      extraction.defective_units_increment
+    );
+  }
+
   const missingFields = buildMissingFields(parsedFields);
-  const importConfidence = Math.max(0, 100 - missingFields.length * 18 - (attachmentLinks.length === 0 ? 4 : 0));
+  const importConfidence = Math.max(
+    0,
+    100 -
+      missingFields.length * 18 -
+      (attachmentLinks.length === 0 ? 4 : 0) +
+      extraction.data_confidence_delta
+  );
   const importStatus = missingFields.length > 0 ? "needs_review" : "active";
 
   if (payload.keyword_hint?.trim()) {

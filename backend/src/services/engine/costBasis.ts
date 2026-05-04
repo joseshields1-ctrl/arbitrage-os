@@ -5,6 +5,7 @@ export interface CostBasisInput {
   acquisition_cost: number;
   source_platform: SourcePlatform;
   acquisition_state: string;
+  resale_certificate_active?: boolean;
   buyer_premium_pct?: number | null;
   buyer_premium_overridden?: boolean;
   tax_rate?: number | null;
@@ -20,6 +21,7 @@ export interface CostBasisBreakdown {
   acquisition_cost: number;
   buyer_premium: number;
   tax: number;
+  discretionary_surcharge: number;
   transport: number;
   repair_cost: number;
   prep_cost: number;
@@ -86,6 +88,23 @@ const computeTax = (
   return roundCurrency(acquisitionCost * taxRate);
 };
 
+const isFloridaAutomotiveCategory = (category: DealCategory): boolean =>
+  category === "vehicle_suv" || category === "vehicle_police_fleet";
+
+const computeFloridaDiscretionarySurcharge = (input: CostBasisInput): number => {
+  if (input.acquisition_state.toUpperCase() !== "FL") {
+    return 0;
+  }
+  if (!isFloridaAutomotiveCategory(input.category)) {
+    return 0;
+  }
+  if (input.resale_certificate_active) {
+    return 0;
+  }
+  // Safety default for county discretionary range ($1-$5).
+  return 5;
+};
+
 const computeVehicleMechanicalContingency = (
   category: DealCategory,
   acquisitionCost: number
@@ -103,9 +122,18 @@ const computeVehicleMechanicalContingency = (
 export const computeCostBasis = (input: CostBasisInput): CostBasisResult => {
   const estimatedInputs: string[] = [];
   const acquisitionCost = toAmount(input.acquisition_cost);
+  const isFloridaVehicle = input.acquisition_state.toUpperCase() === "FL" && isFloridaAutomotiveCategory(input.category);
+  const taxExemptByResaleCertificate = Boolean(input.resale_certificate_active);
   const hasTaxRate = input.tax_rate !== null && input.tax_rate !== undefined;
-  const taxRate = hasTaxRate ? toAmount(input.tax_rate) : null;
+  const taxRate = isFloridaVehicle
+    ? taxExemptByResaleCertificate
+      ? 0
+      : 0.06
+    : hasTaxRate
+      ? toAmount(input.tax_rate)
+      : null;
   const tax = computeTax(acquisitionCost, taxRate, estimatedInputs);
+  const discretionarySurcharge = computeFloridaDiscretionarySurcharge(input);
   const repairCost = toAmount(input.repair_cost);
   const prepCost = toAmount(input.prep_cost);
 
@@ -129,7 +157,8 @@ export const computeCostBasis = (input: CostBasisInput): CostBasisResult => {
   const cost_basis_breakdown: CostBasisBreakdown = {
     acquisition_cost: roundCurrency(acquisitionCost),
     buyer_premium: buyerPremium,
-    tax: roundCurrency(tax),
+    tax: roundCurrency(tax + discretionarySurcharge),
+    discretionary_surcharge: roundCurrency(discretionarySurcharge),
     transport: roundCurrency(transport),
     repair_cost: roundCurrency(repairCost),
     prep_cost: roundCurrency(prepCost),
@@ -153,7 +182,7 @@ export const computeCostBasis = (input: CostBasisInput): CostBasisResult => {
     buyer_premium_pct: premiumResolution.buyer_premium_pct,
     buyer_premium_overridden: premiumResolution.buyer_premium_overridden,
     tax_rate: taxRate,
-    tax: roundCurrency(tax),
+    tax: roundCurrency(tax + discretionarySurcharge),
   };
 };
 

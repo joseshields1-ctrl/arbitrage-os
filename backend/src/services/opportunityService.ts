@@ -16,6 +16,7 @@ import type {
   OpportunityValueLayer,
   OpportunityValueLayers,
 } from "../models/opportunities";
+import { emitOpportunityHeartbeatIfNeeded } from "./engine/streamGateway";
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -1061,6 +1062,7 @@ export const confirmOpportunityImport = (
   if (!storedRow) {
     throw new OpportunityValidationError("Failed to store imported opportunity", "STORE_FAILED");
   }
+  emitOpportunityHeartbeatIfNeeded(mapOpportunityRow(storedRow), existing);
   return {
     stored_opportunity: mapOpportunityRow(storedRow),
     dedupe_action: existing ? "updated_existing" : "created",
@@ -1193,6 +1195,7 @@ export const updateOpportunityInterest = (
   if (!stored) {
     throw new OpportunityValidationError("Failed to update opportunity interest", "INTEREST_UPDATE_FAILED");
   }
+  emitOpportunityHeartbeatIfNeeded(mapOpportunityRow(stored), mapOpportunityRow(row));
   return {
     stored_opportunity: mapOpportunityRow(stored),
     feed: listOpportunitiesFeed(),
@@ -1273,6 +1276,16 @@ export const saveOpportunityDecision = (
 
   const decisionId = crypto.randomUUID();
   const decidedAt = nowIso();
+  const aiSnapshot = {
+    suggested_action: action === "must_buy" ? "buy" : action === "pass" ? "pass" : "investigate",
+    confidence: opportunity.import_confidence ?? 0,
+    reasoning: action === "pass" ? reason ?? "operator pass" : "operator interest signal",
+    key_factors: [
+      `listing_id=${opportunity.listing_id ?? "unknown"}`,
+      `status=${opportunity.status}`,
+      `interest=${opportunity.interest}`,
+    ],
+  } as const;
   db.transaction(() => {
     db.prepare(
       `INSERT INTO opportunity_decisions
@@ -1281,6 +1294,20 @@ export const saveOpportunityDecision = (
     ).run(decisionId, opportunityId, action, reason, note, decidedAt, JSON.stringify(opportunity));
     const nextStatus: OpportunityStatus = action === "pass" ? "passed" : "watch";
     db.prepare(`UPDATE opportunities SET status = ? WHERE id = ?`).run(nextStatus, opportunityId);
+    db.prepare(
+      `INSERT INTO operator_decisions
+       (id, deal_id, opportunity_id, decision, reason, note, decided_at, ai_recommendation_snapshot)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      crypto.randomUUID(),
+      null,
+      opportunityId,
+      action === "must_buy" ? "approved" : "rejected",
+      reason ?? (action === "must_buy" ? "interested" : action),
+      note ?? null,
+      decidedAt,
+      JSON.stringify(aiSnapshot)
+    );
   })();
 
   return {

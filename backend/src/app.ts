@@ -12,6 +12,7 @@ import assistantRouter from "./routes/assistant";
 import dealsRouter from "./routes/deals";
 import dashboardRouter from "./routes/dashboard";
 import opportunitiesRouter from "./routes/opportunities";
+import streamRouter from "./routes/stream";
 
 const app = express();
 
@@ -53,5 +54,6 @@ app.use("/api/assistant", assistantRouter);
 app.use("/api/deals", dealsRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api/opportunities", opportunitiesRouter);
+app.use("/api/stream", streamRouter);
 
 export default app;

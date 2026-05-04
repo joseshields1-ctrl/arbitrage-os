@@ -18,6 +18,11 @@ import {
 import { db } from "../db/sqlite";
 import { categoryProfiles } from "../config/categoryProfiles";
 import { enrichDeal } from "./engine/enrichDeal";
+import { scheduleBid, type ScheduleBidResult } from "./engine/bidScheduler";
+import { assertLiquidityAvailable, getAvailableLiquidity } from "./engine/capital";
+import { publishLiquidityCritical } from "./engine/streamGateway";
+import { extractGovDealsFields } from "./engine/extraction";
+import { publishDealHeartbeat } from "./engine/streamGateway";
 
 export interface CreateDealInput {
   label: string;
@@ -49,6 +54,8 @@ export interface CompleteDealInput {
 export interface DealDecisionInput {
   decision: "approved" | "rejected";
   reason: string;
+  note?: string | null;
+  opportunity_id?: string | null;
 }
 
 export interface DealOverrideInput {
@@ -76,6 +83,7 @@ export interface DealOverrideInput {
     presentation_quality?: string;
     removal_deadline?: string | null;
     title_status?: TitleStatus;
+    resale_certificate_active?: boolean;
   };
 }
 
@@ -126,6 +134,13 @@ export interface OperatorDailySummary {
     profit_delta: number;
     drift_sources: ReturnType<typeof enrichDeal>["engine"]["postmortem"]["drift_sources"];
   }>;
+}
+
+export interface LiquiditySnapshot {
+  capital_pool: number;
+  reserved_capital: number;
+  acquired_capital: number;
+  available_liquidity: number;
 }
 
 const nowIso = (): string => new Date().toISOString();
@@ -428,6 +443,7 @@ const mapDealRow = (row: Record<string, unknown>): DealRow => ({
   unit_count: normalizeOptionalCount(row.unit_count as number | null | undefined),
   unit_breakdown: parseUnitBreakdown(row.unit_breakdown),
   prep_metrics: parsePrepMetrics(row.prep_metrics),
+  reserved_capital: Math.max(0, Number(row.reserved_capital ?? 0)),
 });
 
 const mapFinancialRow = (row: Record<string, unknown>): FinancialRow => ({
@@ -459,6 +475,7 @@ const mapMetadataRow = (row: Record<string, unknown>): MetadataRow => ({
   seller_type: (row.seller_type as MetadataRow["seller_type"]) ?? "unknown",
   removal_deadline: (row.removal_deadline as string | null) ?? null,
   title_status: (row.title_status as TitleStatus) ?? "unknown",
+  resale_certificate_active: Boolean(Number(row.resale_certificate_active ?? 0)),
 });
 
 const parseAiRecommendationSnapshot = (value: unknown): AiRecommendation => {
@@ -542,6 +559,7 @@ const computeAndPersistFinancials = (dealId: string): void => {
         d.unit_count,
         d.unit_breakdown,
         d.prep_metrics,
+        d.reserved_capital,
         f.acquisition_cost,
         f.buyer_premium_pct,
         f.buyer_premium_overridden,
@@ -558,7 +576,8 @@ const computeAndPersistFinancials = (dealId: string): void => {
         m.transport_type,
         m.presentation_quality,
         m.removal_deadline,
-        m.title_status
+        m.title_status,
+        m.resale_certificate_active
        FROM deals d
        JOIN financials f ON f.deal_id = d.id
        JOIN metadata m ON m.deal_id = d.id
@@ -592,6 +611,7 @@ const computeAndPersistFinancials = (dealId: string): void => {
       unit_count: normalizeOptionalCount(joined.unit_count as number | null | undefined),
       unit_breakdown: parseUnitBreakdown(joined.unit_breakdown),
       prep_metrics: parsePrepMetrics(joined.prep_metrics),
+      reserved_capital: Math.max(0, Number(joined.reserved_capital ?? 0)),
     },
     financials: {
       deal_id: String(joined.deal_id),
@@ -618,6 +638,7 @@ const computeAndPersistFinancials = (dealId: string): void => {
       seller_type: (joined.seller_type as MetadataRow["seller_type"]) ?? "unknown",
       removal_deadline: (joined.removal_deadline as string | null) ?? null,
       title_status: (joined.title_status as TitleStatus) ?? "unknown",
+      resale_certificate_active: Boolean(Number(joined.resale_certificate_active ?? 0)),
     },
   });
 
@@ -703,6 +724,7 @@ const buildPreparedDealRows = (input: CreateDealInput, id: string): PreparedDeal
       unit_count: resolvedUnitCount,
       unit_breakdown: input.unit_breakdown ?? null,
       prep_metrics: prepMetrics,
+      reserved_capital: 0,
     },
     financials: {
       deal_id: id,
@@ -731,6 +753,7 @@ const buildPreparedDealRows = (input: CreateDealInput, id: string): PreparedDeal
       seller_type: sellerType,
       removal_deadline: normalizeNullableDate(input.metadata.removal_deadline),
       title_status: input.metadata.title_status ?? "unknown",
+      resale_certificate_active: Boolean(input.metadata.resale_certificate_active),
     },
   };
 };
@@ -757,6 +780,7 @@ const getDealViewById = (dealId: string): DealView | null => {
         d.unit_count,
         d.unit_breakdown,
         d.prep_metrics,
+        d.reserved_capital,
         f.deal_id AS f_deal_id,
         f.acquisition_cost,
         f.buyer_premium_pct,
@@ -777,7 +801,8 @@ const getDealViewById = (dealId: string): DealView | null => {
         m.transport_type,
         m.presentation_quality,
         m.removal_deadline,
-        m.title_status
+        m.title_status,
+        m.resale_certificate_active
        FROM deals d
        JOIN financials f ON f.deal_id = d.id
        JOIN metadata m ON m.deal_id = d.id
@@ -815,6 +840,7 @@ const getDealViewById = (dealId: string): DealView | null => {
     seller_type: joinedRows.seller_type,
     removal_deadline: joinedRows.removal_deadline,
     title_status: joinedRows.title_status,
+    resale_certificate_active: joinedRows.resale_certificate_active,
   });
   return buildEnrichedDealView(deal, financials, metadata);
 };
@@ -828,8 +854,8 @@ export const createDeal = (input: CreateDealInput): DealView => {
       `INSERT INTO deals (
         id, label, category, source_platform, acquisition_state, status, stage_updated_at,
         discovered_date, purchase_date, listing_date, sale_date, completion_date, seller_type,
-        quantity_purchased, quantity_broken, unit_count, unit_breakdown, prep_metrics
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        quantity_purchased, quantity_broken, unit_count, unit_breakdown, prep_metrics, reserved_capital
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       prepared.deal.id,
       prepared.deal.label,
@@ -848,7 +874,8 @@ export const createDeal = (input: CreateDealInput): DealView => {
       prepared.deal.quantity_broken,
       prepared.deal.unit_count,
       prepared.deal.unit_breakdown ? JSON.stringify(prepared.deal.unit_breakdown) : null,
-      prepared.deal.prep_metrics ? JSON.stringify(prepared.deal.prep_metrics) : null
+      prepared.deal.prep_metrics ? JSON.stringify(prepared.deal.prep_metrics) : null,
+      prepared.deal.reserved_capital
     );
 
     db.prepare(
@@ -876,8 +903,8 @@ export const createDeal = (input: CreateDealInput): DealView => {
     db.prepare(
       `INSERT INTO metadata (
         deal_id, condition_grade, condition_notes, transport_type, presentation_quality,
-        removal_deadline, title_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+        removal_deadline, title_status, resale_certificate_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       prepared.metadata.deal_id,
       prepared.metadata.condition_grade,
@@ -885,7 +912,8 @@ export const createDeal = (input: CreateDealInput): DealView => {
       prepared.metadata.transport_type,
       prepared.metadata.presentation_quality,
       prepared.metadata.removal_deadline,
-      prepared.metadata.title_status
+      prepared.metadata.title_status,
+      prepared.metadata.resale_certificate_active ? 1 : 0
     );
   });
 
@@ -1180,6 +1208,16 @@ export const getDealById = (dealId: string): DealView | null => {
   return getDealViewById(dealId);
 };
 
+export const getAvailableLiquiditySnapshot = (): LiquiditySnapshot => {
+  const snapshot = getAvailableLiquidity();
+  return {
+    capital_pool: snapshot.capital_pool,
+    reserved_capital: snapshot.reserved_capital,
+    acquired_capital: snapshot.acquired_capital,
+    available_liquidity: snapshot.available_liquidity,
+  };
+};
+
 export const recordDealDecision = (
   dealId: string,
   rawInput: unknown
@@ -1195,19 +1233,26 @@ export const recordDealDecision = (
   const input = rawInput as Partial<DealDecisionInput>;
   const decision = ensureDecision(input.decision);
   const reason = ensureNonEmptyString(input.reason, "reason");
+  const note = typeof input.note === "string" && input.note.trim() ? input.note.trim() : null;
+  const opportunityId =
+    typeof input.opportunity_id === "string" && input.opportunity_id.trim()
+      ? input.opportunity_id.trim()
+      : null;
   const decidedAt = nowIso();
   const decisionId = crypto.randomUUID();
   const aiRecommendationSnapshot = existingDeal.ai_recommendation;
 
   db.prepare(
     `INSERT INTO operator_decisions (
-      id, deal_id, decision, reason, decided_at, ai_recommendation_snapshot
-    ) VALUES (?, ?, ?, ?, ?, ?)`
+      id, deal_id, opportunity_id, decision, reason, note, decided_at, ai_recommendation_snapshot
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     decisionId,
     dealId,
+    opportunityId,
     decision,
     reason,
+    note,
     decidedAt,
     JSON.stringify(aiRecommendationSnapshot)
   );
@@ -1335,6 +1380,10 @@ export const overrideDealValues = (dealId: string, rawInput: unknown): DealView 
       input.metadata?.title_status && validTitleStatuses.has(input.metadata.title_status)
         ? input.metadata.title_status
         : existing.metadata.title_status,
+    resale_certificate_active:
+      input.metadata?.resale_certificate_active === undefined
+        ? existing.metadata.resale_certificate_active
+        : Boolean(input.metadata.resale_certificate_active),
   };
 
   validateOptionalIsoDate(nextMetadata.removal_deadline, "metadata.removal_deadline");
@@ -1373,7 +1422,7 @@ export const overrideDealValues = (dealId: string, rawInput: unknown): DealView 
     db.prepare(
       `UPDATE metadata
        SET condition_grade = ?, condition_notes = ?, transport_type = ?, presentation_quality = ?,
-           removal_deadline = ?, title_status = ?
+           removal_deadline = ?, title_status = ?, resale_certificate_active = ?
        WHERE deal_id = ?`
     ).run(
       nextMetadata.condition_grade,
@@ -1382,6 +1431,7 @@ export const overrideDealValues = (dealId: string, rawInput: unknown): DealView 
       nextMetadata.presentation_quality,
       nextMetadata.removal_deadline,
       nextMetadata.title_status,
+      nextMetadata.resale_certificate_active ? 1 : 0,
       dealId
     );
 
@@ -1417,6 +1467,7 @@ export const overrideDealValues = (dealId: string, rawInput: unknown): DealView 
           presentation_quality: existing.metadata.presentation_quality,
           removal_deadline: existing.metadata.removal_deadline,
           title_status: existing.metadata.title_status,
+          resale_certificate_active: existing.metadata.resale_certificate_active,
         },
       }),
       JSON.stringify(rawInput)
@@ -1429,4 +1480,109 @@ export const overrideDealValues = (dealId: string, rawInput: unknown): DealView 
     throw new Error("Failed to load updated deal");
   }
   return updated;
+};
+
+export interface ScheduleDealBidInput {
+  deal_id: string;
+  listing_id: string | null;
+  auction_end_time: string;
+  target_bid: number;
+  current_bid: number;
+  estimated_fees: number;
+}
+
+export interface RecordOpportunityDecisionInput {
+  opportunity_id: string;
+  decision: "approved" | "rejected";
+  reason: string;
+  note?: string | null;
+  ai_recommendation_snapshot?: AiRecommendation | null;
+}
+
+export const reserveDealCapital = (dealId: string, amount: number, _reason: string): DealView => {
+  const required = Math.max(0, Number(amount) || 0);
+  assertLiquidityAvailable(required);
+  db.prepare(`UPDATE deals SET reserved_capital = ? WHERE id = ?`).run(required, dealId);
+  const updated = getDealById(dealId);
+  if (!updated) {
+    throw new Error("Deal not found");
+  }
+  return updated;
+};
+
+export const releaseDealReservedCapital = (dealId: string, _reason: string): DealView | null => {
+  db.prepare(`UPDATE deals SET reserved_capital = 0 WHERE id = ?`).run(dealId);
+  return getDealById(dealId);
+};
+
+export const scheduleDealBid = async (input: ScheduleDealBidInput): Promise<ScheduleBidResult> => {
+  const deal = getDealById(input.deal_id);
+  if (!deal) {
+    throw new Error("Deal not found");
+  }
+  const liquidityProbe = assertLiquidityAvailable(Math.max(0, input.current_bid + input.estimated_fees));
+  if (liquidityProbe.available_liquidity < Math.max(0, input.current_bid + input.estimated_fees)) {
+    publishLiquidityCritical({
+      deal_id: input.deal_id,
+      listing_id: input.listing_id,
+      available_liquidity: liquidityProbe.available_liquidity,
+      required_liquidity: Math.max(0, input.current_bid + input.estimated_fees),
+      reason: "LIQUIDITY_CRITICAL: available liquidity below current bid plus estimated fees.",
+    });
+  }
+  return scheduleBid({
+    deal_id: input.deal_id,
+    listing_id: input.listing_id,
+    source_platform: deal.deal.source_platform,
+    auction_end_time: input.auction_end_time,
+    target_bid: input.target_bid,
+    current_bid: input.current_bid,
+    estimated_fees: input.estimated_fees,
+    reserve_capital: (amount, reason) => {
+      reserveDealCapital(input.deal_id, amount, reason);
+    },
+    release_reserved_capital: (amount, reason) => {
+      void amount;
+      releaseDealReservedCapital(input.deal_id, reason);
+    },
+    execute_bid: async () => ({
+      ok: false,
+      message:
+        "Advisory-only mode: bid execution requires explicit operator approval in pre-bid modal.",
+    }),
+  });
+};
+
+export const recordOpportunityDecision = (
+  input: RecordOpportunityDecisionInput
+): { stored_decision_id: string; deal: DealView | null } => {
+  const decisionId = crypto.randomUUID();
+  const decidedAt = nowIso();
+  const snapshot =
+    input.ai_recommendation_snapshot ??
+    ({
+      suggested_action: input.decision === "approved" ? "buy" : "pass",
+      confidence: 0,
+      reasoning: "Snapshot not provided.",
+      key_factors: [`opportunity_id=${input.opportunity_id}`],
+    } satisfies AiRecommendation);
+  db.prepare(
+    `INSERT INTO operator_decisions (
+      id, deal_id, opportunity_id, decision, reason, note, decided_at, ai_recommendation_snapshot
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    decisionId,
+    null,
+    input.opportunity_id,
+    input.decision,
+    input.reason,
+    input.note ?? null,
+    decidedAt,
+    JSON.stringify(snapshot)
+  );
+  return {
+    stored_decision_id: decisionId,
+    // Opportunity decisions are currently advisory and may not map 1:1 to persisted deals.
+    deal: null,
+  };
 };

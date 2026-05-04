@@ -55,6 +55,13 @@ interface MonthlyVelocityPoint {
 interface DashboardPanelsProps {
   deals: DealView[];
   reconditioningMap: Record<string, ReconditioningRecord>;
+  liveHeartbeat?: {
+    total_events: number;
+    final_15m_events: number;
+    price_change_events: number;
+    liquidity_critical_events: number;
+    last_message: string | null;
+  };
 }
 
 const formatCurrency = (value: number): string => `$${value.toFixed(2)}`;
@@ -278,7 +285,11 @@ const priorityClass = (priority: DecisionQueueItem["priority"]): string => {
   return "queue-item low";
 };
 
-export default function DashboardPanels({ deals, reconditioningMap }: DashboardPanelsProps) {
+export default function DashboardPanels({
+  deals,
+  reconditioningMap,
+  liveHeartbeat,
+}: DashboardPanelsProps) {
   const capital = computeCapitalPanel(deals);
   const queue = computeDecisionQueue(deals);
   const burnEnhancements = computeBurnEnhancements(deals);
@@ -384,6 +395,23 @@ export default function DashboardPanels({ deals, reconditioningMap }: DashboardP
           </ul>
         )}
       </div>
+
+      {liveHeartbeat ? (
+        <div className="decision-queue-card priority-medium">
+          <h3>Live Heartbeat Signals</h3>
+          <ul>
+            <li>Total events: {liveHeartbeat.total_events}</li>
+            <li>Final 15m entries: {liveHeartbeat.final_15m_events}</li>
+            <li>Price changes: {liveHeartbeat.price_change_events}</li>
+            <li>Liquidity critical: {liveHeartbeat.liquidity_critical_events}</li>
+          </ul>
+          {liveHeartbeat.last_message ? (
+            <p className="warning-text">{liveHeartbeat.last_message}</p>
+          ) : (
+            <p className="muted">No heartbeat alerts yet.</p>
+          )}
+        </div>
+      ) : null}
 
       <div className="capital-panel priority-low">
         <h3>Capital Panel</h3>

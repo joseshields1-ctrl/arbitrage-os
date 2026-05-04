@@ -61,6 +61,7 @@ export interface DealRow {
   unit_count?: number | null;
   unit_breakdown?: UnitBreakdown | null;
   prep_metrics?: PrepMetrics | null;
+  reserved_capital: number;
 }
 
 export interface FinancialInput {
@@ -102,6 +103,7 @@ export interface MetadataInput {
   seller_type?: SellerType;
   removal_deadline?: string | null;
   title_status?: TitleStatus;
+  resale_certificate_active?: boolean;
 }
 
 export interface MetadataRow {
@@ -113,6 +115,7 @@ export interface MetadataRow {
   seller_type: SellerType;
   removal_deadline: string | null;
   title_status: TitleStatus;
+  resale_certificate_active: boolean;
 }
 
 export interface DealComputedMetrics {

@@ -29,6 +29,7 @@ export type OperatorAlertCode =
   | "FORCE_LIQUIDATION"
   | "STAGE_CRITICAL"
   | "TITLE_DELAY"
+  | "REMOVAL_URGENT"
   | "TRANSPORT_ESTIMATED"
   | "PROFIT_DRIFT_HIGH"
   | "COST_OVERRUN"
@@ -93,7 +94,7 @@ export interface EnrichedDeal {
 
 const LOW_DATA_CONFIDENCE_THRESHOLD = 60;
 const TITLE_DELAY_DAYS = 14;
-const REMOVAL_URGENT_HOURS = 72;
+const REMOVAL_URGENT_HOURS = 48;
 const TITLE_DELAY_CATEGORIES: ReadonlySet<DealCategory> = new Set([
   "vehicle_suv",
   "vehicle_police_fleet",
@@ -151,6 +152,19 @@ const buildAlerts = (input: {
       severity: "warning",
       message: `Title status is ${input.metadata.title_status}; verify paperwork timing before commit.`,
     });
+  }
+  if (input.metadata.removal_deadline) {
+    const removalTimestamp = Date.parse(input.metadata.removal_deadline);
+    if (Number.isFinite(removalTimestamp)) {
+      const hoursUntilRemoval = (removalTimestamp - Date.now()) / (1000 * 60 * 60);
+      if (hoursUntilRemoval > 0 && hoursUntilRemoval <= REMOVAL_URGENT_HOURS) {
+        pushUnique({
+          code: "REMOVAL_URGENT",
+          severity: "critical",
+          message: "Removal deadline is within 48 hours.",
+        });
+      }
+    }
   }
   if (
     TITLE_DELAY_CATEGORIES.has(input.deal.category) &&
@@ -421,6 +435,7 @@ export const enrichDeal = ({
     acquisition_cost: financials.acquisition_cost,
     source_platform: deal.source_platform,
     acquisition_state: deal.acquisition_state,
+    resale_certificate_active: metadata.resale_certificate_active,
     buyer_premium_pct: financials.buyer_premium_pct,
     buyer_premium_overridden: financials.buyer_premium_overridden,
     tax_rate: financials.tax_rate,

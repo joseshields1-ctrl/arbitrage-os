@@ -631,6 +631,18 @@
   background: rgba(239, 68, 68, 0.24);
 }
 
+.urgency-indicator.urgency-critical-red {
+  border-color: #dc2626;
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.45);
+}
+
+.opportunity-card.opportunity-card-critical {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.5);
+  background: linear-gradient(180deg, #fff5f5 0%, #ffffff 55%);
+}
+
 .status-badge.opportunity-status.converted {
   border-color: #93c5fd;
   background: #eff6ff;
