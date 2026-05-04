@@ -131,8 +131,7 @@ const DetailPanel = ({
     deal.financials.estimated_market_value
   );
   const marketLinks = buildMarketLinks(deal.deal.label);
-  const totalInvestment =
-    deal.calculations.total_cost_basis + (deal.financials.repair_cost ?? 0) + (deal.financials.prep_cost ?? 0);
+  const totalInvestment = deal.calculations.total_cost_basis;
   const projectedResale = blendedMarketValue ?? deal.financials.estimated_market_value;
   const projectedNet = projectedResale - totalInvestment;
   const projectedRoiPct = calculateRoiPct(projectedNet, totalInvestment);
