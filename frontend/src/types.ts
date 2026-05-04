@@ -366,16 +366,23 @@ export interface DashboardSummary {
 export type DashboardResponse = DashboardSummary;
 
 export interface AssistantQueryRequest {
-  deal_id?: string;
-  assistant_context?: DealView["assistant_context"];
+  mode: "preview_opportunity" | "persisted_deal";
+  deal_id?: string | null;
+  listing_id?: string | null;
+  snapshot?: Record<string, unknown> | null;
   question: string;
 }
 
 export interface AssistantQueryResponse {
-  response: string;
-  key_points: string[];
-  risk_level: "low" | "medium" | "high";
-  suggested_action: string;
+  ok: boolean;
+  state: "success" | "disabled_missing_context" | "api_failure" | "timeout" | "deal_not_found";
+  answer: string | null;
+  reason: string | null;
+  missing_fields: string[];
+  response?: string;
+  key_points?: string[];
+  risk_level?: "low" | "medium" | "high";
+  suggested_action?: string;
 }
 
 export interface DealDecisionRequest {
@@ -394,6 +401,14 @@ export type OpportunitiesFeedStatus =
   | "backend_error"
   | "timeout"
   | "feed_offline";
+
+export type FeedMessageType = "feed_update" | "sniper_pick" | "heartbeat" | "error";
+
+export interface FeedSocketMessage {
+  type: FeedMessageType;
+  timestamp: string;
+  payload: Record<string, unknown>;
+}
 
 export type OpportunityDecisionAction = "watch" | "must_buy" | "pass";
 

@@ -11,7 +11,7 @@ import type {
   OpportunityDecisionAction,
 } from "./types";
 
-const PROD_API_FALLBACK = "https://arbitrage-os-backend.onrender.com";
+const PROD_API_FALLBACK = "http://localhost:8000";
 const API_BASE = (
   import.meta.env.VITE_API_BASE_URL ??
   (import.meta.env.PROD ? PROD_API_FALLBACK : "")
@@ -248,4 +248,65 @@ export const overrideDealValues = async (
     body: JSON.stringify(payload),
   });
   return handleResponse<DealView>(response);
+};
+
+export const scrapeUrl = async (payload: { url: string }): Promise<{
+  ok: boolean;
+  status: "success" | "needs_review" | "blocked" | "failed";
+  source_url: string | null;
+  listing_id: string | null;
+  account_id: string | null;
+  item_id: string | null;
+  parsed_fields: {
+    title: string | null;
+    current_bid: number | null;
+    auction_end: string | null;
+    location: string | null;
+    seller_agency: string | null;
+    description: string | null;
+    buyer_premium_pct: number | null;
+    quantity: number | null;
+  };
+  missing_fields: string[];
+  raw_text: string | null;
+  error: string | null;
+}> => {
+  const response = await fetch(apiUrl("/scrape/url"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse(response);
+};
+
+export const scrapeText = async (payload: {
+  text: string;
+  source_url?: string | null;
+}): Promise<{
+  ok: boolean;
+  status: "success" | "needs_review" | "blocked" | "failed";
+  source_url: string | null;
+  listing_id: string | null;
+  account_id: string | null;
+  item_id: string | null;
+  parsed_fields: {
+    title: string | null;
+    current_bid: number | null;
+    auction_end: string | null;
+    location: string | null;
+    seller_agency: string | null;
+    description: string | null;
+    buyer_premium_pct: number | null;
+    quantity: number | null;
+  };
+  missing_fields: string[];
+  raw_text: string | null;
+  error: string | null;
+}> => {
+  const response = await fetch(apiUrl("/scrape/text"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse(response);
 };

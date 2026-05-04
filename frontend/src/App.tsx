@@ -19,6 +19,8 @@ import DashboardPanels, { computeCapitalPanel, computeDecisionQueue } from "./co
 import DealCard from "./components/DealCard";
 import DetailPanel from "./components/DetailPanel";
 import GovDealsScannerPanel from "./components/GovDealsScannerPanel";
+import FeedHeartbeat from "./components/FeedHeartbeat";
+import AIAssistant from "./components/AIAssistant";
 import PreBidSanityModal from "./components/PreBidSanityModal";
 import {
   CONDITION_GRADE_OPTIONS,
@@ -64,6 +66,7 @@ import {
   DEFAULT_SCANNER_FILTERS,
   toPreviewSnapshot,
 } from "./utils/govDealsScanner";
+import { WS_FEED_URL } from "./env";
 import type {
   GovDealsOpportunity,
   ManualOpportunityInput,
@@ -1978,6 +1981,40 @@ function App() {
         )
       ) : (
         <div className="assistant-panel">
+          <FeedHeartbeat wsUrl={WS_FEED_URL} />
+          <AIAssistant
+            selectedDealContext={
+              selectedOpportunityForAssistant
+                ? {
+                    deal_id: selectedDeal?.deal.id ?? null,
+                    listing_id: selectedOpportunityForAssistant.listing_id ?? null,
+                    snapshot: {
+                      selected_deal: {
+                        listing_id: selectedOpportunityForAssistant.listing_id ?? null,
+                        title: selectedOpportunityForAssistant.title ?? null,
+                        current_bid: selectedOpportunityForAssistant.current_bid ?? null,
+                        auction_end: selectedOpportunityForAssistant.auction_end ?? null,
+                        location: selectedOpportunityForAssistant.location ?? null,
+                        seller_agency: selectedOpportunityForAssistant.seller_agency ?? null,
+                        description: selectedOpportunityForAssistant.description ?? null,
+                        buyer_premium_pct: selectedOpportunityForAssistant.buyer_premium_pct ?? null,
+                        estimated_resale_value: selectedOpportunityForAssistant.estimated_resale_value ?? null,
+                        estimated_transport:
+                          selectedOpportunityForAssistant.estimated_transport_override ?? null,
+                        estimated_repair: selectedOpportunityForAssistant.estimated_repair_cost ?? null,
+                        risk_flags: [],
+                        missing_fields:
+                          selectedOpportunityForAssistant.import_missing_fields?.map(String) ?? [],
+                      },
+                    },
+                    has_usable_context:
+                      selectedOpportunityForAssistant.import_status === "valid" &&
+                      (selectedOpportunityForAssistant.title ?? "").trim().length > 0 &&
+                      selectedOpportunityForAssistant.current_bid !== null,
+                  }
+                : null
+            }
+          />
           <p>
             Selected record: {" "}
             {selectedDeal
