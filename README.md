@@ -1,6 +1,26 @@
 # arbitrage-os
 cross-industry arbitrage engine for vehicles, electronics, and auction-based resale.
 
+## Free GitHub automation now enabled
+
+The repo now includes a free, production-useful GitHub process stack in `.github/`:
+
+- **CI workflow** (`.github/workflows/ci.yml`)
+  - Runs on pull requests and pushes to `main`
+  - Builds both `backend/` and `frontend/`
+  - Runs frontend lint
+- **CodeQL security scan** (`.github/workflows/codeql.yml`)
+  - Automatic static security analysis for JavaScript/TypeScript
+  - Runs on PRs, pushes to `main`, and weekly schedule
+- **Dependabot updates** (`.github/dependabot.yml`)
+  - Weekly updates for npm deps in `/backend` and `/frontend`
+  - Weekly updates for GitHub Actions versions
+- **Contribution templates**
+  - PR template: `.github/pull_request_template.md`
+  - Issue templates: `.github/ISSUE_TEMPLATE/bug_report.yml` and `feature_request.yml`
+
+This gives you an immediate free workflow for quality gates, security scanning, and dependency hygiene.
+
 ## Production connectivity (backend + frontend)
 
 Production frontend and backend are deployed as separate services. Frontend must use an explicit backend base URL; do not rely on same-origin `/api` unless backend is hosted on the same origin.
