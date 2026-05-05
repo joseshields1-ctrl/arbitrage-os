@@ -103,6 +103,7 @@ type RightPanelDetailTab = "decision" | "market" | "recon";
 type PipelineAlertFilter = "all" | "critical" | "warning" | "none";
 type IntakeStep = 1 | 2 | 3;
 type SurfaceState = "live" | "stale" | "fallback" | "disabled";
+type TopNavMode = "search" | "pipeline" | "archive";
 type AssistantReadinessState =
   | "ready"
   | "loading"
@@ -194,6 +195,16 @@ const getOperatorModeForPage = (page: ActivePage): OperatorMode => {
     return "hunt";
   }
   return "manage";
+};
+
+const getTopNavModeForPage = (page: ActivePage): TopNavMode => {
+  if (page === "pipeline") {
+    return "pipeline";
+  }
+  if (page === "archive") {
+    return "archive";
+  }
+  return "search";
 };
 
 interface MonthlyPerformancePoint {
@@ -823,18 +834,6 @@ function App() {
     dashboard?.active_deals ?? deals.filter((item) => item.deal.status !== "completed").length;
   const completedDealsCount =
     dashboard?.completed_deals ?? deals.filter((item) => item.deal.status === "completed").length;
-  const alertsCount = useMemo(
-    () => deals.reduce((sum, item) => sum + (item.alerts?.length ?? 0), 0),
-    [deals]
-  );
-  const criticalAlertsCount = useMemo(
-    () =>
-      deals.reduce(
-        (sum, item) => sum + (item.alerts?.filter((alert) => alert.severity === "critical").length ?? 0),
-        0
-      ),
-    [deals]
-  );
   const availableLiquidCash = useMemo(() => computeCapitalPanel(deals).available_capital, [deals]);
   const capitalPanelSnapshot = useMemo(() => computeCapitalPanel(deals), [deals]);
   const decisionQueue = useMemo(() => computeDecisionQueue(deals), [deals]);
@@ -861,6 +860,17 @@ function App() {
     [deals]
   );
   const operatorMode = getOperatorModeForPage(activePage);
+  const topNavMode = getTopNavModeForPage(activePage);
+  const setTopNavMode = (mode: TopNavMode): void => {
+    if (mode === "search") {
+      setActivePage("opportunities");
+    } else {
+      setActivePage(mode);
+    }
+    if (isMobileOnePane) {
+      setMobilePanelMode("main");
+    }
+  };
   const sniperPicks = useMemo(
     () =>
       buildSniperAIPicks(
@@ -882,14 +892,6 @@ function App() {
     () => computeSniperDashboardSummary(sniperPicks, govDealsOpportunities, sniperDecisionHistory),
     [sniperPicks, govDealsOpportunities, sniperDecisionHistory]
   );
-  const sniperLast10 = useMemo(() => sniperDecisionHistory.slice(0, 10), [sniperDecisionHistory]);
-  const sniperAccuracyLast10 = useMemo(() => {
-    if (sniperLast10.length === 0) {
-      return 0;
-    }
-    const approved = sniperLast10.filter((item) => item.decision === "approved").length;
-    return Math.round((approved / sniperLast10.length) * 100);
-  }, [sniperLast10]);
   const scannerStateTier: SurfaceState = useMemo(
     () => deriveOpportunitiesSurfaceState(scannerFeedStatus, scannerFeedLastPolledAt),
     [scannerFeedStatus, scannerFeedLastPolledAt]
@@ -1023,32 +1025,26 @@ function App() {
   const assistantStateLabel =
     assistantReadinessState === "disabled_missing_context" ? "disabled_missing_context" : assistantReadinessState;
   const showMobileContextPanel = mobilePanelMode === "detail" || mobilePanelMode === "assistant";
-  const operatorAgreementRate = useMemo(() => {
-    if (sniperLast10.length === 0) {
-      return 0;
-    }
-    const aligned = sniperLast10.filter((item) => {
-      const recommendation = item.opportunity_snapshot.interest === "interested" ? "approved" : "passed";
-      return recommendation === item.decision;
-    }).length;
-    return Math.round((aligned / sniperLast10.length) * 100);
-  }, [sniperLast10]);
-
-  const sniperPicksDisplay = scannerFeedRehydrateDone ? sniperDashboardSummary.picks_count : "...";
-  const sniperApprovedDisplay = scannerFeedRehydrateDone
-    ? sniperDashboardSummary.approved_not_acted_on
-    : "...";
-  const sniperPassDistanceFundsDisplay = scannerFeedRehydrateDone
-    ? `${sniperDashboardSummary.passed_breakdown.distance} / ${sniperDashboardSummary.passed_breakdown.funds}`
-    : "Rehydrating...";
-  const sniperPassCoordRiskDisplay = scannerFeedRehydrateDone
-    ? `${sniperDashboardSummary.passed_breakdown.coordination} / ${sniperDashboardSummary.passed_breakdown.risk}`
-    : "Rehydrating...";
-  const sniperAccuracyDisplay = scannerFeedRehydrateDone ? `${sniperAccuracyLast10}%` : "Rehydrating...";
-  const operatorAgreementDisplay = scannerFeedRehydrateDone ? `${operatorAgreementRate}%` : "Rehydrating...";
   const decisionSignalDisplay = scannerFeedRehydrateDone
     ? `${persistedDecisionCount} / ${interestSignalCount}`
     : "Rehydrating...";
+
+  useEffect(() => {
+    if (activePage !== "pipeline") {
+      return;
+    }
+    if (rightPanelMode !== "detail") {
+      setRightPanelMode("detail");
+    }
+    if (selectedOpportunityIdForAssistant !== null) {
+      setSelectedOpportunityIdForAssistant(null);
+    }
+    const hasSelectedPipelineDeal =
+      selectedDealId !== null && deals.some((deal) => deal.deal.id === selectedDealId);
+    if (!hasSelectedPipelineDeal && deals.length > 0) {
+      setSelectedDealId(deals[0].deal.id);
+    }
+  }, [activePage, deals, rightPanelMode, selectedDealId, selectedOpportunityIdForAssistant]);
 
   const pipelineDeals = useMemo(() => {
     if (pipelineAlertFilter === "all") {
@@ -2214,72 +2210,33 @@ function App() {
 
   return (
     <main className={`operator-shell mode-${operatorMode}`}>
-      <header className="top-bar">
-        <div className="top-bar-title">
-          <h2>Operator Command Surface</h2>
-          <div className="mode-switcher">
-            <span className={`mode-pill ${operatorMode === "hunt" ? "active" : ""}`}>Hunt Mode</span>
-            <span className={`mode-pill ${operatorMode === "analyze" ? "active" : ""}`}>
-              Analyze Mode
-            </span>
-            <span className={`mode-pill ${operatorMode === "manage" ? "active" : ""}`}>Manage Mode</span>
-          </div>
-        </div>
-        <div className="kpi-card primary">
-          <span>Realized Profit</span>
-          <strong>${(dashboard?.realized_profit_total ?? 0).toFixed(2)}</strong>
-        </div>
-        <div className="kpi-card">
-          <span>Projected Profit (estimate)</span>
-          <strong>${(dashboard?.projected_profit_total ?? 0).toFixed(2)}</strong>
-        </div>
-        <div className="kpi-card">
-          <span>Active Deals</span>
-          <strong>{activeDealsCount}</strong>
-        </div>
-        <div className={`kpi-card alerts ${criticalAlertsCount > 0 ? "critical" : ""}`}>
-          <span>Alerts</span>
-          <strong>{alertsCount}</strong>
-        </div>
-        <div className="kpi-card">
-          <span>Sniper AI Picks</span>
-          <strong>{sniperPicksDisplay}</strong>
-        </div>
-        <div className="kpi-card">
-          <span>Approved Not Acted On</span>
-          <strong>{sniperApprovedDisplay}</strong>
-        </div>
-        <div className="kpi-card">
-          <span>Passed: Distance / Funds</span>
-          <strong>
-            {sniperPassDistanceFundsDisplay}
-          </strong>
-        </div>
-        <div className="kpi-card">
-          <span>Passed: Coordination / Risk</span>
-          <strong>
-            {sniperPassCoordRiskDisplay}
-          </strong>
-        </div>
-        <div className="kpi-card">
-          <span>Sniper Accuracy (last 10)</span>
-          <strong>{sniperAccuracyDisplay}</strong>
-        </div>
-        <div className="kpi-card">
-          <span>Operator Agreement Rate</span>
-          <strong>{operatorAgreementDisplay}</strong>
-        </div>
-      </header>
+      <section className="mode-switcher-row" aria-label="Top navigation modes">
+        <button
+          type="button"
+          className={`mode-pill ${topNavMode === "search" ? "active" : ""}`}
+          onClick={() => setTopNavMode("search")}
+        >
+          Search
+        </button>
+        <button
+          type="button"
+          className={`mode-pill ${topNavMode === "pipeline" ? "active" : ""}`}
+          onClick={() => setTopNavMode("pipeline")}
+        >
+          Pipeline
+        </button>
+        <button
+          type="button"
+          className={`mode-pill ${topNavMode === "archive" ? "active" : ""}`}
+          onClick={() => setTopNavMode("archive")}
+        >
+          Archive
+        </button>
+      </section>
       <section className="next-action-bar">
         <div className="next-action-mode">
           <span>Mode</span>
-          <strong>
-            {operatorMode === "manage"
-              ? "Manage Mode"
-              : operatorMode === "hunt"
-                ? "Hunt Mode"
-                : "Analyze Mode"}
-          </strong>
+          <strong>{topNavMode === "search" ? "Search" : topNavMode === "pipeline" ? "Pipeline" : "Archive"}</strong>
         </div>
         <div className="next-action-item priority-high">
           <span>Interested awaiting approval</span>
@@ -2327,15 +2284,9 @@ function App() {
 
       <div className={`workspace-layout ${isMobileOnePane ? "mobile-one-pane" : ""}`}>
         <aside className={`left-nav ${isMobileOnePane ? "mobile-hidden" : ""}`}>
-          <h1>Arbitrage OS</h1>
+          <h1>Specialty Sniper</h1>
           <p>Operator Console</p>
-          <p className="mode-chip">
-            {operatorMode === "manage"
-              ? "Manage Mode"
-              : operatorMode === "hunt"
-                ? "Hunt Mode"
-                : "Analyze Mode"}
-          </p>
+          <p className="mode-chip">{topNavMode === "search" ? "Search" : topNavMode === "pipeline" ? "Pipeline" : "Archive"}</p>
           <button
             type="button"
             className={activePage === "dashboard" ? "active" : ""}
@@ -2345,15 +2296,15 @@ function App() {
           </button>
           <button
             type="button"
-            className={activePage === "opportunities" ? "active" : ""}
-            onClick={() => setActivePage("opportunities")}
+            className={topNavMode === "search" ? "active" : ""}
+            onClick={() => setTopNavMode("search")}
           >
-            Opportunities
+            Search
           </button>
           <button
             type="button"
-            className={activePage === "pipeline" ? "active" : ""}
-            onClick={() => setActivePage("pipeline")}
+            className={topNavMode === "pipeline" ? "active" : ""}
+            onClick={() => setTopNavMode("pipeline")}
           >
             Pipeline
           </button>
@@ -2373,8 +2324,8 @@ function App() {
           </button>
           <button
             type="button"
-            className={activePage === "archive" ? "active" : ""}
-            onClick={() => setActivePage("archive")}
+            className={topNavMode === "archive" ? "active" : ""}
+            onClick={() => setTopNavMode("archive")}
           >
             Archive
           </button>
@@ -3276,7 +3227,7 @@ function App() {
             </button>
             {([
               ["dashboard", "Dashboard"],
-              ["opportunities", "Hunt"],
+              ["opportunities", "Search"],
               ["pipeline", "Pipeline"],
               ["intake", "Intake"],
               ["alerts", "Alerts"],
@@ -3285,9 +3236,25 @@ function App() {
               <button
                 key={page}
                 type="button"
-                className={activePage === page && mobilePanelMode === "main" ? "active" : ""}
+                className={
+                  ((page === "opportunities" && topNavMode === "search") ||
+                    (page === "pipeline" && topNavMode === "pipeline") ||
+                    (page === "archive" && topNavMode === "archive") ||
+                    activePage === page) &&
+                  mobilePanelMode === "main"
+                    ? "active"
+                    : ""
+                }
                 onClick={() => {
-                  setActivePage(page);
+                  if (page === "opportunities") {
+                    setTopNavMode("search");
+                  } else if (page === "pipeline") {
+                    setTopNavMode("pipeline");
+                  } else if (page === "archive") {
+                    setTopNavMode("archive");
+                  } else {
+                    setActivePage(page);
+                  }
                   setMobilePanelMode("main");
                 }}
               >
