@@ -5,6 +5,8 @@ import {
   deleteAuction,
   fetchAuctions,
   fetchPollerStatus,
+  importGovDealsNow,
+  runPollerOnce,
   startPoller,
   updateAuction,
 } from "../api";
@@ -77,6 +79,7 @@ function AuctionOpsPanel({ mode }: AuctionOpsPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [form, setForm] = useState<AuctionUpsertPayload>(emptyForm());
   const [analysisByAuctionId, setAnalysisByAuctionId] = useState<Record<string, AuctionAnalysisResponse["analysis"]>>(
     {}
@@ -148,6 +151,41 @@ function AuctionOpsPanel({ mode }: AuctionOpsPanelProps) {
       setAnalysisByAuctionId((prev) => ({ ...prev, [auctionId]: result.analysis }));
     } catch (analyzeError) {
       setError(analyzeError instanceof Error ? analyzeError.message : "AI analysis failed");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleGovDealsImport = async (): Promise<void> => {
+    setBusyId("govdeals-import");
+    try {
+      const result = await importGovDealsNow();
+      setStatusMessage(
+        result.errors.length > 0
+          ? `Imported ${result.imported}. Some issues: ${result.errors.slice(0, 2).join(" | ")}`
+          : `Imported ${result.imported} auctions from GovDeals.`
+      );
+      await loadData();
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : "GovDeals import failed");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleRunPollerOnce = async (): Promise<void> => {
+    setBusyId("poller-run-once");
+    try {
+      const result = await runPollerOnce();
+      setPollerStatus(result.status);
+      setStatusMessage(
+        result.errors.length > 0
+          ? `Poller imported ${result.imported} with errors: ${result.errors.slice(0, 2).join(" | ")}`
+          : `Poller run completed. Imported ${result.imported} auctions.`
+      );
+      await loadData();
+    } catch (runError) {
+      setError(runError instanceof Error ? runError.message : "Poller run failed");
     } finally {
       setBusyId(null);
     }
@@ -237,7 +275,24 @@ function AuctionOpsPanel({ mode }: AuctionOpsPanelProps) {
         >
           Start Poller
         </button>
+        <button
+          type="button"
+          className="ghost-button"
+          onClick={() => void handleRunPollerOnce()}
+          disabled={busyId === "poller-run-once"}
+        >
+          {busyId === "poller-run-once" ? "Running poller..." : "Run Poller Once"}
+        </button>
+        <button
+          type="button"
+          className="ghost-button"
+          onClick={() => void handleGovDealsImport()}
+          disabled={busyId === "govdeals-import"}
+        >
+          {busyId === "govdeals-import" ? "Importing..." : "Import GovDeals Now"}
+        </button>
       </div>
+      {statusMessage ? <p className="decision-confirmation">{statusMessage}</p> : null}
 
       {mode === "admin" ? (
         <div className="form-grid-two">

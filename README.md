@@ -14,14 +14,15 @@ The app now exposes a clean auction pipeline on top of the existing opportunitie
 - `GET /api/poller/status` - poller runtime status
 - `POST /api/poller/start` - start/restart poller
 - `POST /api/poller/stop` - stop poller
-- `POST /api/poller/run-once` - run a single scrape pass immediately
+- `POST /api/poller/runOnce` - run a single scrape pass immediately
+- `POST /api/govdeals/import` - run GovDeals import immediately using body URLs or `GOVDEALS_LISTING_URLS`
 
 ### Required/important backend env vars
 
 - `OPENAI_API_KEY` (optional, AI falls back to heuristic guidance when missing)
 - `ENABLE_POLLER=true` to auto-start poller on backend boot
 - `POLLER_INTERVAL_MS=1200000` (example: 20 minutes)
-- `GOVDEALS_LISTING_URLS=https://www.govdeals.com/index.cfm?fa=Main.Item&itemid=123&acctid=45,...`
+- `GOVDEALS_LISTING_URLS=https://www.govdeals.com/en/closing-today,https://www.govdeals.com/en/transportation,https://www.govdeals.com/en/consumer-electronics`
 - `POLLER_KEYWORDS=electronics,vehicle,fleet` (optional metadata only)
 - `CORS_ALLOWED_ORIGINS=http://localhost:5173`
 - `SQLITE_DB_PATH` (recommended for production persistent storage)

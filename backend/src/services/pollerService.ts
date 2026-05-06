@@ -1,5 +1,4 @@
-import { confirmOpportunityImport } from "./opportunityService";
-import { parseGovDealsListingForReview } from "./govDealsImportService";
+import { getGovDealsUrlsFromEnv, importGovDealsUrls } from "./govDealsScraperService";
 
 export interface PollerStatusSnapshot {
   running: boolean;
@@ -14,6 +13,8 @@ export interface PollerStatusSnapshot {
 interface PollCycleResult {
   imported: number;
   errors: string[];
+  processed_urls: number;
+  discovered_listing_urls: number;
 }
 
 const DEFAULT_INTERVAL_MS = 20 * 60 * 1000;
@@ -39,8 +40,7 @@ const parseCsvEnv = (value: string | undefined): string[] =>
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
 
-const getEnvListingUrls = (): string[] =>
-  parseCsvEnv(process.env.GOVDEALS_LISTING_URLS ?? process.env.POLLER_LISTING_URLS);
+const getEnvListingUrls = (): string[] => getGovDealsUrlsFromEnv();
 
 const getEnvKeywords = (): string[] => parseCsvEnv(process.env.POLLER_KEYWORDS);
 
@@ -49,28 +49,11 @@ const performPollCycle = async (): Promise<PollCycleResult> => {
     return {
       imported: 0,
       errors: ["No GovDeals URLs configured. Set GOVDEALS_LISTING_URLS."],
+      processed_urls: 0,
+      discovered_listing_urls: 0,
     };
   }
-
-  let imported = 0;
-  const errors: string[] = [];
-
-  for (const listingUrl of configuredListingUrls) {
-    try {
-      const review = await parseGovDealsListingForReview({ listing_url: listingUrl });
-      confirmOpportunityImport({
-        review,
-        source: "url_import",
-      });
-      imported += 1;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "unknown poller error";
-      errors.push(`${listingUrl}: ${message}`);
-      console.error("[poller] import failed:", listingUrl, message);
-    }
-  }
-
-  return { imported, errors };
+  return importGovDealsUrls(configuredListingUrls);
 };
 
 const runPollCycle = async (): Promise<PollCycleResult> => {

@@ -16,6 +16,7 @@ import opportunitiesRouter from "./routes/opportunities";
 import streamRouter from "./routes/stream";
 import auctionsRouter from "./routes/auctions";
 import pollerRouter from "./routes/poller";
+import govDealsRouter from "./routes/govdeals";
 
 const app = express();
 
@@ -60,6 +61,7 @@ app.use("/api/dashboard", dashboardRouter);
 app.use("/api/opportunities", opportunitiesRouter);
 app.use("/api/auctions", auctionsRouter);
 app.use("/api/poller", pollerRouter);
+app.use("/api/govdeals", govDealsRouter);
 app.use("/api/stream", streamRouter);
 
 export default app;

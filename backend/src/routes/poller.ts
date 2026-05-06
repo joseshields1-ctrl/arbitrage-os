@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { type Request, type Response, Router } from "express";
 import {
   getPollerStatus,
   runPollerOnce,
@@ -44,7 +44,7 @@ pollerRouter.post("/stop", (_req, res) => {
   res.status(200).json(status);
 });
 
-pollerRouter.post("/run-once", async (_req, res) => {
+const runOnceHandler = async (_req: Request, res: Response): Promise<void> => {
   try {
     const result = await runPollerOnce();
     res.status(200).json({
@@ -56,6 +56,9 @@ pollerRouter.post("/run-once", async (_req, res) => {
     const message = error instanceof Error ? error.message : "Failed to run poller";
     res.status(500).json({ ok: false, error: message, status: getPollerStatus() });
   }
-});
+};
+
+pollerRouter.post("/run-once", runOnceHandler);
+pollerRouter.post("/runOnce", runOnceHandler);
 
 export default pollerRouter;

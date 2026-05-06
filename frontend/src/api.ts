@@ -123,6 +123,35 @@ export const startPoller = async (): Promise<PollerStatusResponse> => {
   return handleResponse<PollerStatusResponse>(response);
 };
 
+export const runPollerOnce = async (): Promise<{
+  ok: boolean;
+  imported: number;
+  errors: string[];
+  status: PollerStatusResponse;
+}> => {
+  const response = await fetch(apiUrl("/api/poller/runOnce"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  return handleResponse<{
+    ok: boolean;
+    imported: number;
+    errors: string[];
+    status: PollerStatusResponse;
+  }>(response);
+};
+
+export const importGovDealsNow = async (
+  urls?: string[]
+): Promise<{ imported: number; errors: string[] }> => {
+  const response = await fetch(apiUrl("/api/govdeals/import"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(urls && urls.length > 0 ? { urls } : {}),
+  });
+  return handleResponse<{ imported: number; errors: string[] }>(response);
+};
+
 export const fetchAuctions = async (signal?: AbortSignal): Promise<AuctionRecord[]> => {
   const response = await fetch(apiUrl("/api/auctions"), { signal });
   const body = await handleResponse<{ auctions: AuctionRecord[] }>(response);
