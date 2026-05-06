@@ -378,7 +378,7 @@ const getOpenAIClient = async (): Promise<{
 
 const buildSystemPrompt = (context: EnrichedDeal["assistant_context"]): string => {
   return [
-    "You are an embedded operator assistant for Arbitrage OS.",
+    "You are an embedded operator assistant for Specialty Sniper.",
     "Advisory-only mode: do not execute actions, do not modify deals, do not change scores, do not override backend logic.",
     "Use ONLY the provided context. If data is missing, explicitly say it is missing.",
     "Your task: explain deal performance, identify risks, and recommend next actions for operator review.",

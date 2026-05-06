@@ -9,6 +9,7 @@ import type {
   DealView,
   OpportunitiesFeedContract,
   OpportunityDecisionAction,
+  PollerStatusResponse,
 } from "./types";
 
 const PROD_API_FALLBACK = "http://localhost:8000";
@@ -83,7 +84,32 @@ export const queryAssistant = async (
     body: JSON.stringify(payload),
     signal,
   });
-  return handleResponse<AssistantQueryResponse>(response);
+  const body = await handleResponse<Record<string, unknown>>(response);
+  if (typeof body.ok === "boolean" && typeof body.state === "string") {
+    return body as AssistantQueryResponse;
+  }
+  const responseText = typeof body.response === "string" ? body.response : null;
+  return {
+    ok: true,
+    state: "success",
+    answer: responseText,
+    reason: null,
+    missing_fields: [],
+    response: responseText ?? undefined,
+    key_points: Array.isArray(body.key_points)
+      ? body.key_points.filter((item): item is string => typeof item === "string")
+      : [],
+    risk_level:
+      body.risk_level === "low" || body.risk_level === "medium" || body.risk_level === "high"
+        ? body.risk_level
+        : undefined,
+    suggested_action: typeof body.suggested_action === "string" ? body.suggested_action : undefined,
+  };
+};
+
+export const fetchPollerStatus = async (signal?: AbortSignal): Promise<PollerStatusResponse> => {
+  const response = await fetch(apiUrl("/api/poller/status"), { signal });
+  return handleResponse<PollerStatusResponse>(response);
 };
 
 export const previewDeal = async (payload: CreateDealRequest): Promise<DealView> => {

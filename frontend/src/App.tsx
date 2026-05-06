@@ -3,6 +3,7 @@ import {
   confirmOpportunityImport,
   createDeal,
   fetchOpportunitiesFeed,
+  fetchPollerStatus,
   fetchDashboard,
   fetchDeals,
   overrideDealValues,
@@ -39,6 +40,7 @@ import type {
   IntakeCategory,
   OpportunitiesFeedContract,
   OpportunitiesFeedStatus,
+  PollerStatusResponse,
   ReconditioningRecord,
   TitleStatus,
   VehicleMarketIntel,
@@ -89,6 +91,7 @@ const GOVDEALS_SCANNER_META_STORAGE_KEY = "arbitrage_os_govdeals_scanner_meta_v1
 const OPPORTUNITIES_REQUEST_TIMEOUT_MS = 10000;
 const FEED_HEARTBEAT_INTERVAL_MS = 30_000;
 const FEED_HEARTBEAT_LIVE_WINDOW_MS = 60_000;
+const POLLER_STATUS_REFRESH_MS = 45_000;
 const MOBILE_ONE_PANE_MEDIA_QUERY = "(max-width: 900px)";
 
 type ActivePage =
@@ -419,6 +422,7 @@ function App() {
   const [scannerFeedLastPolledAt, setScannerFeedLastPolledAt] = useState<string | null>(null);
   const [scannerFeedRehydrateDone, setScannerFeedRehydrateDone] = useState(false);
   const [scannerFeedBusy, setScannerFeedBusy] = useState(false);
+  const [pollerStatus, setPollerStatus] = useState<PollerStatusResponse | null>(null);
   const [dealHeartbeatByOpportunityId, setDealHeartbeatByOpportunityId] = useState<
     Record<string, { timestamp: string; time_left_ms: number | null; type: string; message: string }>
   >({});
@@ -737,6 +741,32 @@ function App() {
   }, []);
 
   useEffect(() => {
+    let isMounted = true;
+    const syncPollerStatus = async () => {
+      try {
+        const status = await fetchPollerStatus();
+        if (!isMounted) {
+          return;
+        }
+        setPollerStatus(status);
+      } catch {
+        if (!isMounted) {
+          return;
+        }
+        // Keep prior status/fallback UI when endpoint is temporarily unavailable.
+      }
+    };
+    void syncPollerStatus();
+    const intervalId = window.setInterval(() => {
+      void syncPollerStatus();
+    }, POLLER_STATUS_REFRESH_MS);
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
+  useEffect(() => {
     try {
       const raw = localStorage.getItem(GOVDEALS_SCANNER_META_STORAGE_KEY);
       if (!raw) {
@@ -914,6 +944,26 @@ function App() {
         : scannerStateTier === "fallback"
           ? "Fallback"
           : "Disabled";
+  const pollerFreshnessLabel = useMemo(() => {
+    if (!pollerStatus) {
+      return isRealtimeFreshnessVisible ? freshnessLabel : "Not Live";
+    }
+    const pollCount = Math.max(0, Number(pollerStatus.poll_count ?? 0));
+    if (pollerStatus.running) {
+      return pollCount >= 1 ? "Live" : "Initializing";
+    }
+    return "Not Live";
+  }, [freshnessLabel, isRealtimeFreshnessVisible, pollerStatus]);
+  const pollerLastPollAgeSeconds = useMemo(() => {
+    if (!pollerStatus?.last_poll_at) {
+      return null;
+    }
+    const ts = Date.parse(pollerStatus.last_poll_at);
+    if (!Number.isFinite(ts)) {
+      return null;
+    }
+    return Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  }, [pollerStatus?.last_poll_at]);
   const scannerPersistenceBusy = useMemo(
     () => Object.values(scannerSaveInFlightByOpportunityId).some(Boolean),
     [scannerSaveInFlightByOpportunityId]
@@ -2260,12 +2310,17 @@ function App() {
         </div>
         <div className="next-action-item priority-low">
           <span>Feed freshness</span>
-          <strong>{isRealtimeFreshnessVisible ? freshnessLabel : "Not Live"}</strong>
+          <strong>{pollerFreshnessLabel}</strong>
           {liquidityCriticalFeedMessage ? (
             <small className="warning-text">{liquidityCriticalFeedMessage}</small>
           ) : null}
           {scannerPersistenceBusy ? <small>Persisting decisions...</small> : null}
-          {feedAgeMs !== null ? <small>Last sync {Math.floor(feedAgeMs / 1000)}s ago</small> : null}
+          {pollerStatus ? <small>Poll count {pollerStatus.poll_count}</small> : null}
+          {pollerLastPollAgeSeconds !== null ? (
+            <small>Last poll {pollerLastPollAgeSeconds}s ago</small>
+          ) : feedAgeMs !== null ? (
+            <small>Last sync {Math.floor(feedAgeMs / 1000)}s ago</small>
+          ) : null}
           <button
             type="button"
             className="ghost-button"
@@ -2463,6 +2518,8 @@ function App() {
               opportunitiesState={scannerStateTier}
               opportunitiesStatus={scannerFeedStatus}
               opportunitiesStatusMessage={scannerFeedMessage}
+              pollerStatus={pollerStatus}
+              feedFreshnessLabel={pollerFreshnessLabel}
               operatorBaseState={operatorBaseState}
               filters={scannerFilters}
               sortMode={scannerSortMode}

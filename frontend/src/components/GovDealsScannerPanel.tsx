@@ -31,6 +31,16 @@ interface GovDealsScannerPanelProps {
     | "timeout"
     | "feed_offline";
   opportunitiesStatusMessage: string;
+  pollerStatus?: {
+    running: boolean;
+    interval_ms: number;
+    last_poll_at: string | null;
+    last_error: string | null;
+    total_imported: number;
+    poll_count: number;
+    keywords: string[];
+  } | null;
+  feedFreshnessLabel?: string;
   operatorBaseState: string;
   filters: OpportunityFilters;
   sortMode: OpportunitySortMode;
@@ -191,6 +201,8 @@ function GovDealsScannerPanel({
   opportunitiesState,
   opportunitiesStatus,
   opportunitiesStatusMessage,
+  pollerStatus,
+  feedFreshnessLabel,
   operatorBaseState,
   filters,
   sortMode,
@@ -355,12 +367,20 @@ function GovDealsScannerPanel({
         backend deal engine.
       </p>
       <div className="opportunities-feed-state-row">
+        <span className={`risk-chip ${pollerStatus?.running ? "info" : "warning"}`}>
+          Feed Freshness: {feedFreshnessLabel ?? (pollerStatus?.running ? "Live" : "Not Live")}
+        </span>
         <span className={`risk-chip ${opportunitiesState === "live" ? "info" : "warning"}`}>
           Feed State: {opportunitiesState}
         </span>
         <span className={`risk-chip ${opportunitiesStatus === "feed_offline" ? "warning" : ""}`}>
           Feed Status: {opportunitiesStatus}
         </span>
+        {pollerStatus ? (
+          <span className="muted">
+            Poller: {pollerStatus.running ? "running" : "stopped"} · polls {pollerStatus.poll_count}
+          </span>
+        ) : null}
         <span className="muted">{opportunitiesStatusMessage}</span>
       </div>
 

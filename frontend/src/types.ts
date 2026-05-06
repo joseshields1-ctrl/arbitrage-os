@@ -385,6 +385,16 @@ export interface AssistantQueryResponse {
   suggested_action?: string;
 }
 
+export interface PollerStatusResponse {
+  running: boolean;
+  interval_ms: number;
+  last_poll_at: string | null;
+  last_error: string | null;
+  total_imported: number;
+  poll_count: number;
+  keywords: string[];
+}
+
 export interface DealDecisionRequest {
   decision: "approved" | "rejected";
   reason: string;

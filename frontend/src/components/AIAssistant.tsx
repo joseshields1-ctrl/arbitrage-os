@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { queryAssistant } from "../api";
-import type { AssistantQueryResponse, GovDealsOpportunity } from "../types";
+import type { AssistantQueryResponse } from "../types";
 
 interface AIAssistantProps {
   selectedDealContext: {
@@ -49,11 +49,30 @@ export default function AIAssistant({ selectedDealContext }: AIAssistantProps) {
     setLoading(true);
     setError(null);
     try {
+      const selectedDeal = selectedDealContext.snapshot?.selected_deal;
       const payload = {
         mode: selectedDealContext.deal_id ? ("persisted_deal" as const) : ("preview_opportunity" as const),
         deal_id: selectedDealContext.deal_id ?? undefined,
         listing_id: selectedDealContext.listing_id ?? undefined,
-        snapshot: selectedDealContext.snapshot ?? undefined,
+        snapshot: selectedDeal
+          ? {
+              opportunity: {
+                id: selectedDealContext.listing_id ?? selectedDealContext.deal_id ?? "preview-opportunity",
+                listing_id: selectedDeal.listing_id,
+                title: selectedDeal.title,
+                current_bid: selectedDeal.current_bid,
+                auction_end: selectedDeal.auction_end,
+                location: selectedDeal.location,
+                seller_agency: selectedDeal.seller_agency,
+                description: selectedDeal.description,
+                buyer_premium_pct: selectedDeal.buyer_premium_pct,
+                estimated_resale_value: selectedDeal.estimated_resale_value,
+                estimated_transport_override: selectedDeal.estimated_transport,
+                estimated_repair_cost: selectedDeal.estimated_repair,
+                import_missing_fields: selectedDeal.missing_fields,
+              },
+            }
+          : selectedDealContext.snapshot ?? undefined,
         question: trimmed,
       };
       const result = await queryAssistant(payload);
@@ -62,13 +81,13 @@ export default function AIAssistant({ selectedDealContext }: AIAssistantProps) {
         setError(result.reason ?? "Assistant unavailable.");
       }
     } catch (submitError) {
-      const message = submitError instanceof Error ? submitError.message : "Assistant query failed.";
-      setError(message);
+      void submitError;
+      setError("Assistant is unavailable right now. Please try again.");
       setResponse({
         ok: false,
         state: "api_failure",
         answer: null,
-        reason: message,
+        reason: "Assistant is unavailable right now. Please try again.",
         missing_fields: [],
       });
     } finally {
