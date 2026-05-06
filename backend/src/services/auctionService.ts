@@ -167,7 +167,7 @@ const mapOpportunityToAuction = (
     time_left_seconds: timeLeftSeconds,
     seller_name: opportunity.seller_agency,
     seller_location: opportunity.location,
-    auction_url: opportunity.listing_url,
+    auction_url: opportunity.listing_url ?? opportunity.canonical_url,
     category: opportunity.category,
     tags,
     notes: label?.notes ?? null,
@@ -216,7 +216,7 @@ const updateUrlFields = (opportunityId: string, auctionUrl: string | null | unde
   const normalized = normalizeNullableString(auctionUrl);
   db.prepare(`UPDATE opportunities SET listing_url = ?, canonical_url = ? WHERE id = ?`).run(
     normalized,
-    normalized,
+    normalized ?? "",
     opportunityId
   );
 };

@@ -61,6 +61,7 @@ aiRouter.post("/analyze", async (req, res) => {
       analysis: {
         summary: response.response,
         key_points: response.key_points,
+        risk_factors: response.key_points.filter((point) => /risk|missing|warning|alert/i.test(point)),
         risk_level: response.risk_level,
         suggested_action: response.suggested_action,
         resale_value_range: toResaleRange(snapshot),

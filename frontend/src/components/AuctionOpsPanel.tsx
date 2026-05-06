@@ -83,16 +83,21 @@ function AuctionOpsPanel({ mode }: AuctionOpsPanelProps) {
   );
 
   const loadData = async (): Promise<void> => {
-    try {
-      const [auctionRows, poller] = await Promise.all([fetchAuctions(), fetchPollerStatus()]);
-      setAuctions(auctionRows);
-      setPollerStatus(poller);
+    const [auctionsResult, pollerResult] = await Promise.allSettled([fetchAuctions(), fetchPollerStatus()]);
+    if (auctionsResult.status === "fulfilled") {
+      setAuctions(auctionsResult.value);
       setError(null);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Failed to load auctions");
-    } finally {
-      setLoading(false);
+    } else {
+      setError(
+        auctionsResult.reason instanceof Error
+          ? auctionsResult.reason.message
+          : "Failed to load auctions"
+      );
     }
+    if (pollerResult.status === "fulfilled") {
+      setPollerStatus(pollerResult.value);
+    }
+    setLoading(false);
   };
 
   useEffect(() => {
@@ -214,7 +219,22 @@ function AuctionOpsPanel({ mode }: AuctionOpsPanelProps) {
         >
           Refresh
         </button>
-        <button type="button" className="ghost-button" onClick={() => void startPoller().then(setPollerStatus)}>
+        <button
+          type="button"
+          className="ghost-button"
+          onClick={() => {
+            void startPoller()
+              .then((status) => {
+                setPollerStatus(status);
+                setError(null);
+              })
+              .catch((pollerError) => {
+                setError(
+                  pollerError instanceof Error ? pollerError.message : "Unable to start poller"
+                );
+              });
+          }}
+        >
           Start Poller
         </button>
       </div>
@@ -396,6 +416,66 @@ function AuctionOpsPanel({ mode }: AuctionOpsPanelProps) {
                     <strong>{auction.verdict}</strong>
                   )}
                 </div>
+              </div>
+              <div className="form-grid-two">
+                <label>
+                  Seller Location
+                  {editing ? (
+                    <input
+                      value={auction.seller_location ?? ""}
+                      onChange={(event) =>
+                        updateAuctionRow(auction.id, "seller_location", event.target.value || null)
+                      }
+                    />
+                  ) : (
+                    <strong>{auction.seller_location ?? "N/A"}</strong>
+                  )}
+                </label>
+                <label>
+                  Auction URL
+                  {editing ? (
+                    <input
+                      value={auction.auction_url ?? ""}
+                      onChange={(event) =>
+                        updateAuctionRow(auction.id, "auction_url", event.target.value || null)
+                      }
+                    />
+                  ) : (
+                    <strong>{auction.auction_url ?? "N/A"}</strong>
+                  )}
+                </label>
+                <label className="span-two">
+                  Tags (comma separated)
+                  {editing ? (
+                    <input
+                      value={auction.tags.join(", ")}
+                      onChange={(event) =>
+                        updateAuctionRow(
+                          auction.id,
+                          "tags",
+                          event.target.value
+                            .split(",")
+                            .map((item) => item.trim())
+                            .filter((item) => item.length > 0)
+                        )
+                      }
+                    />
+                  ) : (
+                    <strong>{auction.tags.length > 0 ? auction.tags.join(", ") : "none"}</strong>
+                  )}
+                </label>
+                <label className="span-two">
+                  Notes
+                  {editing ? (
+                    <textarea
+                      rows={2}
+                      value={auction.notes ?? ""}
+                      onChange={(event) => updateAuctionRow(auction.id, "notes", event.target.value || null)}
+                    />
+                  ) : (
+                    <strong>{auction.notes ?? "none"}</strong>
+                  )}
+                </label>
               </div>
               {auction.auction_url ? (
                 <a href={auction.auction_url} target="_blank" rel="noreferrer">

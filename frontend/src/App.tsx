@@ -547,7 +547,7 @@ function App() {
         govDealsOpportunities.find((item) => item.id === decision.opportunity_id) ??
         {
           id: decision.opportunity_id,
-          source: "manual_import",
+          source: "manual",
           listing_id: null,
           listing_url: "",
           canonical_url: "",
