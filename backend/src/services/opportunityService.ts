@@ -48,7 +48,7 @@ interface ConfirmImportPayload {
   operator_overrides: Partial<OpportunityEditableFields> | null;
 }
 
-const OPPORTUNITY_SELECT_COLUMNS = `id, source, account_id, item_id, listing_id, listing_url, canonical_url, title, category, current_bid, auction_end,
+const OPPORTUNITY_SELECT_COLUMNS = `id, source, account_id, item_id, listing_id, listing_url, canonical_url, title, category, current_bid, bid_increment, auction_end,
   location, seller_agency, seller_type, buyer_premium_pct, buyer_premium_explicit, removal_window_days, title_status, relisted, condition_raw,
   description, attachment_links, seller_contact, estimated_resale_value, estimated_transport_override, estimated_repair_cost, quantity_purchased,
   quantity_broken, import_status, import_confidence, import_missing_fields, raw_import_data, operator_overrides, value_layers, blocked_reason,
@@ -66,6 +66,7 @@ const CRITICAL_IMPORT_FIELDS: OpportunityCriticalField[] = [
 const EDITABLE_KEYS: Array<keyof OpportunityEditableFields> = [
   "title",
   "current_bid",
+  "bid_increment",
   "buyer_premium_pct",
   "estimated_resale_value",
   "estimated_transport_override",
@@ -83,6 +84,7 @@ const EDITABLE_KEYS: Array<keyof OpportunityEditableFields> = [
 
 const VALUE_LAYER_KEYS = [
   "current_bid",
+  "bid_increment",
   "buyer_premium_pct",
   "estimated_resale_value",
   "estimated_transport_override",
@@ -272,6 +274,7 @@ const parseEditableOverrides = (value: unknown): Partial<OpportunityEditableFiel
   const title = normalizeNullableString(record.title);
   if (title !== null) parsed.title = title;
   if ("current_bid" in record) parsed.current_bid = normalizeNonNegativeNumber(record.current_bid);
+  if ("bid_increment" in record) parsed.bid_increment = normalizeNonNegativeNumber(record.bid_increment);
   if ("buyer_premium_pct" in record) parsed.buyer_premium_pct = normalizeBuyerPremiumPct(record.buyer_premium_pct);
   if ("estimated_resale_value" in record) {
     parsed.estimated_resale_value = normalizeNonNegativeNumber(record.estimated_resale_value);
@@ -330,6 +333,7 @@ const buildValueLayers = (
 ): OpportunityValueLayers => ({
   title: buildValueLayer(imported.title ?? null, overrides?.title ?? null),
   current_bid: buildValueLayer(imported.current_bid ?? null, overrides?.current_bid ?? null),
+  bid_increment: buildValueLayer(imported.bid_increment ?? null, overrides?.bid_increment ?? null),
   buyer_premium_pct: buildValueLayer(imported.buyer_premium_pct ?? null, overrides?.buyer_premium_pct ?? null),
   estimated_resale_value: buildValueLayer(
     imported.estimated_resale_value ?? null,
@@ -382,6 +386,7 @@ const parseValueLayers = (
   return {
     title: fromLayer("title", fallback.title),
     current_bid: fromLayer("current_bid", fallback.current_bid),
+    bid_increment: fromLayer("bid_increment", fallback.bid_increment),
     buyer_premium_pct: fromLayer("buyer_premium_pct", fallback.buyer_premium_pct),
     estimated_resale_value: fromLayer("estimated_resale_value", fallback.estimated_resale_value),
     estimated_transport_override: fromLayer(
@@ -494,6 +499,7 @@ const mapOpportunityRow = (row: Record<string, unknown>): OpportunityRecord => {
   const imported: Partial<OpportunityEditableFields> = {
     title: normalizeNullableString(row.title),
     current_bid: normalizeNonNegativeNumber(row.current_bid),
+    bid_increment: normalizeNonNegativeNumber(row.bid_increment),
     buyer_premium_pct: normalizeBuyerPremiumPct(row.buyer_premium_pct),
     estimated_resale_value: normalizeNonNegativeNumber(row.estimated_resale_value),
     estimated_transport_override: normalizeNonNegativeNumber(row.estimated_transport_override),
@@ -520,6 +526,7 @@ const mapOpportunityRow = (row: Record<string, unknown>): OpportunityRecord => {
     title: imported.title ?? null,
     category: parseCategory(row.category),
     current_bid: imported.current_bid,
+    bid_increment: imported.bid_increment,
     auction_end: auctionEnd,
     auction_state:
       timeLeftHours === null ? "unknown" : timeLeftHours <= 0 ? "ended" : "active",
@@ -567,6 +574,7 @@ const fallbackSnapshot = (opportunityId: string): OpportunityRecord => ({
   title: null,
   category: "other",
   current_bid: null,
+  bid_increment: null,
   auction_end: null,
   auction_state: "unknown",
   time_left_hours: null,
@@ -670,6 +678,7 @@ const composeEditableImported = (
 ): Partial<OpportunityEditableFields> => ({
   title: normalizeNullableString(parsed.title),
   current_bid: normalizeNonNegativeNumber(parsed.current_bid),
+  bid_increment: normalizeNonNegativeNumber(parsed.bid_increment),
   buyer_premium_pct: normalizeBuyerPremiumPct(parsed.buyer_premium_pct),
   estimated_resale_value: normalizeNonNegativeNumber(parsed.estimated_resale_value),
   estimated_transport_override: normalizeNonNegativeNumber(parsed.estimated_transport_override),
@@ -788,12 +797,12 @@ export const replaceOpportunities = (
       const record = mapOpportunityRow(raw as Record<string, unknown>);
       db.prepare(
         `INSERT INTO opportunities (
-          id, source, account_id, item_id, listing_id, listing_url, canonical_url, title, category, current_bid, auction_end,
+          id, source, account_id, item_id, listing_id, listing_url, canonical_url, title, category, current_bid, bid_increment, auction_end,
           location, seller_agency, seller_type, buyer_premium_pct, buyer_premium_explicit, removal_window_days, title_status, relisted,
           condition_raw, description, attachment_links, seller_contact, estimated_resale_value, estimated_transport_override, estimated_repair_cost,
           quantity_purchased, quantity_broken, import_status, import_confidence, import_missing_fields, raw_import_data, operator_overrides,
           value_layers, blocked_reason, parser_error, imported_at, status, interest, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         record.id,
         record.source,
@@ -805,6 +814,7 @@ export const replaceOpportunities = (
         record.title,
         record.category,
         record.current_bid,
+        record.bid_increment,
         record.auction_end,
         record.location,
         record.seller_agency,
@@ -915,6 +925,7 @@ export const confirmOpportunityImport = (
     title: effectiveEditable.title ?? null,
     category: parseCategory(normalized.parsed_fields.category),
     current_bid: valueLayers.current_bid.effective_value,
+    bid_increment: valueLayers.bid_increment.effective_value,
     auction_end: valueLayers.auction_end?.effective_value ?? effectiveEditable.auction_end ?? null,
     auction_state: "unknown",
     time_left_hours: null,
@@ -956,7 +967,7 @@ export const confirmOpportunityImport = (
       db.prepare(
         `UPDATE opportunities
          SET source = ?, account_id = ?, item_id = ?, listing_id = ?, listing_url = ?, canonical_url = ?, title = ?, category = ?, current_bid = ?,
-             auction_end = ?, location = ?, seller_agency = ?, seller_type = ?, buyer_premium_pct = ?, buyer_premium_explicit = ?,
+             bid_increment = ?, auction_end = ?, location = ?, seller_agency = ?, seller_type = ?, buyer_premium_pct = ?, buyer_premium_explicit = ?,
              removal_window_days = ?, title_status = ?, relisted = ?, condition_raw = ?, description = ?, attachment_links = ?, seller_contact = ?,
              estimated_resale_value = ?, estimated_transport_override = ?, estimated_repair_cost = ?, quantity_purchased = ?, quantity_broken = ?,
              import_status = ?, import_confidence = ?, import_missing_fields = ?, raw_import_data = ?, operator_overrides = ?, value_layers = ?,
@@ -972,6 +983,7 @@ export const confirmOpportunityImport = (
         record.title,
         record.category,
         record.current_bid,
+        record.bid_increment,
         record.auction_end,
         record.location,
         record.seller_agency,
@@ -1008,12 +1020,12 @@ export const confirmOpportunityImport = (
 
     db.prepare(
       `INSERT INTO opportunities (
-        id, source, account_id, item_id, listing_id, listing_url, canonical_url, title, category, current_bid, auction_end, location, seller_agency,
+        id, source, account_id, item_id, listing_id, listing_url, canonical_url, title, category, current_bid, bid_increment, auction_end, location, seller_agency,
         seller_type, buyer_premium_pct, buyer_premium_explicit, removal_window_days, title_status, relisted, condition_raw, description, attachment_links,
         seller_contact, estimated_resale_value, estimated_transport_override, estimated_repair_cost, quantity_purchased, quantity_broken, import_status,
         import_confidence, import_missing_fields, raw_import_data, operator_overrides, value_layers, blocked_reason, parser_error, imported_at, status,
         interest, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       record.id,
       record.source,
@@ -1025,6 +1037,7 @@ export const confirmOpportunityImport = (
       record.title,
       record.category,
       record.current_bid,
+      record.bid_increment,
       record.auction_end,
       record.location,
       record.seller_agency,
@@ -1095,6 +1108,7 @@ export const overrideOpportunityValues = (
   const importedEditable: Partial<OpportunityEditableFields> = {
     title: existing.value_layers?.title?.imported_value ?? existing.title,
     current_bid: existing.value_layers?.current_bid.imported_value ?? existing.current_bid,
+    bid_increment: existing.value_layers?.bid_increment.imported_value ?? existing.bid_increment,
     buyer_premium_pct: existing.value_layers?.buyer_premium_pct.imported_value ?? existing.buyer_premium_pct,
     estimated_resale_value:
       existing.value_layers?.estimated_resale_value.imported_value ?? existing.estimated_resale_value,
@@ -1128,7 +1142,7 @@ export const overrideOpportunityValues = (
 
   db.prepare(
     `UPDATE opportunities
-     SET title = ?, current_bid = ?, buyer_premium_pct = ?, estimated_resale_value = ?, estimated_transport_override = ?,
+     SET title = ?, current_bid = ?, bid_increment = ?, buyer_premium_pct = ?, estimated_resale_value = ?, estimated_transport_override = ?,
          estimated_repair_cost = ?, quantity_purchased = ?, quantity_broken = ?, condition_raw = ?, title_status = ?, removal_window_days = ?,
          seller_agency = ?, seller_type = ?, location = ?, auction_end = ?, operator_overrides = ?, value_layers = ?, import_status = ?,
          import_confidence = ?, import_missing_fields = ?
@@ -1136,6 +1150,7 @@ export const overrideOpportunityValues = (
   ).run(
     effective.title,
     valueLayers.current_bid.effective_value,
+    valueLayers.bid_increment.effective_value,
     valueLayers.buyer_premium_pct.effective_value,
     valueLayers.estimated_resale_value.effective_value,
     valueLayers.estimated_transport_override.effective_value,
@@ -1339,4 +1354,17 @@ export const getOpportunityAssistantSnapshotByListingId = (
     return null;
   }
   return mapOpportunityRow(row);
+};
+
+export const getOpportunityById = (opportunityId: string): OpportunityRecord | null => {
+  const row = selectOpportunityRowById(opportunityId);
+  if (!row) {
+    return null;
+  }
+  return mapOpportunityRow(row);
+};
+
+export const deleteOpportunityById = (opportunityId: string): boolean => {
+  const result = db.prepare(`DELETE FROM opportunities WHERE id = ?`).run(opportunityId);
+  return result.changes > 0;
 };

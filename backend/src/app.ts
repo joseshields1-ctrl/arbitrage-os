@@ -9,10 +9,13 @@ import testOperatorRouter from "./routes/testOperator";
 import testAssistantRouter from "./routes/testAssistant";
 import testDecisionLoopRouter from "./routes/testDecisionLoop";
 import assistantRouter from "./routes/assistant";
+import aiRouter from "./routes/ai";
 import dealsRouter from "./routes/deals";
 import dashboardRouter from "./routes/dashboard";
 import opportunitiesRouter from "./routes/opportunities";
 import streamRouter from "./routes/stream";
+import auctionsRouter from "./routes/auctions";
+import pollerRouter from "./routes/poller";
 
 const app = express();
 
@@ -37,7 +40,7 @@ app.use(
       }
       callback(null, false);
     },
-    methods: ["GET", "POST", "PATCH", "OPTIONS"],
+    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
@@ -51,9 +54,12 @@ app.use("/test-operator", testOperatorRouter);
 app.use("/test-assistant", testAssistantRouter);
 app.use("/test-decision-loop", testDecisionLoopRouter);
 app.use("/api/assistant", assistantRouter);
+app.use("/api/ai", aiRouter);
 app.use("/api/deals", dealsRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api/opportunities", opportunitiesRouter);
+app.use("/api/auctions", auctionsRouter);
+app.use("/api/poller", pollerRouter);
 app.use("/api/stream", streamRouter);
 
 export default app;

@@ -46,6 +46,39 @@ const parseDate = (value: string | null): string | null => {
   return new Date(timestamp).toISOString();
 };
 
+const FETCH_TIMEOUT_MS = 12_000;
+const FETCH_RETRIES = 2;
+
+const fetchListingHtml = async (listingUrl: string): Promise<string> => {
+  let lastError: Error | null = null;
+  for (let attempt = 1; attempt <= FETCH_RETRIES; attempt += 1) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const response = await fetch(listingUrl, {
+        headers: {
+          "User-Agent": "ArbitrageOS/1.0 (+opportunity-import)",
+          "Accept-Language": "en-US,en;q=0.9",
+          Referer: "https://www.govdeals.com/",
+        },
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      return await response.text();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      lastError = new Error(`attempt ${attempt}/${FETCH_RETRIES}: ${message}`);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+  throw new Error(
+    `Failed to fetch GovDeals listing page after ${FETCH_RETRIES} attempts: ${lastError?.message ?? "unknown"}`
+  );
+};
+
 const canonicalizeGovDealsUrl = (rawUrl: string): string => {
   const parsed = new URL(rawUrl);
   const host = parsed.hostname.toLowerCase();
@@ -136,6 +169,35 @@ const parseListingIdFromUrl = (listingUrl: string): string | null => {
   }
 };
 
+const parseIdentityFromUrl = (
+  listingUrl: string
+): { account_id: string | null; item_id: string | null; listing_id: string | null } => {
+  try {
+    const parsed = new URL(listingUrl);
+    const pickParam = (...keys: string[]): string | null => {
+      for (const key of keys) {
+        const value = parsed.searchParams.get(key)?.trim();
+        if (value) {
+          return value;
+        }
+      }
+      return null;
+    };
+    const itemId = pickParam("itemid", "itemId", "item");
+    const accountId = pickParam("acctid", "accountid", "accountId", "sellerid", "agencyid");
+    const cleanItemId = itemId && /^\d{2,}$/.test(itemId) ? itemId : null;
+    const cleanAccountId = accountId && /^\d{1,}$/.test(accountId) ? accountId : null;
+    return {
+      account_id: cleanAccountId,
+      item_id: cleanItemId,
+      listing_id:
+        cleanAccountId && cleanItemId ? `govdeals_${cleanAccountId}_${cleanItemId}` : null,
+    };
+  } catch {
+    return { account_id: null, item_id: null, listing_id: null };
+  }
+};
+
 const buildMissingFields = (
   parsedFields: Partial<OpportunityEditableFields>
 ): OpportunityCriticalField[] => {
@@ -184,21 +246,7 @@ export const parseGovDealsListingForReview = async (
   const selectorHits: Record<string, string[]> = {};
   const extractionNotes: string[] = [];
 
-  let html = "";
-  try {
-    const response = await fetch(listingUrl, {
-      headers: {
-        "User-Agent": "ArbitrageOS/1.0 (+opportunity-import)",
-      },
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    html = await response.text();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "unknown error";
-    throw new Error(`Failed to fetch GovDeals listing page: ${message}`);
-  }
+  const html = await fetchListingHtml(listingUrl);
 
   const $ = load(html);
   const pageText = normalizeText($("body").text());
@@ -226,6 +274,19 @@ export const parseGovDealsListingForReview = async (
       [/(?:Current\s*Bid|Bid)\s*[:\s]\s*(\$[0-9,]+(?:\.[0-9]{1,2})?)/i],
       selectorHits,
       "current_bid"
+    );
+  const bidIncrementText =
+    pickFirstText(
+      $,
+      [".bid-increment", "#lblBidIncrement", "[data-testid='bid-increment']"],
+      selectorHits,
+      "bid_increment"
+    ) ??
+    pickByRegex(
+      pageText,
+      [/(?:Bid\s*Increment|Minimum\s*Increment)\s*[:\s]\s*(\$[0-9,]+(?:\.[0-9]{1,2})?)/i],
+      selectorHits,
+      "bid_increment"
     );
   const closeDateText =
     pickFirstText(
@@ -348,6 +409,7 @@ export const parseGovDealsListingForReview = async (
 
   const closeIso = parseDate(closeDateText);
   const parsedCurrentBid = parseNumber(currentBidText);
+  const parsedBidIncrement = parseNumber(bidIncrementText);
   const parsedBuyerPremium = parsePercentDecimal(buyerPremiumText);
   const parsedQuantity = (() => {
     const value = parseNumber(quantityText);
@@ -362,11 +424,14 @@ export const parseGovDealsListingForReview = async (
   if (extraction.ambiguity_flags.length > 0) {
     extractionNotes.push(...extraction.ambiguity_flags.map((flag) => `EXTRACTION:${flag}`));
   }
+  const identity = parseIdentityFromUrl(listingUrl);
+  const normalizedListingId = identity.listing_id ?? listingId;
   const parsedFields: OpportunityImportReviewResponse["parsed_fields"] = {
-    listing_id: listingId,
+    listing_id: normalizedListingId,
     canonical_url: canonicalUrl,
     title: title ?? "",
     current_bid: parsedCurrentBid ?? 0,
+    bid_increment: parsedBidIncrement,
     auction_end: closeIso ?? "",
     location: locationText ?? "",
     seller_agency: sellerAgencyText ?? "",
@@ -418,7 +483,7 @@ export const parseGovDealsListingForReview = async (
       (attachmentLinks.length === 0 ? 4 : 0) +
       extraction.data_confidence_delta
   );
-  const importStatus = missingFields.length > 0 ? "needs_review" : "active";
+  const importStatus = missingFields.length > 0 ? "needs_review" : "valid";
 
   if (payload.keyword_hint?.trim()) {
     extractionNotes.push(`Keyword hint provided: ${payload.keyword_hint.trim()}`);
@@ -435,9 +500,12 @@ export const parseGovDealsListingForReview = async (
   }
 
   const rawFields: OpportunityRawImportFields = {
-    listing_id: listingId,
+    account_id: identity.account_id,
+    item_id: identity.item_id,
+    listing_id: normalizedListingId,
     title,
     current_bid_text: currentBidText,
+    bid_increment_text: bidIncrementText,
     auction_end_text: closeDateText,
     time_remaining_text: timeRemainingText,
     location_text: locationText,
@@ -451,14 +519,24 @@ export const parseGovDealsListingForReview = async (
   };
 
   return {
+    source: "url_import",
     listing_url: listingUrl,
     canonical_url: canonicalUrl,
-    listing_id: listingId,
+    account_id: identity.account_id,
+    item_id: identity.item_id,
+    listing_id: normalizedListingId,
     raw_fields: rawFields,
     parsed_fields: parsedFields,
     missing_fields: missingFields,
     import_status: importStatus,
     import_confidence: importConfidence,
+    blocked_reason: null,
+    parser_error: null,
+    request_headers: {
+      "User-Agent": "ArbitrageOS/1.0 (+opportunity-import)",
+      "Accept-Language": "en-US,en;q=0.9",
+      Referer: "https://www.govdeals.com/",
+    },
     extraction_notes: extractionNotes,
     selector_hits: selectorHits,
   };

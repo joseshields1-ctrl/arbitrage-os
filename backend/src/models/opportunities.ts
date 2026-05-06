@@ -17,6 +17,7 @@ export type OpportunityCriticalField =
 export interface OpportunityEditableFields {
   title: string | null;
   current_bid: number | null;
+  bid_increment: number | null;
   buyer_premium_pct: number | null;
   estimated_resale_value: number | null;
   estimated_transport_override: number | null;
@@ -41,6 +42,7 @@ export interface OpportunityValueLayer<T> {
 export interface OpportunityValueLayers {
   title: OpportunityValueLayer<string>;
   current_bid: OpportunityValueLayer<number>;
+  bid_increment: OpportunityValueLayer<number>;
   buyer_premium_pct: OpportunityValueLayer<number>;
   estimated_resale_value: OpportunityValueLayer<number>;
   estimated_transport_override: OpportunityValueLayer<number>;
@@ -89,6 +91,7 @@ export interface OpportunityRecord {
   title: string | null;
   category: OpportunityCategory;
   current_bid: number | null;
+  bid_increment: number | null;
   auction_end: string | null;
   auction_state: OpportunityAuctionState;
   time_left_hours: number | null;

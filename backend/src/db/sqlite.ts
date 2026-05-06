@@ -95,6 +95,7 @@ export const initializeDatabase = (): void => {
       title TEXT,
       category TEXT NOT NULL,
       current_bid REAL,
+      bid_increment REAL,
       auction_end TEXT,
       location TEXT,
       seller_agency TEXT,
@@ -125,6 +126,17 @@ export const initializeDatabase = (): void => {
       status TEXT NOT NULL DEFAULT 'draft',
       interest TEXT NOT NULL DEFAULT 'undecided',
       created_at TEXT NOT NULL
+    );
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS auction_labels (
+      opportunity_id TEXT PRIMARY KEY,
+      verdict TEXT NOT NULL DEFAULT 'neutral',
+      tags TEXT NOT NULL DEFAULT '[]',
+      notes TEXT,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (opportunity_id) REFERENCES opportunities(id) ON DELETE CASCADE
     );
   `);
 
@@ -280,6 +292,7 @@ export const initializeDatabase = (): void => {
   ensureOpportunityColumn("listing_id", `ALTER TABLE opportunities ADD COLUMN listing_id TEXT;`);
   ensureOpportunityColumn("account_id", `ALTER TABLE opportunities ADD COLUMN account_id TEXT;`);
   ensureOpportunityColumn("item_id", `ALTER TABLE opportunities ADD COLUMN item_id TEXT;`);
+  ensureOpportunityColumn("bid_increment", `ALTER TABLE opportunities ADD COLUMN bid_increment REAL;`);
   ensureOpportunityColumn(
     "canonical_url",
     `ALTER TABLE opportunities ADD COLUMN canonical_url TEXT NOT NULL DEFAULT '';`
