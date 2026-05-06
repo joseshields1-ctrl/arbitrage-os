@@ -2068,6 +2068,64 @@
   font-size: 0.88rem;
 }
 
+.auction-ops-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.auction-ops-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.auction-ops-live {
+  display: grid;
+  gap: 8px;
+}
+
+.auction-row {
+  border: 1px solid #334155;
+  background: #0f172a;
+  border-radius: 8px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.auction-row-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.auction-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.auction-ops-form {
+  border: 1px solid #334155;
+  background: #0b1220;
+  border-radius: 8px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.auction-analysis-box {
+  border: 1px solid #1e3a8a;
+  background: #0b1730;
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
 @media (max-width: 900px) {
   .recon-summary-grid,
   .prebid-grid {

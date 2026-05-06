@@ -395,6 +395,57 @@ export interface PollerStatusResponse {
   keywords: string[];
 }
 
+export type AuctionVerdict = "good" | "bad" | "neutral";
+
+export interface AuctionRecord {
+  id: string;
+  source: "govdeals" | "manual";
+  title: string | null;
+  bid_amount: number | null;
+  bid_increment: number | null;
+  end_time: string | null;
+  time_left_seconds: number | null;
+  seller_name: string | null;
+  seller_location: string | null;
+  auction_url: string | null;
+  category: "vehicle" | "electronics" | "other";
+  tags: string[];
+  notes: string | null;
+  verdict: AuctionVerdict;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AuctionUpsertPayload {
+  title: string;
+  bid_amount: number | null;
+  bid_increment: number | null;
+  end_time: string | null;
+  seller_name: string | null;
+  seller_location: string | null;
+  auction_url: string;
+  category: "vehicle" | "electronics" | "other";
+  tags: string[];
+  notes: string | null;
+  verdict: AuctionVerdict;
+}
+
+export interface AuctionAnalysisResponse {
+  ok: boolean;
+  analysis: {
+    summary: string;
+    suggested_action: string;
+    risk_level: "low" | "medium" | "high";
+    key_points: string[];
+    risk_factors: string[];
+    resale_value_range: {
+      low: number | null;
+      high: number | null;
+      currency: "USD";
+    };
+  };
+}
+
 export interface DealDecisionRequest {
   decision: "approved" | "rejected";
   reason: string;

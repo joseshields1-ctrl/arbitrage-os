@@ -1,4 +1,7 @@
 import type {
+  AuctionAnalysisResponse,
+  AuctionRecord,
+  AuctionUpsertPayload,
   AssistantQueryRequest,
   AssistantQueryResponse,
   CreateDealRequest,
@@ -110,6 +113,57 @@ export const queryAssistant = async (
 export const fetchPollerStatus = async (signal?: AbortSignal): Promise<PollerStatusResponse> => {
   const response = await fetch(apiUrl("/api/poller/status"), { signal });
   return handleResponse<PollerStatusResponse>(response);
+};
+
+export const startPoller = async (): Promise<PollerStatusResponse> => {
+  const response = await fetch(apiUrl("/api/poller/start"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  return handleResponse<PollerStatusResponse>(response);
+};
+
+export const fetchAuctions = async (signal?: AbortSignal): Promise<AuctionRecord[]> => {
+  const response = await fetch(apiUrl("/api/auctions"), { signal });
+  const body = await handleResponse<{ auctions: AuctionRecord[] }>(response);
+  return body.auctions;
+};
+
+export const createManualAuction = async (payload: AuctionUpsertPayload): Promise<AuctionRecord> => {
+  const response = await fetch(apiUrl("/api/auctions"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<AuctionRecord>(response);
+};
+
+export const updateAuction = async (
+  auctionId: string,
+  payload: Partial<AuctionUpsertPayload>
+): Promise<AuctionRecord> => {
+  const response = await fetch(apiUrl(`/api/auctions/${auctionId}`), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<AuctionRecord>(response);
+};
+
+export const deleteAuction = async (auctionId: string): Promise<{ ok: boolean }> => {
+  const response = await fetch(apiUrl(`/api/auctions/${auctionId}`), {
+    method: "DELETE",
+  });
+  return handleResponse<{ ok: boolean }>(response);
+};
+
+export const analyzeAuction = async (auctionId: string): Promise<AuctionAnalysisResponse> => {
+  const response = await fetch(apiUrl("/api/ai/analyze"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ auction_id: auctionId }),
+  });
+  return handleResponse<AuctionAnalysisResponse>(response);
 };
 
 export const previewDeal = async (payload: CreateDealRequest): Promise<DealView> => {

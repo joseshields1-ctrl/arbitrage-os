@@ -23,6 +23,7 @@ import GovDealsScannerPanel from "./components/GovDealsScannerPanel";
 import FeedHeartbeat from "./components/FeedHeartbeat";
 import AIAssistant from "./components/AIAssistant";
 import PreBidSanityModal from "./components/PreBidSanityModal";
+import AuctionOpsPanel from "./components/AuctionOpsPanel";
 import {
   CONDITION_GRADE_OPTIONS,
   DEAL_STAGES,
@@ -2266,7 +2267,7 @@ function App() {
           className={`mode-pill ${topNavMode === "search" ? "active" : ""}`}
           onClick={() => setTopNavMode("search")}
         >
-          Search
+          Live Feed
         </button>
         <button
           type="button"
@@ -2286,7 +2287,7 @@ function App() {
       <section className="next-action-bar">
         <div className="next-action-mode">
           <span>Mode</span>
-          <strong>{topNavMode === "search" ? "Search" : topNavMode === "pipeline" ? "Pipeline" : "Archive"}</strong>
+          <strong>{topNavMode === "search" ? "Live Feed" : topNavMode === "pipeline" ? "Pipeline" : "Archive"}</strong>
         </div>
         <div className="next-action-item priority-high">
           <span>Interested awaiting approval</span>
@@ -2341,7 +2342,7 @@ function App() {
         <aside className={`left-nav ${isMobileOnePane ? "mobile-hidden" : ""}`}>
           <h1>Specialty Sniper</h1>
           <p>Operator Console</p>
-          <p className="mode-chip">{topNavMode === "search" ? "Search" : topNavMode === "pipeline" ? "Pipeline" : "Archive"}</p>
+          <p className="mode-chip">{topNavMode === "search" ? "Live Feed" : topNavMode === "pipeline" ? "Pipeline" : "Archive"}</p>
           <button
             type="button"
             className={activePage === "dashboard" ? "active" : ""}
@@ -2354,7 +2355,7 @@ function App() {
             className={topNavMode === "search" ? "active" : ""}
             onClick={() => setTopNavMode("search")}
           >
-            Search
+            Live Feed
           </button>
           <button
             type="button"
@@ -2368,14 +2369,14 @@ function App() {
             className={activePage === "intake" ? "active" : ""}
             onClick={() => setActivePage("intake")}
           >
-            Intake
+            Manual Input / Admin
           </button>
           <button
             type="button"
             className={activePage === "alerts" ? "active" : ""}
             onClick={() => setActivePage("alerts")}
           >
-            Alerts
+            Settings / Status
           </button>
           <button
             type="button"
@@ -2513,57 +2514,60 @@ function App() {
           ) : null}
 
           {activePage === "opportunities" ? (
-            <GovDealsScannerPanel
-              opportunities={govDealsOpportunities}
-              opportunitiesState={scannerStateTier}
-              opportunitiesStatus={scannerFeedStatus}
-              opportunitiesStatusMessage={scannerFeedMessage}
-              pollerStatus={pollerStatus}
-              feedFreshnessLabel={pollerFreshnessLabel}
-              operatorBaseState={operatorBaseState}
-              filters={scannerFilters}
-              sortMode={scannerSortMode}
-              previewsByOpportunityId={scannerPreviewsByOpportunityId}
-              busyOpportunityId={scannerBusyOpportunityId}
-              statusMessage={scannerStatusMessage}
-              errorMessage={scannerErrorMessage}
-              onOperatorBaseStateChange={setOperatorBaseState}
-              onFiltersChange={setScannerFilters}
-              onSortModeChange={setScannerSortMode}
-              onImportUrl={handleScannerImportUrl}
-              onKeywordSearch={handleScannerKeywordSearch}
-              onManualImport={handleScannerManualImport}
-              importReviewState={importReviewState}
-              onImportReviewFieldChange={handleScannerUpdateImportReviewField}
-              onConfirmImport={handleScannerConfirmImport}
-              onCancelImportReview={() => setImportReviewState(null)}
-              onPreview={handleScannerPreview}
-              onWatch={handleScannerWatch}
-              onCreateDeal={handleScannerCreateDeal}
-              onPass={handleScannerPass}
-              onSetInterest={handleScannerSetInterest}
-              onOverrideOpportunity={handleScannerOverrideOpportunity}
-              onCreateFromWonDeal={handleScannerCreateFromWonDeal}
-              heartbeatByOpportunityId={dealHeartbeatByOpportunityId}
-              onSelectOpportunityForAssistant={(opportunity) => {
-                setSelectedOpportunityIdForAssistant(opportunity.id);
-                setActivePage("opportunities");
-                setRightPanelMode("assistant");
-                setAssistantQuestion("Explain this deal");
-                setAssistantResponse(null);
-                if (isMobileOnePane) {
-                  setMobilePanelMode("assistant");
+            <>
+              <AuctionOpsPanel title="Live Feed" mode="live" />
+              <GovDealsScannerPanel
+                opportunities={govDealsOpportunities}
+                opportunitiesState={scannerStateTier}
+                opportunitiesStatus={scannerFeedStatus}
+                opportunitiesStatusMessage={scannerFeedMessage}
+                pollerStatus={pollerStatus}
+                feedFreshnessLabel={pollerFreshnessLabel}
+                operatorBaseState={operatorBaseState}
+                filters={scannerFilters}
+                sortMode={scannerSortMode}
+                previewsByOpportunityId={scannerPreviewsByOpportunityId}
+                busyOpportunityId={scannerBusyOpportunityId}
+                statusMessage={scannerStatusMessage}
+                errorMessage={scannerErrorMessage}
+                onOperatorBaseStateChange={setOperatorBaseState}
+                onFiltersChange={setScannerFilters}
+                onSortModeChange={setScannerSortMode}
+                onImportUrl={handleScannerImportUrl}
+                onKeywordSearch={handleScannerKeywordSearch}
+                onManualImport={handleScannerManualImport}
+                importReviewState={importReviewState}
+                onImportReviewFieldChange={handleScannerUpdateImportReviewField}
+                onConfirmImport={handleScannerConfirmImport}
+                onCancelImportReview={() => setImportReviewState(null)}
+                onPreview={handleScannerPreview}
+                onWatch={handleScannerWatch}
+                onCreateDeal={handleScannerCreateDeal}
+                onPass={handleScannerPass}
+                onSetInterest={handleScannerSetInterest}
+                onOverrideOpportunity={handleScannerOverrideOpportunity}
+                onCreateFromWonDeal={handleScannerCreateFromWonDeal}
+                heartbeatByOpportunityId={dealHeartbeatByOpportunityId}
+                onSelectOpportunityForAssistant={(opportunity) => {
+                  setSelectedOpportunityIdForAssistant(opportunity.id);
+                  setActivePage("opportunities");
+                  setRightPanelMode("assistant");
+                  setAssistantQuestion("Explain this deal");
+                  setAssistantResponse(null);
+                  if (isMobileOnePane) {
+                    setMobilePanelMode("assistant");
+                  }
+                }}
+                sniperPicks={sniperPicks}
+                sniperDashboardSummary={sniperDashboardSummary}
+                onSniperApprove={(pick) =>
+                  void handleSniperDecision(pick.opportunity, pick.score, "approved", null, null)
                 }
-              }}
-              sniperPicks={sniperPicks}
-              sniperDashboardSummary={sniperDashboardSummary}
-              onSniperApprove={(pick) =>
-                void handleSniperDecision(pick.opportunity, pick.score, "approved", null, null)
-              }
-              onSniperPass={(pick, reason, note) =>
-                void handleSniperDecision(pick.opportunity, pick.score, "passed", reason, note)
-              }
-            />
+                onSniperPass={(pick, reason, note) =>
+                  void handleSniperDecision(pick.opportunity, pick.score, "passed", reason, note)
+                }
+              />
+            </>
           ) : null}
 
           {activePage === "pipeline" ? (
@@ -2605,6 +2609,8 @@ function App() {
 
           {activePage === "intake" ? (
             <section className="panel">
+              <h2 className="page-title">Manual Input / Admin</h2>
+              <AuctionOpsPanel title="Manual Auction Input" mode="admin" />
               <h2 className="page-title">Adaptive Intake Flow</h2>
               <p className="section-subtitle">
                 Step-based intake for speed and decision quality. Shared fields first, category
@@ -3194,8 +3200,21 @@ function App() {
 
           {activePage === "alerts" ? (
             <section className="panel">
-              <h2 className="page-title">Alerts</h2>
-              <p className="alerts-reference-note">Reference only. Action queue is in Dashboard Burn List.</p>
+              <h2 className="page-title">Settings / Status</h2>
+              <p className="alerts-reference-note">
+                Scraper + AI health visibility and operator alerts.
+              </p>
+              <div className="opportunities-feed-state-row">
+                <span className={`risk-chip ${pollerStatus?.running ? "info" : "warning"}`}>
+                  Poller: {pollerStatus?.running ? "running" : "stopped"}
+                </span>
+                <span className="risk-chip info">Feed freshness: {pollerFreshnessLabel}</span>
+                {pollerStatus?.last_error ? (
+                  <span className="risk-chip warning">Last error: {pollerStatus.last_error}</span>
+                ) : (
+                  <span className="risk-chip info">Last error: none</span>
+                )}
+              </div>
               <div className="entry-actions">
                 <button
                   type="button"
@@ -3284,10 +3303,10 @@ function App() {
             </button>
             {([
               ["dashboard", "Dashboard"],
-              ["opportunities", "Search"],
+              ["opportunities", "Live Feed"],
               ["pipeline", "Pipeline"],
-              ["intake", "Intake"],
-              ["alerts", "Alerts"],
+              ["intake", "Manual Admin"],
+              ["alerts", "Settings"],
               ["archive", "Archive"],
             ] as const).map(([page, label]) => (
               <button

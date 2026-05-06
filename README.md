@@ -1,6 +1,43 @@
 # arbitrage-os
 cross-industry arbitrage engine for vehicles, electronics, and auction-based resale.
 
+## Specialty Sniper operator workflow (live feed + manual admin + AI)
+
+The app now exposes a clean auction pipeline on top of the existing opportunities store:
+
+- `GET /api/auctions` - unified auction live feed (scraped + manual)
+- `GET /api/auctions/:id` - single auction detail
+- `POST /api/auctions` - create manual auction
+- `PATCH /api/auctions/:id` - edit auction fields/labels
+- `DELETE /api/auctions/:id` - delete auction
+- `POST /api/ai/analyze` - AI analysis for an auction ID or auction payload
+- `GET /api/poller/status` - poller runtime status
+- `POST /api/poller/start` - start/restart poller
+- `POST /api/poller/stop` - stop poller
+- `POST /api/poller/run-once` - run a single scrape pass immediately
+
+### Required/important backend env vars
+
+- `OPENAI_API_KEY` (optional, AI falls back to heuristic guidance when missing)
+- `ENABLE_POLLER=true` to auto-start poller on backend boot
+- `POLLER_INTERVAL_MS=1200000` (example: 20 minutes)
+- `GOVDEALS_LISTING_URLS=https://www.govdeals.com/index.cfm?fa=Main.Item&itemid=123&acctid=45,...`
+- `POLLER_KEYWORDS=electronics,vehicle,fleet` (optional metadata only)
+- `CORS_ALLOWED_ORIGINS=http://localhost:5173`
+- `SQLITE_DB_PATH` (recommended for production persistent storage)
+
+### Run + verify quickly
+
+1. Start backend (`backend/`) and frontend (`frontend/`) dev servers.
+2. Open **Live Feed** in the UI:
+   - verify auctions render with title, bid, increment, time left, seller, location, and GovDeals link.
+3. Open **Manual Input / Admin**:
+   - add/edit/delete an auction with tags/notes/verdict.
+4. Click **Analyze with AI** on any auction row:
+   - verify summary, risk level, suggested action, and resale range return.
+5. In **Settings / Status**:
+   - start poller and verify `Feed freshness` updates from `/api/poller/status`.
+
 ## Free GitHub automation now enabled
 
 The repo now includes a free, production-useful GitHub process stack in `.github/`:
